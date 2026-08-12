@@ -65,7 +65,7 @@ aml:
         base-url: https://api.deepseek.com
         # 真实 Key 放在 application-dev.yml（不提交 GitHub）；未配置时自动降级 Mock
         api-key: ${DEEPSEEK_API_KEY:}
-        model-name: deepseek-v4-falsh
+        model-name: deepseek-v4-flash
       openai:
         type: openai-compatible
         base-url: https://api.openai.com/v1
