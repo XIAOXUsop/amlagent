@@ -1,0 +1,95 @@
+spring:
+  application:
+    name: aml-agent-backend
+  datasource:
+    url: jdbc:mysql://localhost:3307/aml_agent?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true
+    username: aml
+    password: aml123456
+    hikari:
+      maximum-pool-size: 10
+  jpa:
+    hibernate:
+      ddl-auto: update
+    open-in-view: false
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.MySQLDialect
+  data:
+    redis:
+      host: localhost
+      port: 6379
+      timeout: 3s
+
+server:
+  port: 8080
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus
+  metrics:
+    tags:
+      application: aml-agent
+
+logging:
+  level:
+    com.bank.aml: INFO
+    dev.langchain4j: INFO
+
+# ---- AML 专有配置 ----
+aml:
+  security:
+    # JWT 签名密钥（生产环境应改为环境变量注入）
+    jwt-secret: ${AML_JWT_SECRET:aml-agent-jwt-secret-2026-change-me-0123456789abcdef}
+    jwt-validity-hours: 24
+
+  # 可靠任务队列（Redis Streams）
+  queue:
+    stream: aml:workflow:cases
+    dead-stream: aml:workflow:dead
+    group: aml-workers
+    consumer: worker-1
+    max-retry: 3
+    claim-idle-seconds: 60
+    outbox-poll-seconds: 5
+    retry-backoff-seconds: 10
+
+  # 多 LLM 提供商：切换 aml.llm.active-provider 即可换模型。
+  # 未配置 API Key 时自动降级到 Mock 模型（可离线演示完整链路）。
+  llm:
+    active-provider: deepseek
+    providers:
+      deepseek:
+        type: openai-compatible
+        base-url: https://api.deepseek.com
+        # 真实 Key 放在 application-dev.yml（不提交 GitHub）；未配置时自动降级 Mock
+        api-key: ${DEEPSEEK_API_KEY:}
+        model-name: deepseek-v4-falsh
+      openai:
+        type: openai-compatible
+        base-url: https://api.openai.com/v1
+        api-key: ${OPENAI_API_KEY:}
+        model-name: gpt-4o-mini
+      qwen:
+        type: openai-compatible
+        base-url: https://dashscope.aliyuncs.com/compatible-mode/v1
+        api-key: ${DASHSCOPE_API_KEY:}
+        model-name: qwen-plus
+      claude:
+        type: anthropic
+        api-key: ${ANTHROPIC_API_KEY:}
+        model-name: claude-sonnet-4-6
+      mock:
+        type: mock
+        model-name: mock-demo
+
+  # RAG 向量库（PostgreSQL + pgvector），独立于 MySQL 业务库
+  rag:
+    pg:
+      url: jdbc:postgresql://localhost:5433/aml_rag
+      username: aml
+      password: aml123456
+      table: legal_docs
+      dimensions: 384   # all-MiniLM-L6-v2 输出维度
+    data-dir: ./data/legal

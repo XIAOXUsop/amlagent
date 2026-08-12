@@ -1,0 +1,31 @@
+# ===== 密钥与本地配置（禁止提交）=====
+backend/src/main/resources/application-dev*.yml
+backend/src/main/resources/application-local*.yml
+**/application-*.local.yml
+*.key
+*.pem
+.env
+
+# ===== 构建产物 =====
+backend/target/
+frontend/node_modules/
+frontend/dist/
+*.class
+
+# ===== 日志 / 临时文件 =====
+*.log
+*.pid
+*.tmp
+e2e_*.py
+verify_*.py
+*.out.txt
+
+# ===== IDE / 系统 =====
+.idea/
+.vscode/
+*.iml
+.DS_Store
+Thumbs.db
+
+# ===== 本地工具配置 =====
+.claude/
