@@ -5,8 +5,8 @@ import { login, setToken } from '../api/client'
 
 const emit = defineEmits<{ (e: 'logged-in'): void }>()
 
-const username = ref('admin')
-const password = ref('admin123')
+const username = ref('')
+const password = ref('')
 const loading = ref(false)
 
 async function doLogin() {
