@@ -4,10 +4,10 @@ services:
     container_name: aml-mysql
     restart: unless-stopped
     environment:
-      MYSQL_ROOT_PASSWORD: root123456
-      MYSQL_DATABASE: aml_agent
-      MYSQL_USER: aml
-      MYSQL_PASSWORD: aml123456
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-root123456}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-aml_agent}
+      MYSQL_USER: ${MYSQL_USER:-aml}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-aml123456}
       TZ: Asia/Shanghai
     command: --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci
     ports:
@@ -16,7 +16,7 @@ services:
     volumes:
       - mysql-data:/var/lib/mysql
     healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-proot123456"]
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-p${MYSQL_ROOT_PASSWORD:-root123456}"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -26,8 +26,8 @@ services:
     container_name: aml-pgvector
     restart: unless-stopped
     environment:
-      POSTGRES_USER: aml
-      POSTGRES_PASSWORD: aml123456
+      POSTGRES_USER: ${PG_USER:-aml}
+      POSTGRES_PASSWORD: ${PG_PASSWORD:-aml123456}
       POSTGRES_DB: aml_rag
       TZ: Asia/Shanghai
     ports:

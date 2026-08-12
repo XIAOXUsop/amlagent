@@ -5,8 +5,8 @@ server:
 spring:
   datasource:
     url: jdbc:mysql://localhost:3307/aml_agent?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true
-    username: aml
-    password: aml123456
+    username: ${MYSQL_USER:aml}
+    password: ${MYSQL_PASSWORD:aml123456}
   jpa:
     hibernate:
       ddl-auto: update
@@ -26,6 +26,6 @@ aml:
   rag:
     pg:
       url: jdbc:postgresql://localhost:5433/aml_rag
-      username: aml
-      password: aml123456
+      username: ${PG_USER:aml}
+      password: ${PG_PASSWORD:aml123456}
       table: legal_docs_test

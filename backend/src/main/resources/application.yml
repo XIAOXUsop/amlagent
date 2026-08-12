@@ -3,8 +3,8 @@ spring:
     name: aml-agent-backend
   datasource:
     url: jdbc:mysql://localhost:3307/aml_agent?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true
-    username: aml
-    password: aml123456
+    username: ${MYSQL_USER:aml}
+    password: ${MYSQL_PASSWORD:aml123456}
     hikari:
       maximum-pool-size: 10
   jpa:
@@ -88,8 +88,8 @@ aml:
   rag:
     pg:
       url: jdbc:postgresql://localhost:5433/aml_rag
-      username: aml
-      password: aml123456
+      username: ${PG_USER:aml}
+      password: ${PG_PASSWORD:aml123456}
       table: legal_docs
       dimensions: 384   # all-MiniLM-L6-v2 输出维度
     data-dir: ./data/legal
