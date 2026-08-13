@@ -15,6 +15,7 @@ public record CaseDto(
         String alertRule,
         CaseStatus status,
         String riskLevel,
+        String rawRiskLevel,
         String reportJson,
         String summary,
         int executionVersion,
@@ -27,7 +28,7 @@ public record CaseDto(
     public static CaseDto from(CaseEntity e) {
         return new CaseDto(
                 e.getId(), e.getCustomerId(), e.getCustomerName(), e.getAlertRule(),
-                e.getStatus(), e.getRiskLevel(), e.getReportJson(), e.getSummary(),
+                e.getStatus(), e.getRiskLevel(), e.getRawRiskLevel(), e.getReportJson(), e.getSummary(),
                 e.getExecutionVersion(), e.getRetryCount(), e.getFailureCode(), e.getFailureMessage(),
                 e.getCreatedAt(), e.getUpdatedAt());
     }

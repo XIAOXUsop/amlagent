@@ -157,7 +157,14 @@ function legalBody(text: string): string {
       <h3 class="card-title">工单 #{{ caseItem.id }} · {{ caseItem.customerName }}（{{ caseItem.customerId }}）</h3>
       <el-descriptions :column="3" border size="small">
         <el-descriptions-item label="预警规则">{{ caseItem.alertRule }}</el-descriptions-item>
-        <el-descriptions-item label="最终评级">{{ caseItem.riskLevel ?? '-' }}</el-descriptions-item>
+        <el-descriptions-item label="模型原始评级">
+          <el-tag v-if="caseItem.rawRiskLevel" :type="riskMeta[caseItem.rawRiskLevel]?.type ?? 'info'" size="small">{{ caseItem.rawRiskLevel }}</el-tag>
+          <span v-else>-</span>
+        </el-descriptions-item>
+        <el-descriptions-item label="最终评级">
+          <el-tag v-if="caseItem.riskLevel" :type="riskMeta[caseItem.riskLevel]?.type ?? 'info'" size="small">{{ caseItem.riskLevel }}</el-tag>
+          <span v-else>-</span>
+        </el-descriptions-item>
         <el-descriptions-item label="执行版本">{{ caseItem.executionVersion }}</el-descriptions-item>
         <el-descriptions-item label="重试次数">{{ caseItem.retryCount }}</el-descriptions-item>
         <el-descriptions-item v-if="caseItem.failureMessage" label="失败原因" :span="2">
@@ -208,6 +215,21 @@ function legalBody(text: string): string {
         <div class="report-row">
           <div class="report-label">风险评级</div>
           <el-tag :type="riskMeta[report.riskLevel]?.type ?? 'info'" size="large">{{ report.riskLevel }}</el-tag>
+          <el-tag v-if="report.manualReviewRequired" type="danger" size="small" style="margin-left: 8px">需人工复核</el-tag>
+        </div>
+
+        <div v-if="report.findingCodes?.length" class="report-row">
+          <div class="report-label">风险发现代码</div>
+          <div style="display: flex; flex-wrap: wrap; gap: 6px">
+            <el-tag v-for="c in report.findingCodes" :key="c" size="small" type="warning">{{ c }}</el-tag>
+          </div>
+        </div>
+
+        <div v-if="report.actionCodes?.length" class="report-row">
+          <div class="report-label">处置代码</div>
+          <div style="display: flex; flex-wrap: wrap; gap: 6px">
+            <el-tag v-for="c in report.actionCodes" :key="c" size="small" :type="c === 'MANUAL_REVIEW' ? 'danger' : 'info'">{{ c }}</el-tag>
+          </div>
         </div>
 
         <div class="report-row">

@@ -65,9 +65,15 @@ public class CachingLegalSearcher implements LegalDocumentSearcher {
         return result;
     }
 
+    // 缓存 key 版本化：语料/embedding/reranker 变更时自动失效
+    private static final String CORPUS_VERSION = "v1";
+    private static final String EMBEDDING_MODEL = "all-minilm-l6-v2";
+    private static final String RERANKER_VERSION = "bge-reranker-base";
+
     private String cacheKey(String query, int topK) {
         String hash = DigestUtils.md5DigestAsHex(query.getBytes(StandardCharsets.UTF_8));
-        return KEY_PREFIX + hash + ":" + topK;
+        return KEY_PREFIX + CORPUS_VERSION + ":" + EMBEDDING_MODEL + ":" + RERANKER_VERSION
+                + ":" + hash + ":" + topK;
     }
 
     private String serialize(List<LegalDoc> docs) {

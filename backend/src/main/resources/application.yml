@@ -103,3 +103,4 @@ aml:
   # 成本路由：默认关闭规则兜底（不影响真实模型评测）；开启后 SIMPLE 工单零 LLM 成本
   cost-routing:
     rule-fallback-enabled: false
+    summary-enabled: false   # 流式摘要默认关闭（避免第二次模型调用）

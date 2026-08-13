@@ -30,6 +30,7 @@ export interface CaseItem {
   alertRule: string
   status: string
   riskLevel: string | null
+  rawRiskLevel: string | null
   reportJson: string | null
   summary: string | null
   executionVersion: number
@@ -142,16 +143,13 @@ export async function listLogs(id: number): Promise<CaseLog[]> {
   return (await api.get(`/cases/${id}/logs`)).data
 }
 
-/** 订阅工单工作流实时进度（SSE 通过 query 携带 token），返回取消订阅函数 */
+/** 订阅工单工作流实时进度（SSE 通过 HttpOnly Cookie 认证，JWT 不进入 URL），返回取消订阅函数 */
 export function subscribeCase(
   id: number,
   onEvent: (e: WorkflowEvent) => void,
   onToken?: (token: string) => void,
 ): () => void {
-  const token = getToken()
-  const base = `/api/cases/${id}/events`
-  const url = token ? `${base}?token=${encodeURIComponent(token)}` : base
-  const es = new EventSource(url)
+  const es = new EventSource(`/api/cases/${id}/events`)
   es.addEventListener('stage', (ev: MessageEvent<string>) => {
     try {
       onEvent(JSON.parse(ev.data))

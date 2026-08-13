@@ -1,0 +1,48 @@
+package com.bank.aml.config;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.ApplicationArguments;
+import org.springframework.boot.ApplicationRunner;
+import org.springframework.context.annotation.Profile;
+import org.springframework.stereotype.Component;
+
+import java.util.List;
+
+/**
+ * 生产环境配置校验：仅 prod Profile 激活。
+ * 启动时检查密钥长度与默认值，发现演示值直接拒绝启动，避免误部署。
+ */
+@Component
+@Profile("prod")
+public class ProductionConfigValidator implements ApplicationRunner {
+
+    private static final Logger log = LoggerFactory.getLogger(ProductionConfigValidator.class);
+
+    private final String jwtSecret;
+    private final String dbPassword;
+
+    public ProductionConfigValidator(@Value("${aml.security.jwt-secret:}") String jwtSecret,
+                                     @Value("${spring.datasource.password:}") String dbPassword) {
+        this.jwtSecret = jwtSecret;
+        this.dbPassword = dbPassword;
+    }
+
+    @Override
+    public void run(ApplicationArguments args) {
+        List<String> violations = new java.util.ArrayList<>();
+        if (jwtSecret == null || jwtSecret.isBlank() || jwtSecret.contains("change-me") || jwtSecret.length() < 32) {
+            violations.add("JWT secret 使用默认值或长度不足（需 ≥32 字符且非 change-me）");
+        }
+        if (dbPassword == null || dbPassword.isBlank() || dbPassword.contains("aml123456") || dbPassword.contains("root123456")) {
+            violations.add("数据库密码使用默认值");
+        }
+        if (!violations.isEmpty()) {
+            String message = "生产环境配置校验失败：" + String.join("；", violations);
+            log.error(message);
+            throw new IllegalStateException(message);
+        }
+        log.info("生产环境配置校验通过");
+    }
+}

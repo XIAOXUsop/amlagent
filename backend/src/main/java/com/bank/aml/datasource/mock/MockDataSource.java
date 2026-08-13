@@ -1,6 +1,7 @@
 package com.bank.aml.datasource.mock;
 
 import com.bank.aml.common.enums.CountryRegion;
+import com.bank.aml.datasource.CustomerDataPort;
 import jakarta.annotation.PostConstruct;
 import org.springframework.stereotype.Component;
 
@@ -17,11 +18,11 @@ import java.util.Random;
 
 /**
  * Mock 模拟数据源：内置银行演示数据（客户 / 近180天交易 / 股权结构 / 制裁黑名单）。
- * <p>金融数据统一类型：金额 {@link BigDecimal}、时间 {@link LocalDateTime}、币种与地区枚举。
+ * <p>实现 {@link CustomerDataPort}，金融数据统一类型：金额 {@link BigDecimal}、时间 {@link LocalDateTime}、币种与地区枚举。
  * 数据为确定性生成（固定随机种子），保证演示可重复。
  */
 @Component
-public class MockDataSource {
+public class MockDataSource implements CustomerDataPort {
 
     /** 客户 */
     public record Customer(String id, String name, String idCard, String type,

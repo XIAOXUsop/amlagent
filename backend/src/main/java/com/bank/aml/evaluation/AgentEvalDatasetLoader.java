@@ -31,6 +31,7 @@ public class AgentEvalDatasetLoader {
 
     private final ObjectMapper objectMapper;
     private volatile AgentEvalDataset cached;
+    private volatile String datasetHash;
 
     public AgentEvalDatasetLoader(ObjectMapper objectMapper) {
         this.objectMapper = objectMapper;
@@ -72,11 +73,29 @@ public class AgentEvalDatasetLoader {
     private AgentEvalDataset readDataset() {
         ClassPathResource resource = new ClassPathResource(DATASET_RESOURCE);
         try (InputStream input = resource.getInputStream()) {
-            AgentEvalDataset dataset = objectMapper.readValue(input, AgentEvalDataset.class);
+            byte[] bytes = input.readAllBytes();
+            // 数据集内容哈希：用于冻结审计（TEST 冻结后任何改动都会改变哈希）
+            this.datasetHash = sha256(bytes);
+            AgentEvalDataset dataset = objectMapper.readValue(bytes, AgentEvalDataset.class);
             validate(dataset);
             return dataset;
         } catch (IOException e) {
             throw new IllegalStateException("无法加载 Agent 评测数据集：" + DATASET_RESOURCE, e);
+        }
+    }
+
+    /** 当前数据集内容 SHA-256 哈希（前 16 位），用于 TEST 冻结审计 */
+    public String datasetHash() {
+        load();
+        return datasetHash;
+    }
+
+    private String sha256(byte[] bytes) {
+        try {
+            java.security.MessageDigest digest = java.security.MessageDigest.getInstance("SHA-256");
+            return java.util.HexFormat.of().formatHex(digest.digest(bytes));
+        } catch (java.security.NoSuchAlgorithmException e) {
+            throw new IllegalStateException("SHA-256 不可用", e);
         }
     }
 

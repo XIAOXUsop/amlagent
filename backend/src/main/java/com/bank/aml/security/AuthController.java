@@ -1,5 +1,7 @@
 package com.bank.aml.security;
 
+import jakarta.servlet.http.Cookie;
+import jakarta.servlet.http.HttpServletResponse;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import org.springframework.security.core.userdetails.UserDetails;
@@ -32,7 +34,7 @@ public class AuthController {
     }
 
     @PostMapping("/login")
-    public Map<String, Object> login(@Valid @RequestBody LoginRequest req) {
+    public Map<String, Object> login(@Valid @RequestBody LoginRequest req, HttpServletResponse response) {
         UserDetails user;
         try {
             user = userDetailsService.loadUserByUsername(req.username());
@@ -45,6 +47,12 @@ public class AuthController {
         String role = user.getAuthorities().stream()
                 .findFirst().map(a -> a.getAuthority().replace("ROLE_", "")).orElse("ANALYST");
         String token = tokenProvider.createToken(user.getUsername(), role);
+        // 设置 HttpOnly Cookie，供 SSE（EventSource 无法自定义 Header）使用，避免 JWT 进入 URL/日志
+        Cookie cookie = new Cookie("aml_token", token);
+        cookie.setHttpOnly(true);
+        cookie.setPath("/");
+        cookie.setMaxAge(24 * 3600); // 与 JWT 有效期一致
+        response.addCookie(cookie);
         return Map.of("token", token, "username", user.getUsername(), "role", role);
     }
 

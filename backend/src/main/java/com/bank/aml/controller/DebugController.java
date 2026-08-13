@@ -1,6 +1,7 @@
 package com.bank.aml.controller;
 
 import com.bank.aml.common.fault.FaultInjector;
+import org.springframework.context.annotation.Profile;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -12,10 +13,12 @@ import java.util.Map;
 
 /**
  * 调试接口（仅 ADMIN）：故障注入开关，用于可靠性演示。
+ * 仅在非生产 Profile 注册，避免生产环境暴露故障注入能力。
  */
 @RestController
 @RequestMapping("/api/debug")
 @PreAuthorize("hasRole('ADMIN')")
+@Profile("!prod")
 public class DebugController {
 
     private final FaultInjector faultInjector;

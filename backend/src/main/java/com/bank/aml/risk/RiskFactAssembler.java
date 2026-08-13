@@ -1,5 +1,6 @@
 package com.bank.aml.risk;
 
+import com.bank.aml.datasource.CustomerDataPort;
 import com.bank.aml.datasource.mock.MockDataSource;
 import org.springframework.stereotype.Component;
 
@@ -13,16 +14,16 @@ import java.util.stream.Collectors;
 /**
  * 风险事实组装器：把工具原始结果（交易/股权/黑名单）转换为统一的 {@link RiskContext}。
  * <p>Guardrails 使用的结构化事实必须来自工具结果或数据质量元数据，不能依赖模型自行声明。
- * 生产链路与评测链路共用同一组装逻辑。
+ * 依赖 {@link CustomerDataPort} 接口，生产链路与评测链路共用同一组装逻辑，数据源可替换。
  */
 @Component
 public class RiskFactAssembler {
 
     private static final BigDecimal MILLION = new BigDecimal("1000000");
 
-    private final MockDataSource dataSource;
+    private final CustomerDataPort dataSource;
 
-    public RiskFactAssembler(MockDataSource dataSource) {
+    public RiskFactAssembler(CustomerDataPort dataSource) {
         this.dataSource = dataSource;
     }
 

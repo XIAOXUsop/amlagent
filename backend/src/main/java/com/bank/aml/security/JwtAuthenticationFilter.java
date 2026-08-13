@@ -3,6 +3,7 @@ package com.bank.aml.security;
 import io.jsonwebtoken.Claims;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
+import jakarta.servlet.http.Cookie;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
@@ -49,7 +50,15 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
         if (bearer != null && bearer.startsWith("Bearer ")) {
             return bearer.substring(7);
         }
-        // SSE（EventSource 无法自定义 Header）通过 query 参数携带 token
+        // SSE 优先用 HttpOnly Cookie（避免 JWT 进入 URL/日志）；query 参数作为兼容回退
+        Cookie[] cookies = request.getCookies();
+        if (cookies != null) {
+            for (Cookie cookie : cookies) {
+                if ("aml_token".equals(cookie.getName())) {
+                    return cookie.getValue();
+                }
+            }
+        }
         return request.getParameter("token");
     }
 }

@@ -21,6 +21,11 @@ public class CostRouter {
         SIMPLE, COMPLEX
     }
 
+    /** 明确路由决策：RULE_ONLY（零 LLM）、AGENT（仅主 Agent）、AGENT_WITH_SUMMARY（主 Agent + 流式摘要） */
+    public enum Route {
+        RULE_ONLY, AGENT, AGENT_WITH_SUMMARY
+    }
+
     public Complexity assess(String alertRule) {
         if (alertRule == null || alertRule.isBlank()) {
             return Complexity.SIMPLE;
@@ -31,5 +36,24 @@ public class CostRouter {
             }
         }
         return Complexity.SIMPLE;
+    }
+
+    /**
+     * 路由决策：结合规则兜底开关与流式摘要开关。
+     * <ul>
+     *   <li>SIMPLE 且规则兜底启用 → RULE_ONLY（零 LLM 调用，含流式）；</li>
+     *   <li>COMPLEX 且流式摘要启用 → AGENT_WITH_SUMMARY；</li>
+     *   <li>其余 → AGENT（仅主 Agent）。</li>
+     * </ul>
+     */
+    public Route route(String alertRule, boolean ruleFallbackEnabled, boolean summaryEnabled) {
+        Complexity complexity = assess(alertRule);
+        if (ruleFallbackEnabled && complexity == Complexity.SIMPLE) {
+            return Route.RULE_ONLY;
+        }
+        if (summaryEnabled && complexity == Complexity.COMPLEX) {
+            return Route.AGENT_WITH_SUMMARY;
+        }
+        return Route.AGENT;
     }
 }

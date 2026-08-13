@@ -62,6 +62,7 @@ public class DueDiligenceService {
     private final PromptInjectionGuard promptInjectionGuard;
     private final CostRouter costRouter;
     private final boolean ruleFallbackEnabled;
+    private final boolean summaryEnabled;
     private final StreamingAnalysisAgent streamingAnalysisAgent;
     private final StreamingChatModel streamingChatModel;
     private final LegalKeywordResolver legalKeywordResolver;
@@ -78,6 +79,7 @@ public class DueDiligenceService {
                                MockDataSource dataSource, FaultInjector faultInjector,
                                PromptInjectionGuard promptInjectionGuard, CostRouter costRouter,
                                @Value("${aml.cost-routing.rule-fallback-enabled:false}") boolean ruleFallbackEnabled,
+                               @Value("${aml.cost-routing.summary-enabled:false}") boolean summaryEnabled,
                                StreamingAnalysisAgent streamingAnalysisAgent, StreamingChatModel streamingChatModel,
                                LegalKeywordResolver legalKeywordResolver, ObjectMapper objectMapper) {
         this.caseRepository = caseRepository;
@@ -94,6 +96,7 @@ public class DueDiligenceService {
         this.promptInjectionGuard = promptInjectionGuard;
         this.costRouter = costRouter;
         this.ruleFallbackEnabled = ruleFallbackEnabled;
+        this.summaryEnabled = summaryEnabled;
         this.streamingAnalysisAgent = streamingAnalysisAgent;
         this.streamingChatModel = streamingChatModel;
         this.legalKeywordResolver = legalKeywordResolver;
@@ -177,18 +180,17 @@ public class DueDiligenceService {
             record(c, WorkflowStage.PLANNING, "解析预警工单，拆解子任务：\n" + String.join("\n", planTasks(c.getAlertRule())));
 
             // 2. 数据采集（工具调用在 Agent 内部完成）
-            CostRouter.Complexity complexity = costRouter.assess(c.getAlertRule());
-            record(c, WorkflowStage.COLLECTING, "成本路由：复杂度=" + complexity
-                    + (ruleFallbackEnabled ? "（规则兜底已启用）" : "（规则兜底未启用，仅记录建议）"));
+            CostRouter.Route route = costRouter.route(c.getAlertRule(), ruleFallbackEnabled, summaryEnabled);
+            record(c, WorkflowStage.COLLECTING, "成本路由：" + route);
 
             DueDiligenceContext context = buildContext(c);
             record(c, WorkflowStage.COLLECTING, "调用工具并行采集数据（交易画像 / 股权穿透 / 黑名单 / 法规检索）...");
             faultInjector.inject(WorkflowStage.COLLECTING); // 故障注入埋点（默认关闭）
 
             DueDiligenceReport report = null;
-            if (ruleFallbackEnabled && complexity == CostRouter.Complexity.SIMPLE) {
-                // 零 LLM 成本：简单工单跳过模型，直接由规则引擎兜底（后续 fallback 逻辑生成报告）
-                record(c, WorkflowStage.COLLECTING, "SIMPLE 工单，跳过 LLM，使用规则引擎处理（零模型成本）");
+            if (route == CostRouter.Route.RULE_ONLY) {
+                // 零 LLM：简单工单彻底跳过所有模型调用（含流式），由规则引擎兜底
+                record(c, WorkflowStage.COLLECTING, "RULE_ONLY 路由，跳过所有模型调用（零 LLM 成本）");
             } else {
                 try {
                     report = agent.investigate(context.toPrompt());
@@ -200,7 +202,10 @@ public class DueDiligenceService {
 
             // 3. 风险推理
             record(c, WorkflowStage.REASONING, "综合研判交易 / 股权 / 黑名单 / 法规证据，完成风险推理。");
-            streamAnalysis(c, context.toPrompt()); // 流式输出分析过程（真实模型时启用，Mock 降级跳过）
+            // 流式摘要：仅 AGENT_WITH_SUMMARY 路由启用（默认关闭，避免第二次模型调用）
+            if (route == CostRouter.Route.AGENT_WITH_SUMMARY) {
+                streamAnalysis(c, context.toPrompt());
+            }
 
             if (report == null || report.riskLevel() == null || report.riskLevel().isBlank()) {
                 DueDiligenceReport fallback = dataSource.findCustomer(c.getCustomerId())
@@ -344,32 +349,32 @@ public class DueDiligenceService {
         return s.length() <= max ? s : s.substring(0, max);
     }
 
-    /** 流式输出风险分析过程（token 级推给前端）；Mock/无 Key 时跳过 */
+    /** 流式摘要（仅 AGENT_WITH_SUMMARY 路由启用）：异步生成，不阻塞 Worker 主流程 */
     private void streamAnalysis(CaseEntity c, String description) {
         if (streamingChatModel instanceof DisabledStreamingChatModel) {
             return;
         }
-        try {
-            StringBuilder sb = new StringBuilder();
-            CountDownLatch latch = new CountDownLatch(1);
-            streamingAnalysisAgent.streamAnalysis(description)
-                    .onPartialResponse(token -> {
-                        sb.append(token);
-                        workflowEventService.emitToken(c.getId(), token);
-                    })
-                    .onCompleteResponse(r -> latch.countDown())
-                    .onError(e -> {
-                        log.warn("流式分析失败：{}", e.getMessage());
-                        latch.countDown();
-                    })
-                    .start();
-            latch.await(60, TimeUnit.SECONDS);
-            if (!sb.isEmpty()) {
-                record(c, WorkflowStage.REASONING, "流式风险分析过程：" + sb);
+        // 异步执行，避免阻塞 Worker；摘要失败不影响主工单成功
+        java.util.concurrent.CompletableFuture.runAsync(() -> {
+            try {
+                StringBuilder sb = new StringBuilder();
+                CountDownLatch latch = new CountDownLatch(1);
+                streamingAnalysisAgent.streamAnalysis(description)
+                        .onPartialResponse(token -> {
+                            sb.append(token);
+                            workflowEventService.emitToken(c.getId(), token);
+                        })
+                        .onCompleteResponse(r -> latch.countDown())
+                        .onError(e -> {
+                            log.warn("流式摘要失败：{}", e.getMessage());
+                            latch.countDown();
+                        })
+                        .start();
+                latch.await(60, TimeUnit.SECONDS);
+            } catch (Exception e) {
+                log.warn("流式摘要异常，跳过：{}", e.getMessage());
             }
-        } catch (Exception e) {
-            log.warn("流式分析异常，跳过：{}", e.getMessage());
-        }
+        });
     }
 
     private String writeJson(Object o) {
