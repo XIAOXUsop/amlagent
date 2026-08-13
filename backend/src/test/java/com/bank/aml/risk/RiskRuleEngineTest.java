@@ -7,6 +7,7 @@ import java.time.LocalDateTime;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -22,58 +23,114 @@ class RiskRuleEngineTest {
     }
 
     @Test
-    void evaluatesSanctionSeverityRule() {
+    void levelOneSanctionDoesNotMatchOtherSanctionRule() {
         when(repository.findByEnabledTrueOrderByPriorityAsc()).thenReturn(List.of(
-                rule("SANCTION_LEVEL_1", "sanction.maxSeverity == 1", "高风险", "MANUAL_REVIEW", 100)));
-        RiskContext ctx = new RiskContext(1, true, 0, 0, 0, "中风险", 2);
-        var triggered = engine.evaluate(ctx);
-        assertThat(triggered).hasSize(1);
-        assertThat(triggered.get(0).ruleCode()).isEqualTo("SANCTION_LEVEL_1");
-        assertThat(triggered.get(0).action()).isEqualTo("MANUAL_REVIEW");
+                rule("SANCTION_LEVEL_1", "sanction.maxSeverity == 1", "高风险", "MANUAL_REVIEW", 10),
+                rule("SANCTION_OTHER", "sanction.maxSeverity >= 2", "高风险", "AUTO_DONE", 20)));
+
+        assertThat(engine.evaluate(context(1, true, 0, 0, true, false, 0, 0)))
+                .extracting(RiskRuleEngine.TriggeredRule::ruleCode)
+                .containsExactly("SANCTION_LEVEL_1");
     }
 
     @Test
-    void evaluatesAndExpression() {
+    void unexplainedCrossBorderAndNightActivityMatchesAndExpression() {
         when(repository.findByEnabledTrueOrderByPriorityAsc()).thenReturn(List.of(
-                rule("TXN_ABNORMAL", "transaction.crossRatio > 20 && transaction.nightRatio > 30",
-                        "高风险", "AUTO_DONE", 80)));
-        assertThat(engine.evaluate(new RiskContext(0, false, 25, 40, 0, "中风险", 2))).hasSize(1);
-        // 跨境占比不满足阈值 → 不触发
-        assertThat(engine.evaluate(new RiskContext(0, false, 10, 40, 0, "中风险", 2))).isEmpty();
+                rule("TXN_ABNORMAL",
+                        "transaction.crossRatio > 20 && transaction.nightRatio > 30 && transaction.riskExplained == false",
+                        "高风险", "AUTO_DONE", 60)));
+
+        assertThat(engine.evaluate(context(0, false, 25, 40, true, false, 0, 0))).hasSize(1);
+        assertThat(engine.evaluate(context(0, false, 25, 40, true, true, 0, 0))).isEmpty();
+        assertThat(engine.evaluate(context(0, false, 10, 40, true, false, 0, 0))).isEmpty();
+    }
+
+    @Test
+    void evaluatesStructuredTransactionAndUboFacts() {
+        when(repository.findByEnabledTrueOrderByPriorityAsc()).thenReturn(List.of(
+                rule("TXN_PATTERN_HIGH", "transaction.patternSeverity >= 2", "高风险", "AUTO_DONE", 50),
+                rule("UBO_UNVERIFIED", "corporate.uboRiskSeverity >= 2", "高风险", "MANUAL_REVIEW", 40)));
+
+        assertThat(engine.evaluate(context(0, false, 0, 0, true, false, 2, 2)))
+                .extracting(RiskRuleEngine.TriggeredRule::ruleCode)
+                .containsExactly("TXN_PATTERN_HIGH", "UBO_UNVERIFIED");
+    }
+
+    @Test
+    void evaluatesBooleanDataCompletenessFact() {
+        when(repository.findByEnabledTrueOrderByPriorityAsc()).thenReturn(List.of(
+                rule("DATA_INCOMPLETE", "transaction.dataComplete == false", "中风险", "MANUAL_REVIEW", 30)));
+
+        assertThat(engine.evaluate(context(0, false, 0, 0, false, false, 0, 0))).hasSize(1);
+        assertThat(engine.evaluate(context(0, false, 0, 0, true, false, 0, 0))).isEmpty();
     }
 
     @Test
     void evaluatesOrExpression() {
-        when(repository.findByEnabledTrueOrderByPriorityAsc()).thenReturn(List.of(
-                rule("TXN_MODERATE", "transaction.crossRatio > 0 || transaction.nightRatio > 0",
-                        "中风险", "AUTO_DONE", 70)));
-        assertThat(engine.evaluate(new RiskContext(0, false, 5, 0, 0, "中风险", 2))).hasSize(1);
-        assertThat(engine.evaluate(new RiskContext(0, false, 0, 0, 0, "中风险", 2))).isEmpty();
+        assertThat(engine.evaluate(
+                "transaction.patternSeverity == 1 || corporate.uboRiskSeverity == 1",
+                context(0, false, 0, 0, true, false, 0, 1))).isTrue();
+        assertThat(engine.evaluate(
+                "transaction.patternSeverity == 1 || corporate.uboRiskSeverity == 1",
+                context(0, false, 0, 0, true, false, 0, 0))).isFalse();
+    }
+
+    @Test
+    void rejectsUnknownFieldInsteadOfTreatingItAsZero() {
+        assertThatThrownBy(() -> engine.evaluate(
+                "transaction.patternSeverty == 0",
+                context(0, false, 0, 0, true, false, 0, 0)))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("Unsupported risk rule field");
+    }
+
+    @Test
+    void rejectsIllegalValueInsteadOfTreatingItAsZero() {
+        assertThatThrownBy(() -> engine.evaluate(
+                "transaction.patternSeverity == severe",
+                context(0, false, 0, 0, true, false, 0, 0)))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("Invalid risk rule value");
+    }
+
+    @Test
+    void rejectsMalformedExpression() {
+        assertThatThrownBy(() -> engine.validateExpression("transaction.patternSeverity >= 2 &&"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("Invalid risk rule");
     }
 
     @Test
     void filtersByEffectiveWindow() {
-        RiskRule r = rule("R", "sanction.sanctionHit == true", "高风险", "AUTO_DONE", 100);
-        r.setEffectiveFrom(LocalDateTime.now().plusDays(1));
-        when(repository.findByEnabledTrueOrderByPriorityAsc()).thenReturn(List.of(r));
-        // 生效窗口未到 → 不触发
-        assertThat(engine.evaluate(new RiskContext(0, true, 0, 0, 0, "中风险", 2))).isEmpty();
+        RiskRule rule = rule("R", "sanction.sanctionHit == true", "高风险", "AUTO_DONE", 100);
+        rule.setEffectiveFrom(LocalDateTime.now().plusDays(1));
+        when(repository.findByEnabledTrueOrderByPriorityAsc()).thenReturn(List.of(rule));
+
+        assertThat(engine.evaluate(context(0, true, 0, 0, true, false, 0, 0))).isEmpty();
     }
 
     @Test
-    void disabledRulesAreExcluded() {
+    void noEnabledRulesProducesNoDecision() {
         when(repository.findByEnabledTrueOrderByPriorityAsc()).thenReturn(List.of());
-        assertThat(engine.evaluate(new RiskContext(1, true, 0, 0, 0, "中风险", 2))).isEmpty();
+
+        assertThat(engine.evaluate(context(1, true, 100, 100, false, false, 2, 2))).isEmpty();
     }
 
-    private RiskRule rule(String code, String expr, String target, String action, int priority) {
-        RiskRule r = new RiskRule();
-        r.setRuleCode(code);
-        r.setConditionExpression(expr);
-        r.setTargetRiskLevel(target);
-        r.setAction(action);
-        r.setPriority(priority);
-        r.setEnabled(true);
-        return r;
+    private RiskContext context(int maxSeverity, boolean sanctionHit, double crossRatio, double nightRatio,
+                                boolean dataComplete, boolean riskExplained, int patternSeverity,
+                                int uboRiskSeverity) {
+        return new RiskContext(maxSeverity, sanctionHit, crossRatio, nightRatio, 0,
+                dataComplete, riskExplained, patternSeverity, uboRiskSeverity, "低风险", 1);
+    }
+
+    private RiskRule rule(String code, String expression, String target, String action, int priority) {
+        RiskRule rule = new RiskRule();
+        rule.setRuleCode(code);
+        rule.setConditionExpression(expression);
+        rule.setTargetRiskLevel(target);
+        rule.setAction(action);
+        rule.setPriority(priority);
+        rule.setEnabled(true);
+        return rule;
     }
 }

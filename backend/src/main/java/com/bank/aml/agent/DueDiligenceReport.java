@@ -23,6 +23,12 @@ public record DueDiligenceReport(
         /** 结论与建议 */
         String conclusion,
         /** 证据链 */
-        List<String> evidenceChain
+        List<String> evidenceChain,
+        /** 是否必须转人工复核 */
+        Boolean manualReviewRequired,
+        /** 风险发现代码，只能来自系统提示声明的闭集 */
+        List<String> findingCodes,
+        /** 后续处置代码，只能来自系统提示声明的闭集 */
+        List<String> actionCodes
 ) {
 }

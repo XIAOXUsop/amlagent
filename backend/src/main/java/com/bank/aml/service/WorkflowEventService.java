@@ -54,6 +54,23 @@ public class WorkflowEventService {
         }
     }
 
+    /** 推送一个 token 片段（流式输出），事件名 token */
+    public void emitToken(Long caseId, String token) {
+        List<SseEmitter> list = emitters.get(caseId);
+        if (list == null || list.isEmpty()) {
+            return;
+        }
+        String payload = toJson(Map.of("caseId", caseId, "token", token));
+        for (SseEmitter emitter : list) {
+            try {
+                emitter.send(SseEmitter.event().name("token").data(payload, MediaType.APPLICATION_JSON));
+            } catch (IOException e) {
+                list.remove(emitter);
+                emitter.completeWithError(e);
+            }
+        }
+    }
+
     private void remove(Long caseId, SseEmitter emitter) {
         List<SseEmitter> list = emitters.get(caseId);
         if (list != null) {

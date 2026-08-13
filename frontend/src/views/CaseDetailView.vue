@@ -22,6 +22,7 @@ const logs = ref<{ stage: string; content: string; at: string }[]>([])
 const doneKeys = ref<Set<string>>(new Set())
 const currentKey = ref('')
 const logOpen = ref<string[]>(['log'])
+const streamingText = ref('')
 let unsubscribe: (() => void) | null = null
 
 const workflowStages = [
@@ -81,6 +82,7 @@ async function connect() {
   logs.value = []
   doneKeys.value = new Set()
   currentKey.value = ''
+  streamingText.value = ''
   await refresh()
   const history = await listLogs(props.caseId)
   history.forEach((l) => {
@@ -91,7 +93,9 @@ async function connect() {
     logs.value.push({ stage: l.stage, content: l.content, at: '' })
     currentKey.value = l.stage
   })
-  unsubscribe = subscribeCase(props.caseId, handleEvent)
+  unsubscribe = subscribeCase(props.caseId, handleEvent, (token) => {
+    streamingText.value += token
+  })
 }
 
 onMounted(connect)
@@ -191,6 +195,11 @@ function legalBody(text: string): string {
           </div>
         </el-collapse-item>
       </el-collapse>
+    </div>
+
+    <div v-if="streamingText" class="card">
+      <h3 class="card-title">AI 风险分析（实时流式）</h3>
+      <div class="streaming-text">{{ streamingText }}<span class="cursor">▌</span></div>
     </div>
 
     <div v-if="report" class="card">
@@ -395,5 +404,23 @@ function legalBody(text: string): string {
   line-height: 1.7;
   color: #303133;
   flex: 1;
+}
+
+.streaming-text {
+  line-height: 1.9;
+  color: #303133;
+  font-size: 14px;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.cursor {
+  color: #409eff;
+  animation: blink 1s step-end infinite;
+}
+
+@keyframes blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
 }
 </style>

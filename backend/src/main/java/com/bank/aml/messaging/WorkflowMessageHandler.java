@@ -35,13 +35,16 @@ public class WorkflowMessageHandler {
     private final DueDiligenceService dueDiligenceService;
     private final StringRedisTemplate redisTemplate;
     private final QueueProperties props;
+    private final WorkerIdentity workerIdentity;
 
     public WorkflowMessageHandler(CaseRepository caseRepository, DueDiligenceService dueDiligenceService,
-                                  StringRedisTemplate redisTemplate, QueueProperties props) {
+                                  StringRedisTemplate redisTemplate, QueueProperties props,
+                                  WorkerIdentity workerIdentity) {
         this.caseRepository = caseRepository;
         this.dueDiligenceService = dueDiligenceService;
         this.redisTemplate = redisTemplate;
         this.props = props;
+        this.workerIdentity = workerIdentity;
     }
 
     public void onMessage(MapRecord<String, String, String> record) {
@@ -55,7 +58,7 @@ public class WorkflowMessageHandler {
         }
 
         // 抢占执行权：仅 PENDING/FAILED 可抢占，executionVersion 自增
-        boolean locked = caseRepository.tryLock(caseId, props.getConsumer(), LocalDateTime.now(),
+        boolean locked = caseRepository.tryLock(caseId, workerIdentity.consumerName(), LocalDateTime.now(),
                 CaseStatus.RUNNING, List.of(CaseStatus.PENDING, CaseStatus.FAILED)) == 1;
         if (!locked) {
             // 已在执行/已完成，幂等丢弃（重复消息不重复处理）
@@ -63,6 +66,15 @@ public class WorkflowMessageHandler {
             return;
         }
 
+        // 心跳线程：长模型调用期间周期性刷新 heartbeatAt，避免被 PendingClaimer 错误接管
+        java.util.concurrent.ScheduledExecutorService heartbeat = java.util.concurrent.Executors.newSingleThreadScheduledExecutor();
+        heartbeat.scheduleAtFixedRate(() -> {
+            try {
+                caseRepository.updateHeartbeat(caseId, LocalDateTime.now());
+            } catch (Exception ignored) {
+                // 心跳失败不影响主流程
+            }
+        }, 30, 30, java.util.concurrent.TimeUnit.SECONDS);
         try {
             dueDiligenceService.process(caseId);
             ack(record);
@@ -75,10 +87,12 @@ public class WorkflowMessageHandler {
             handleRetry(caseId, e.getMessage(), record);
         } catch (Exception e) {
             handleRetry(caseId, "未知异常: " + e.getMessage(), record);
+        } finally {
+            heartbeat.shutdownNow();
         }
     }
 
-    /** 可重试失败：重试次数未超限则置回 FAILED 并重新入队；超限进死信 */
+    /** 可重试失败：重试次数未超限则置 RETRY_WAIT（指数退避，由 RetryScheduler 到期重投）；超限进死信 */
     private void handleRetry(Long caseId, String message, MapRecord<String, String, String> record) {
         CaseEntity c = caseRepository.findById(caseId).orElse(null);
         int retry = (c == null ? 0 : c.getRetryCount()) + 1;
@@ -89,12 +103,22 @@ public class WorkflowMessageHandler {
             ack(record);
             log.error("工单重试超限进死信 caseId={} retry={}", caseId, retry);
         } else {
-            caseRepository.failCase(caseId, CaseStatus.FAILED, retry, "RETRYABLE", message);
-            redisTemplate.opsForStream().add(StreamRecords.string(
-                    Map.of("caseId", String.valueOf(caseId))).withStreamKey(props.getStream()));
+            long backoffSeconds = backoffSeconds(retry);
+            LocalDateTime nextRetryAt = LocalDateTime.now().plusSeconds(backoffSeconds);
+            caseRepository.markRetryWait(caseId, CaseStatus.RETRY_WAIT, retry, "RETRYABLE", message, nextRetryAt);
             ack(record);
-            log.warn("工单可重试失败，重新入队 caseId={} retry={}", caseId, retry);
+            log.warn("工单可重试失败，进入 RETRY_WAIT caseId={} retry={} 退避={}s", caseId, retry, backoffSeconds);
         }
+    }
+
+    /** 指数退避：5s、15s、45s（base=5，比例 3） */
+    private long backoffSeconds(int retry) {
+        long base = props.getRetryBackoffSeconds();
+        long factor = 1;
+        for (int i = 1; i < retry; i++) {
+            factor *= 3;
+        }
+        return base * factor;
     }
 
     private void markFailed(Long caseId, String code, String message) {

@@ -1,12 +1,17 @@
 package com.bank.aml.service;
 
 import com.bank.aml.agent.DueDiligenceAgent;
+import com.bank.aml.agent.DueDiligenceContext;
 import com.bank.aml.agent.DueDiligenceReport;
+import com.bank.aml.agent.StreamingAnalysisAgent;
 import com.bank.aml.agent.guardrail.GuardrailEngine;
 import com.bank.aml.common.enums.CaseStatus;
 import com.bank.aml.common.enums.WorkflowStage;
 import com.bank.aml.common.exception.NonRetryableWorkflowException;
 import com.bank.aml.common.exception.RetryableWorkflowException;
+import com.bank.aml.common.fault.FaultInjector;
+import com.bank.aml.cost.CostRouter;
+import com.bank.aml.security.PromptInjectionGuard;
 import com.bank.aml.datasource.entity.CaseEntity;
 import com.bank.aml.datasource.entity.CaseLogEntity;
 import com.bank.aml.datasource.mock.MockDataSource;
@@ -19,15 +24,19 @@ import com.bank.aml.workflow.CaseExecution.ExecutionStatus;
 import com.bank.aml.workflow.CaseExecutionRepository;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import dev.langchain4j.model.chat.DisabledStreamingChatModel;
+import dev.langchain4j.model.chat.StreamingChatModel;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.List;
-import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 
 /**
  * 尽调工作流编排：
@@ -49,6 +58,13 @@ public class DueDiligenceService {
     private final GuardrailEngine guardrailEngine;
     private final WorkflowEventService workflowEventService;
     private final MockDataSource dataSource;
+    private final FaultInjector faultInjector;
+    private final PromptInjectionGuard promptInjectionGuard;
+    private final CostRouter costRouter;
+    private final boolean ruleFallbackEnabled;
+    private final StreamingAnalysisAgent streamingAnalysisAgent;
+    private final StreamingChatModel streamingChatModel;
+    private final LegalKeywordResolver legalKeywordResolver;
     private final ObjectMapper objectMapper;
 
     /** 阶段耗时测量（每工单独立） */
@@ -59,7 +75,11 @@ public class DueDiligenceService {
                                MetricsRecorder metrics,
                                DueDiligenceAgent agent, RuleBasedReporter ruleReporter,
                                GuardrailEngine guardrailEngine, WorkflowEventService workflowEventService,
-                               MockDataSource dataSource, ObjectMapper objectMapper) {
+                               MockDataSource dataSource, FaultInjector faultInjector,
+                               PromptInjectionGuard promptInjectionGuard, CostRouter costRouter,
+                               @Value("${aml.cost-routing.rule-fallback-enabled:false}") boolean ruleFallbackEnabled,
+                               StreamingAnalysisAgent streamingAnalysisAgent, StreamingChatModel streamingChatModel,
+                               LegalKeywordResolver legalKeywordResolver, ObjectMapper objectMapper) {
         this.caseRepository = caseRepository;
         this.caseLogRepository = caseLogRepository;
         this.caseExecutionRepository = caseExecutionRepository;
@@ -70,6 +90,13 @@ public class DueDiligenceService {
         this.guardrailEngine = guardrailEngine;
         this.workflowEventService = workflowEventService;
         this.dataSource = dataSource;
+        this.faultInjector = faultInjector;
+        this.promptInjectionGuard = promptInjectionGuard;
+        this.costRouter = costRouter;
+        this.ruleFallbackEnabled = ruleFallbackEnabled;
+        this.streamingAnalysisAgent = streamingAnalysisAgent;
+        this.streamingChatModel = streamingChatModel;
+        this.legalKeywordResolver = legalKeywordResolver;
         this.objectMapper = objectMapper;
     }
 
@@ -100,15 +127,14 @@ public class DueDiligenceService {
         outboxService.record(caseId);
     }
 
-    /** 直接异步触发（仅测试/手动触发使用） */
+    /** 手动触发：统一写入 Outbox 队列，由 Worker 消费 + 抢占，消除直接异步执行的旁路 */
     public void trigger(Long caseId) {
-        CompletableFuture.runAsync(() -> {
-            try {
-                process(caseId);
-            } catch (Exception e) {
-                log.error("直接触发执行异常 caseId={}", caseId, e);
-            }
-        });
+        CaseEntity c = getCase(caseId);
+        if (c.getStatus() == CaseStatus.PENDING || c.getStatus() == CaseStatus.FAILED) {
+            enqueue(caseId);
+        } else {
+            log.info("工单 {} 状态为 {}，忽略手动触发（幂等）", caseId, c.getStatus());
+        }
     }
 
     /** 人工重试：重置为 PENDING 并重新写入 Outbox 入队 */
@@ -139,23 +165,42 @@ public class DueDiligenceService {
         caseRepository.save(c);
 
         try {
+            // 0. Prompt 注入检测（代码层确定性防护，命中仍继续由模型按 prompt 隔离处理）
+            PromptInjectionGuard.InjectionResult injection = promptInjectionGuard.scan(c.getAlertRule());
+            if (injection.suspicious()) {
+                record(c, WorkflowStage.PLANNING, "⚠ 检测到疑似提示注入：" + injection.matchedPatterns());
+                c.setFailureMessage("检测到疑似提示注入，已记录");
+                caseRepository.save(c);
+            }
+
             // 1. 任务规划
             record(c, WorkflowStage.PLANNING, "解析预警工单，拆解子任务：\n" + String.join("\n", planTasks(c.getAlertRule())));
 
             // 2. 数据采集（工具调用在 Agent 内部完成）
-            String description = buildDescription(c);
-            record(c, WorkflowStage.COLLECTING, "调用工具并行采集数据（交易画像 / 股权穿透 / 黑名单 / 法规检索）...");
+            CostRouter.Complexity complexity = costRouter.assess(c.getAlertRule());
+            record(c, WorkflowStage.COLLECTING, "成本路由：复杂度=" + complexity
+                    + (ruleFallbackEnabled ? "（规则兜底已启用）" : "（规则兜底未启用，仅记录建议）"));
 
-            DueDiligenceReport report;
-            try {
-                report = agent.investigate(description);
-            } catch (Exception e) {
-                log.warn("Agent 调用失败，进入规则降级 caseId={}: {}", caseId, e.getMessage());
-                report = null;
+            DueDiligenceContext context = buildContext(c);
+            record(c, WorkflowStage.COLLECTING, "调用工具并行采集数据（交易画像 / 股权穿透 / 黑名单 / 法规检索）...");
+            faultInjector.inject(WorkflowStage.COLLECTING); // 故障注入埋点（默认关闭）
+
+            DueDiligenceReport report = null;
+            if (ruleFallbackEnabled && complexity == CostRouter.Complexity.SIMPLE) {
+                // 零 LLM 成本：简单工单跳过模型，直接由规则引擎兜底（后续 fallback 逻辑生成报告）
+                record(c, WorkflowStage.COLLECTING, "SIMPLE 工单，跳过 LLM，使用规则引擎处理（零模型成本）");
+            } else {
+                try {
+                    report = agent.investigate(context.toPrompt());
+                } catch (Exception e) {
+                    log.warn("Agent 调用失败，进入规则降级 caseId={}: {}", caseId, e.getMessage());
+                    report = null;
+                }
             }
 
             // 3. 风险推理
             record(c, WorkflowStage.REASONING, "综合研判交易 / 股权 / 黑名单 / 法规证据，完成风险推理。");
+            streamAnalysis(c, context.toPrompt()); // 流式输出分析过程（真实模型时启用，Mock 降级跳过）
 
             if (report == null || report.riskLevel() == null || report.riskLevel().isBlank()) {
                 DueDiligenceReport fallback = dataSource.findCustomer(c.getCustomerId())
@@ -173,6 +218,7 @@ public class DueDiligenceService {
             record(c, WorkflowStage.GUARDRAIL, "执行规则护栏校验（制裁名单 / 评级一致性）...");
             MockDataSource.Customer customer = dataSource.findCustomer(c.getCustomerId()).orElse(null);
             if (customer != null) {
+                String rawAgentRiskLevel = report.riskLevel(); // 模型原始评级（Guardrail 前）
                 GuardrailEngine.GuardrailResult gr = guardrailEngine.apply(customer, report);
                 gr.decision().triggeredRules().forEach(r -> record(c, WorkflowStage.GUARDRAIL,
                         "触发规则【" + r.ruleCode() + " v" + r.ruleVersion() + "】→ " + r.targetRiskLevel()
@@ -181,18 +227,24 @@ public class DueDiligenceService {
                 if (!gr.corrections().isEmpty()) {
                     metrics.guardrailCorrection();
                 }
-                if (!gr.finalRiskLevel().equals(report.riskLevel())) {
-                    report = withRiskLevel(report, gr.finalRiskLevel());
-                    record(c, WorkflowStage.GUARDRAIL, "评级修正为：【" + gr.finalRiskLevel() + "】");
+                // 同步最终报告字段（风险评级 / 人工复核标志 / 处置代码）
+                report = withGuardrailDecision(report, gr);
+                if (!gr.finalRiskLevel().equals(rawAgentRiskLevel)) {
+                    record(c, WorkflowStage.GUARDRAIL, "评级由【" + rawAgentRiskLevel + "】修正为：【" + gr.finalRiskLevel() + "】");
                 }
                 c.setRiskLevel(gr.finalRiskLevel());
+                c.setRawRiskLevel(rawAgentRiskLevel);
                 c.setStatus(gr.mustEscalate() ? CaseStatus.HOLD : CaseStatus.DONE);
                 if (gr.mustEscalate()) {
                     metrics.caseHold();
-                    record(c, WorkflowStage.GUARDRAIL, "触发转人工：命中一级制裁名单，工单进入人工复核队列。");
+                    String escalateRules = gr.decision().triggeredRules().stream()
+                            .filter(r -> "MANUAL_REVIEW".equals(r.action()))
+                            .map(r -> r.ruleCode()).toList().toString();
+                    record(c, WorkflowStage.GUARDRAIL, "触发转人工（规则 " + escalateRules + "），工单进入人工复核队列。");
                 }
             } else {
                 c.setRiskLevel(report.riskLevel());
+                c.setRawRiskLevel(report.riskLevel());
                 c.setStatus(CaseStatus.DONE);
             }
 
@@ -239,11 +291,14 @@ public class DueDiligenceService {
                 .orElseThrow(() -> new IllegalArgumentException("工单不存在：" + caseId));
     }
 
-    private String buildDescription(CaseEntity c) {
-        return "客户编号：" + c.getCustomerId()
-                + "，客户名称：" + c.getCustomerName()
-                + "。预警规则：" + c.getAlertRule()
-                + "。请对该客户开展高风险客户尽职调查。";
+    private DueDiligenceContext buildContext(CaseEntity c) {
+        var customer = dataSource.findCustomer(c.getCustomerId()).orElse(null);
+        String idCard = customer != null ? customer.idCard() : "";
+        String asOfDate = java.time.LocalDate.now().toString();
+        List<String> legalKeywords = legalKeywordResolver.resolve(c.getAlertRule());
+        return new DueDiligenceContext(
+                c.getId(), c.getCustomerId(), c.getCustomerName(), idCard, asOfDate, legalKeywords,
+                c.getAlertRule(), "请对该客户开展高风险客户尽职调查。");
     }
 
     private List<String> planTasks(String alertRule) {
@@ -289,6 +344,34 @@ public class DueDiligenceService {
         return s.length() <= max ? s : s.substring(0, max);
     }
 
+    /** 流式输出风险分析过程（token 级推给前端）；Mock/无 Key 时跳过 */
+    private void streamAnalysis(CaseEntity c, String description) {
+        if (streamingChatModel instanceof DisabledStreamingChatModel) {
+            return;
+        }
+        try {
+            StringBuilder sb = new StringBuilder();
+            CountDownLatch latch = new CountDownLatch(1);
+            streamingAnalysisAgent.streamAnalysis(description)
+                    .onPartialResponse(token -> {
+                        sb.append(token);
+                        workflowEventService.emitToken(c.getId(), token);
+                    })
+                    .onCompleteResponse(r -> latch.countDown())
+                    .onError(e -> {
+                        log.warn("流式分析失败：{}", e.getMessage());
+                        latch.countDown();
+                    })
+                    .start();
+            latch.await(60, TimeUnit.SECONDS);
+            if (!sb.isEmpty()) {
+                record(c, WorkflowStage.REASONING, "流式风险分析过程：" + sb);
+            }
+        } catch (Exception e) {
+            log.warn("流式分析异常，跳过：{}", e.getMessage());
+        }
+    }
+
     private String writeJson(Object o) {
         try {
             return objectMapper.writeValueAsString(o);
@@ -297,10 +380,11 @@ public class DueDiligenceService {
         }
     }
 
-    /** record 副本：替换风险评级 */
-    private DueDiligenceReport withRiskLevel(DueDiligenceReport r, String riskLevel) {
-        return new DueDiligenceReport(r.customerId(), r.customerName(), riskLevel,
+    /** record 副本：同步 Guardrail 最终决策（风险评级 / 人工复核标志 / 处置代码） */
+    private DueDiligenceReport withGuardrailDecision(DueDiligenceReport r, GuardrailEngine.GuardrailResult gr) {
+        return new DueDiligenceReport(r.customerId(), r.customerName(), gr.finalRiskLevel(),
                 r.transactionProfile(), r.corporateProfile(), r.sanctions(), r.legalBasis(),
-                r.riskPoints(), r.conclusion(), r.evidenceChain());
+                r.riskPoints(), r.conclusion(), r.evidenceChain(), gr.mustEscalate(),
+                r.findingCodes(), gr.decision().actionCodes());
     }
 }

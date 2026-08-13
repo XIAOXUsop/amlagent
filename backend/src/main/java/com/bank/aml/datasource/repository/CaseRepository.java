@@ -24,6 +24,9 @@ public interface CaseRepository extends JpaRepository<CaseEntity, Long> {
     /** 执行超时的工单（Worker 崩溃等），用于接管恢复 */
     List<CaseEntity> findByStatusAndLockedAtBefore(CaseStatus status, java.time.LocalDateTime before);
 
+    /** 重试等待中、到期需重新入队的工单 */
+    List<CaseEntity> findByStatusAndNextRetryAtLessThanEqual(CaseStatus status, LocalDateTime now);
+
     /**
      * 抢占工单执行权（条件更新，幂等）：仅 PENDING/FAILED 可抢占，executionVersion 自增。
      * 影响行数 = 1 表示抢占成功；= 0 表示已被其他 Worker 执行（重复消息直接忽略）。
@@ -33,7 +36,7 @@ public interface CaseRepository extends JpaRepository<CaseEntity, Long> {
     @Query("""
             UPDATE CaseEntity c
             SET c.status = :running, c.executionVersion = c.executionVersion + 1,
-                c.lockedBy = :worker, c.lockedAt = :now
+                c.lockedBy = :worker, c.lockedAt = :now, c.heartbeatAt = :now
             WHERE c.id = :id AND c.status IN :eligible
             """)
     int tryLock(@Param("id") Long id,
@@ -41,6 +44,12 @@ public interface CaseRepository extends JpaRepository<CaseEntity, Long> {
                 @Param("now") LocalDateTime now,
                 @Param("running") CaseStatus running,
                 @Param("eligible") List<CaseStatus> eligible);
+
+    /** 刷新心跳（长模型调用期间周期性调用，避免被错误接管） */
+    @Modifying
+    @Transactional
+    @Query("UPDATE CaseEntity c SET c.heartbeatAt = :now WHERE c.id = :id")
+    int updateHeartbeat(@Param("id") Long id, @Param("now") LocalDateTime now);
 
     /** 释放执行锁并写入失败信息 */
     @Modifying
@@ -56,4 +65,33 @@ public interface CaseRepository extends JpaRepository<CaseEntity, Long> {
                  @Param("retryCount") int retryCount,
                  @Param("failureCode") String failureCode,
                  @Param("failureMessage") String failureMessage);
+
+    /** 置为 RETRY_WAIT 并记录下次重试时间（指数退避调度） */
+    @Modifying
+    @Transactional
+    @Query("""
+            UPDATE CaseEntity c
+            SET c.status = :retryWait, c.lockedBy = NULL, c.lockedAt = NULL,
+                c.retryCount = :retryCount, c.failureCode = :failureCode, c.failureMessage = :failureMessage,
+                c.nextRetryAt = :nextRetryAt
+            WHERE c.id = :id
+            """)
+    int markRetryWait(@Param("id") Long id,
+                      @Param("retryWait") CaseStatus retryWait,
+                      @Param("retryCount") int retryCount,
+                      @Param("failureCode") String failureCode,
+                      @Param("failureMessage") String failureMessage,
+                      @Param("nextRetryAt") LocalDateTime nextRetryAt);
+
+    /** 重试到期后重新置为 PENDING（由 RetryScheduler 调用） */
+    @Modifying
+    @Transactional
+    @Query("""
+            UPDATE CaseEntity c
+            SET c.status = :pending, c.nextRetryAt = NULL
+            WHERE c.id = :id AND c.status = :retryWait
+            """)
+    int requeueRetryWait(@Param("id") Long id,
+                         @Param("pending") CaseStatus pending,
+                         @Param("retryWait") CaseStatus retryWait);
 }

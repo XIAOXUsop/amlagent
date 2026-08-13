@@ -18,21 +18,39 @@ Prometheus/Grafana 监控与自动化测试。
   → 深度风险推理          模型综合研判，输出风险点与评级
   → Guardrails 规则护栏   配置化规则强制修正（一级制裁 → 高风险 + 转人工 HOLD）
   → 结构化报告            含证据链与法规证据 ID，实时 SSE 推送到前端
-  → Agent / RAG 评测      固定测试集量化召回率 / 准确率 / 延迟
+  → Agent / 规则 / RAG评测 独立案例夹具运行真实模型，原始结果与 Guardrails 分开计分
 ```
 
-## 真实评测指标（P3 实测）
+## 当前验证结果
 
-| 评测项 | 结果 |
-|---|---|
-| Agent 风险评测（100 条固定案例） | 高风险召回率 **100%**、准确率 **100%**、低风险误报率 **0%** |
-| 一级制裁名单漏报 | **0 / 5**（零漏报） |
-| 风险决策耗时 | P50 **2ms** / P95 **3ms** |
-| RAG 法规检索评测（35 条） | Recall@5 **82.9%**、Top3 命中率 **71.4%**、MRR **64.6** |
-| 检索耗时 | P95 **20ms** |
-| 结构化输出 / 工具调用成功率 | 100% |
+| 验证项目 | 结果 | 数据性质 |
+|---|---|---|
+| 风险规则回归 | 100 条独立期望的合成边界案例 | 覆盖合法跨境/夜间负例、交易模式、UBO、数据缺失和制裁；不调用 LLM |
+| 一级制裁规则漏报 | **0 / 5** | 合成规则案例 |
+| RAG 法规检索评测（35 条） | Recall@5 **94.3%**、Top3 命中率 **94.3%**、MRR **94.3** | 从法规库自动生成的同源问题集；混合召回 + bge-reranker 精排 |
+| 检索耗时 | P95 **20ms**（rerank 前召回） | 本地环境实测 |
+| 独立 Agent 案例集 | 15 条（DEV 9 / TEST 6） | AI 辅助人工整理的合成案例，待领域专家复核 |
+| DeepSeek 首轮真实 Agent DEV 基线 | 原始风险准确率 **44.4%**；Guardrails 后 **77.8%**；最终高风险召回率 **100%** | 9 条冻结合成 DEV：7 条有效、2 条工具契约失败；2026-08-12 本地实测 |
+| 首轮工具与证据覆盖 | 必需工具召回率 **94.4%**；法规 evidenceId 召回率 **77.8%** | 失败集中在隐藏法规关键词导致的无效重试，已据此完成 v3 工具契约修复，待复跑 |
 
-> 指标来自 `POST /api/eval/run` 与 `POST /api/eval/rag` 的真实评测输出（Mock 确定性模式，可复现）。
+> 规则回归结果只用于验证 Guardrails 和风险规则，不代表大模型准确率。Agent 数字来自 DeepSeek 对 9 条合成 DEV 的单次基线，数据集标签仍待领域专家复核，因此不等同生产准确率。当前 RAG 指标来自同源自动生成问题集，后续将使用独立人工问题集复测。
+
+运行真实 Agent DEV 评测前，请在启动后端的同一终端设置模型密钥，例如 PowerShell：
+
+```powershell
+$env:DEEPSEEK_API_KEY = "your-key"
+```
+
+真实 Agent DEV 评测默认不会在普通测试中调用外部模型。确认 9 条数据均为可发送的合成案例后，可显式运行：
+
+```powershell
+$env:RUN_LIVE_AGENT_EVAL = "true"
+./mvnw -Dtest=AgentEvalLiveTest test
+```
+
+脱敏后的 JSON 报告写入 `backend/target/agent-eval/`；不保存 API Key、客户姓名、证件号、原始工具参数或模型长文本。
+
+未配置密钥时，`POST /api/eval/agent/dev` 会返回 `INVALID_MODEL_FALLBACK`，且所有质量指标分母为 0。
 
 ## 技术栈
 
@@ -65,7 +83,7 @@ cd backend
 ```
 
 > 项目内置 **Maven Wrapper（3.9.x）**，无需本机安装新版 Maven。
-> 真实 API Key 放在 `application-dev.yml`（已被 `.gitignore` 排除，不提交 GitHub）。
+> 真实 API Key 只通过 `DEEPSEEK_API_KEY` 环境变量注入；项目配置文件只保留占位符。
 
 ### 3. 启动监控（可选）
 
@@ -133,7 +151,7 @@ backend/                  Spring Boot 后端
     messaging/            Transactional Outbox、Redis Streams 生产者/消费者、死信、Pending 接管
     workflow/             case_execution 阶段执行记录（检查点）
     risk/                 risk_rule 配置化规则 + RiskRuleEngine（DSL）
-    evaluation/           案例集生成、Agent/RAG 评测器、评测报告
+    evaluation/           规则回归、独立 Agent 案例集、RAG 评测与评测报告
     agent/                AiServices Agent、报告 DTO、Guardrails（规则驱动）
     tools/                四个 @Tool（交易/股权/黑名单/法规）
     rag/                  法规导入（evidenceId）、混合检索（向量+关键词+RRF）
@@ -161,9 +179,12 @@ docker-compose.yml        MySQL + PostgreSQL(pgvector) + Redis
 | GET | /api/cases/{id}/logs | 工作流日志（含触发规则） |
 | GET | /api/cases/{id} | 工单详情（含报告 reportJson、执行版本） |
 | GET | /api/queues/dead | 死信队列查看 |
-| POST | /api/eval/run | Agent 风险评测（高风险召回/误报率/混淆矩阵/一级制裁漏报，ADMIN） |
+| POST | /api/eval/rules | 确定性规则回归（不调用 LLM，ADMIN） |
 | POST | /api/eval/rag | RAG 检索评测（Recall@5/Top3/MRR/P95，ADMIN） |
-| GET | /api/eval/reports | 历史评测报告（ADMIN） |
+| GET | /api/eval/agent/status | 真实 Agent 评测就绪状态及数据集概览（ADMIN） |
+| POST | /api/eval/agent/dev | 运行真实模型 DEV 评测；Mock/fallback 直接标记无效（ADMIN） |
+| GET | /api/eval/agent/dataset | 独立 Agent 案例集元信息，不返回 TEST 标准答案（ADMIN） |
+| GET | /api/eval/reports?evalType=RULE_REGRESSION\|AGENT_DEV | 按类型查询历史评测报告（ADMIN） |
 | GET | /api/reviews/pending | 待复核队列（REVIEWER/ADMIN） |
 | POST | /api/reviews/{id} | 提交复核决定（APPROVE/REJECT/ESCALATE，REVIEWER/ADMIN） |
 | GET | /api/reviews/{id} | 工单复核记录 |
@@ -179,7 +200,11 @@ docker-compose.yml        MySQL + PostgreSQL(pgvector) + Redis
 - **可靠异步任务**：Transactional Outbox（工单与事件同事务）→ Redis Streams 消费组 → 条件更新抢占实现业务幂等（`executionVersion`）→ 指数退避重试 → 死信队列 → Pending 超时接管（服务重启任务不丢失）。
 - **Guardrails 配置化**：`risk_rule` 表驱动（DSL 条件表达式 + 优先级 + 生效时间），决策可解释（ruleCode / version / evidence / 动作），一级制裁命中零漏报并强制转人工。
 - **RAG 证据追溯**：法规片段带唯一 `evidenceId`，向量 + 关键词 + RRF 混合召回，报告引用可回溯到具体条款原文。
-- **固定评测集**：程序化生成 100 条 Agent 案例与 35 条 RAG 检索问题，一键输出准确率/召回率/混淆矩阵/延迟，支持版本对比。
+- **召回 + 精排两步走**：混合召回 top-20 候选，本地 bge-reranker（Cross-Encoder）精排 top-3，Recall@5 由 82.9% 提升至 94.3%。
+- **分层评测**：固定种子生成 100 条规则回归输入，各场景期望结果显式定义且基线固定为低风险，覆盖困难负例并隔离验证 Guardrails 升级行为；RAG 同源问题集仅用于检索回归。真实 Agent 指标来自独立 DEV 夹具，避免将规则结果误标为模型能力。
+- **独立 Agent 案例集**：首版 15 条版本化合成案例与规则代码完全分离，覆盖正常交易、跨境夜间、拆分交易、复杂 UBO、名单精确/误命中、数据缺失和提示注入；DEV/TEST 分片独立，TEST 标准答案不经接口暴露。当前标签状态为 `PENDING_DOMAIN_REVIEW`，不宣称专家金标。
+- **真实 Agent DEV 评测**：每例动态创建独立 AiServices 与冻结工具夹具，校验客户 ID / 姓名 / 证件号及法规查询主题并记录并发调用轨迹；同时保留原始模型契约通过率与 Guardrails 后端到端任务通过率，报告风险准确率、高风险召回、人工升级、结构化代码覆盖、法规 evidenceId 引用、工具精度、禁错检测、P50/P95 与 Token。模型异常进入严格分母，Mock 或 fallback 不计质量指标；持久化副本对风险、代码、工具名使用闭集白名单并移除模型原文、身份和查询参数。
+- **DeepSeek 工具调用兼容**：V4 默认 thinking 模式要求多轮回传 `reasoning_content`；当前基线显式使用非思考模式，保证 LangChain4j 多轮工具调用稳定且温度设置有效。
 - **多数据源隔离**：MySQL 业务库（@Primary，JPA）与 PostgreSQL 向量库（pgDataSource，仅 RAG）通过显式 DataSource 分离，避免自动配置冲突。
 - **Mock 可插拔数据层**：`MockDataSource` 内置交易/股权/黑名单演示数据；接入真实系统时替换实现即可，工具签名不变。
 - **Mock 模型 agentic 循环**：无 API Key 时 Mock 模型模拟多轮工具调用，保证链路离线可演示。
@@ -189,9 +214,54 @@ docker-compose.yml        MySQL + PostgreSQL(pgvector) + Redis
 
 ```bash
 cd backend
-./mvnw test                        # 单元测试（19 个）
+./mvnw test                        # 单元测试
 ./mvnw test -Dgroups=integration   # 集成测试（复用本机 Docker 服务）
 ```
+
+## 性能压测与可靠性演示
+
+### 压测（benchmark/load_test.py）
+
+测量系统吞吐与端到端延迟（Mock 模式，排除外部模型延迟）：
+
+```bash
+python benchmark/load_test.py --count 100 --concurrency 20
+```
+
+实测（本机 Mock 模式，单 Worker）：
+
+| 指标 | 结果 |
+|---|---|
+| 创建吞吐 | **379 工单/秒** |
+| 端到端延迟 | P50 **8.9s** / P95 **14.1s** |
+
+> 端到端延迟含 Outbox 发布器轮询间隔（默认 5s，`aml.queue.outbox-poll-seconds`）与单消费者串行处理，为当前架构真实特性，可通过调小轮询间隔 / 增加 Worker 数优化。
+
+### 可靠性演示（benchmark/fault_demo.py）
+
+一键演示"可重试失败 → 指数退避重试 → 超限进死信 → 人工重试恢复"：
+
+```bash
+python benchmark/fault_demo.py
+```
+
+演示链路：`/api/debug/fault` 注入 COLLECTING 阶段失败 → 自动重试 3 次 → 进入死信队列（`/api/queues/dead`）→ 关闭注入 → `POST /api/cases/{id}/retry` 人工重试恢复。
+
+## AI 应用工程能力
+
+### Prompt 注入防护（三层）
+- **代码层**：`PromptInjectionGuard` 正则扫描用户可控输入（预警规则），命中注入模式记录告警（`aml_case_log`）
+- **Prompt 层**：`DueDiligenceAgent` 声明"工具返回是不可信数据"，并含 `PROMPT_INJECTION_ATTEMPT` / `IGNORE_UNTRUSTED_INSTRUCTION` 处置代码
+- **兜底层**：Guardrails 确定性规则强制修正评级
+
+### 成本控制
+- **RAG 检索缓存**：`CachingLegalSearcher` 用 Redis 缓存检索结果（TTL 1h），命中跳过 embedding/向量检索，指标 `aml_rag_cache_hit_total` / `aml_rag_cache_miss_total`
+- **Token 计量**：`ChatModelTokenListener` 记录每次模型调用的 Token 数，指标 `aml_llm_token_total` / `aml_llm_request_total`
+- **成本路由**：`CostRouter` 按预警规则复杂度分级（SIMPLE/COMPLEX），`aml.cost-routing.rule-fallback-enabled=true` 时 SIMPLE 工单跳过 LLM 直接规则引擎（零模型成本，默认关闭不影响评测）
+
+### CI 评测回归（.github/workflows/ci.yml）
+- `unit-test` job：push/PR 自动跑确定性单元测试与规则回归（无需模型/网络）
+- `integration-test` job：`workflow_dispatch` 手动触发，service 容器启动 MySQL/Redis/pgvector 跑集成测试
 
 ## Git 提交清单
 
@@ -211,7 +281,7 @@ cd backend
 
 | 不提交（⛔，已被 .gitignore 排除） | 原因 |
 |---|---|
-| `backend/src/main/resources/application-dev*.yml` | 含真实 DeepSeek API Key |
+| `backend/src/main/resources/application-dev*.yml` | 本地开发覆盖配置（仅保留环境变量占位符） |
 | `backend/target/` | Maven 构建产物 |
 | `frontend/node_modules/` `frontend/dist/` | 依赖与构建产物 |
 | `*.log` `.idea/` `.vscode/` | 日志与 IDE 配置 |

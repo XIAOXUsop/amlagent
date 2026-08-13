@@ -18,6 +18,9 @@ public class MetricsRecorder {
     private final Counter caseFailedTotal;
     private final Counter guardrailCorrectionTotal;
     private final Counter llmRequestTotal;
+    private final Counter llmTokenTotal;
+    private final Counter ragCacheHitTotal;
+    private final Counter ragCacheMissTotal;
     private final Timer stageDuration;
 
     public MetricsRecorder(MeterRegistry registry) {
@@ -26,6 +29,9 @@ public class MetricsRecorder {
         this.caseFailedTotal = registry.counter("aml_case_failed_total");
         this.guardrailCorrectionTotal = registry.counter("aml_guardrail_correction_total");
         this.llmRequestTotal = registry.counter("aml_llm_request_total");
+        this.llmTokenTotal = registry.counter("aml_llm_token_total");
+        this.ragCacheHitTotal = registry.counter("aml_rag_cache_hit_total");
+        this.ragCacheMissTotal = registry.counter("aml_rag_cache_miss_total");
         this.stageDuration = registry.timer("aml_stage_duration_seconds");
     }
 
@@ -47,6 +53,18 @@ public class MetricsRecorder {
 
     public void llmRequest() {
         llmRequestTotal.increment();
+    }
+
+    public void llmTokens(long tokens) {
+        llmTokenTotal.increment(tokens);
+    }
+
+    public void ragCacheHit() {
+        ragCacheHitTotal.increment();
+    }
+
+    public void ragCacheMiss() {
+        ragCacheMissTotal.increment();
     }
 
     public void recordStageDuration(long durationMs) {

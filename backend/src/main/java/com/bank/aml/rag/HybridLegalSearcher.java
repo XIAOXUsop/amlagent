@@ -1,10 +1,8 @@
 package com.bank.aml.rag;
 
-import org.springframework.context.annotation.Primary;
 import org.springframework.stereotype.Component;
 
 import java.util.HashMap;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -13,7 +11,6 @@ import java.util.Map;
  * <p>结果按 evidenceId 去重合并，返回 Top-K 法规证据。
  */
 @Component
-@Primary
 public class HybridLegalSearcher implements LegalDocumentSearcher {
 
     private static final int RRF_K = 60;

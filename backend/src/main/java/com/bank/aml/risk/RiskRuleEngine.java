@@ -5,18 +5,32 @@ import org.springframework.stereotype.Component;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
  * 风险规则引擎：加载启用的规则，按优先级评估 {@link RiskContext}，返回命中的规则及证据。
  * <p>条件表达式为简单 DSL，如：{@code sanction.maxSeverity == 1 && transaction.crossRatio > 20}
- * 支持字段：sanction.maxSeverity / sanction.sanctionHit / transaction.crossRatio / transaction.nightRatio / transaction.largeCount
+ * 支持字段：sanction.maxSeverity / sanction.sanctionHit / transaction.crossRatio /
+ * transaction.nightRatio / transaction.largeCount / transaction.dataComplete /
+ * transaction.riskExplained / transaction.patternSeverity / corporate.uboRiskSeverity
  */
 @Component
 public class RiskRuleEngine {
 
     private static final Pattern CONDITION_PATTERN = Pattern.compile("^(\\w+\\.\\w+)\\s*(==|>=|<=|>|<)\\s*([\\w.]+)$");
+    private static final Set<String> SUPPORTED_FIELDS = Set.of(
+            "sanction.maxSeverity",
+            "sanction.sanctionHit",
+            "transaction.crossRatio",
+            "transaction.nightRatio",
+            "transaction.largeCount",
+            "transaction.dataComplete",
+            "transaction.riskExplained",
+            "transaction.patternSeverity",
+            "corporate.uboRiskSeverity"
+    );
 
     private final RiskRuleRepository repository;
 
@@ -39,6 +53,7 @@ public class RiskRuleEngine {
             if (r.getEffectiveTo() != null && now.isAfter(r.getEffectiveTo())) {
                 continue;
             }
+            validateExpression(r.getConditionExpression());
             if (evaluate(r.getConditionExpression(), ctx)) {
                 triggered.add(new TriggeredRule(r.getRuleCode(), r.getVersion(),
                         r.getTargetRiskLevel(), r.getAction(), evidenceText(ctx, r)));
@@ -49,9 +64,7 @@ public class RiskRuleEngine {
 
     /** 表达式评估：|| 优先级低于 && */
     public boolean evaluate(String expr, RiskContext ctx) {
-        if (expr == null || expr.isBlank()) {
-            return false;
-        }
+        validateExpression(expr);
         for (String orPart : expr.split("\\|\\|")) {
             boolean and = true;
             for (String andPart : orPart.split("&&")) {
@@ -67,6 +80,33 @@ public class RiskRuleEngine {
         return false;
     }
 
+    /**
+     * 在规则执行前校验 DSL。无效字段不能按 0 处理，否则类似
+     * {@code transaction.typo == false} 的拼写错误会意外命中所有客户。
+     */
+    public void validateExpression(String expr) {
+        if (expr == null || expr.isBlank()) {
+            throw new IllegalArgumentException("Risk rule expression must not be blank");
+        }
+        for (String orPart : expr.split("\\|\\|", -1)) {
+            if (orPart.isBlank()) {
+                throw new IllegalArgumentException("Invalid risk rule expression: " + expr);
+            }
+            for (String andPart : orPart.split("&&", -1)) {
+                Matcher matcher = CONDITION_PATTERN.matcher(andPart.trim());
+                if (!matcher.matches()) {
+                    throw new IllegalArgumentException("Invalid risk rule condition: " + andPart.trim());
+                }
+                if (!SUPPORTED_FIELDS.contains(matcher.group(1))) {
+                    throw new IllegalArgumentException("Unsupported risk rule field: " + matcher.group(1));
+                }
+                if (!Double.isFinite(parseValue(matcher.group(3)))) {
+                    throw new IllegalArgumentException("Invalid risk rule value: " + matcher.group(3));
+                }
+            }
+        }
+    }
+
     private boolean evalSingle(String cond, RiskContext ctx) {
         Matcher m = CONDITION_PATTERN.matcher(cond);
         if (!m.find()) {
@@ -75,6 +115,10 @@ public class RiskRuleEngine {
         double lhs = fieldValue(m.group(1), ctx);
         String op = m.group(2);
         double rhs = parseValue(m.group(3));
+        // 未知字段或非法值必须安全失败，避免“拼错字段 == false”意外全量命中。
+        if (!Double.isFinite(lhs) || !Double.isFinite(rhs)) {
+            return false;
+        }
         return switch (op) {
             case "==" -> lhs == rhs;
             case ">" -> lhs > rhs;
@@ -92,7 +136,11 @@ public class RiskRuleEngine {
             case "transaction.crossRatio" -> ctx.crossRatio();
             case "transaction.nightRatio" -> ctx.nightRatio();
             case "transaction.largeCount" -> ctx.largeCount();
-            default -> 0;
+            case "transaction.dataComplete" -> ctx.transactionDataComplete() ? 1 : 0;
+            case "transaction.riskExplained" -> ctx.transactionRiskExplained() ? 1 : 0;
+            case "transaction.patternSeverity" -> ctx.transactionPatternSeverity();
+            case "corporate.uboRiskSeverity" -> ctx.uboRiskSeverity();
+            default -> Double.NaN;
         };
     }
 
@@ -106,7 +154,7 @@ public class RiskRuleEngine {
         try {
             return Double.parseDouble(v);
         } catch (NumberFormatException e) {
-            return 0;
+            return Double.NaN;
         }
     }
 
@@ -115,7 +163,13 @@ public class RiskRuleEngine {
             case "SANCTION_LEVEL_1" -> "命中一级制裁名单（OFAC SDN）";
             case "SANCTION_OTHER" -> "命中国内制裁 / 可疑交易名单";
             case "TXN_ABNORMAL" -> "跨境占比 " + ctx.crossRatio() + "% 且夜间占比 " + ctx.nightRatio() + "%";
-            case "TXN_MODERATE" -> "跨境/夜间交易占比 " + ctx.crossRatio() + "% / " + ctx.nightRatio() + "%";
+            case "TXN_PATTERN_HIGH" -> "命中高严重度可疑交易模式";
+            case "TXN_MODERATE" -> "命中需加强监测的交易模式";
+            case "CROSS_BORDER_MODERATE" -> "未充分解释的跨境交易占比 " + ctx.crossRatio() + "%";
+            case "NIGHT_ACTIVITY_MODERATE" -> "未充分解释的夜间交易占比 " + ctx.nightRatio() + "%";
+            case "DATA_INCOMPLETE" -> "交易数据不完整，无法排除异常";
+            case "UBO_UNVERIFIED" -> "受益所有人无法可靠核实";
+            case "UBO_DOCUMENT_INCOMPLETE" -> "受益所有人材料需要更新";
             default -> "规则条件触发";
         };
     }

@@ -38,10 +38,27 @@ public class PendingClaimer {
         LocalDateTime threshold = LocalDateTime.now().minusSeconds(props.getClaimIdleSeconds());
         List<CaseEntity> stuck = caseRepository.findByStatusAndLockedAtBefore(CaseStatus.RUNNING, threshold);
         for (CaseEntity c : stuck) {
+            // 仅接管"租约过期且心跳过期"的任务；心跳活跃说明是慢任务（长模型调用），不接管
+            LocalDateTime heartbeat = c.getHeartbeatAt();
+            if (heartbeat != null && heartbeat.isAfter(threshold)) {
+                continue;
+            }
+            // 防止无限接管：超过最大重试次数直接失败，转人工排查
+            if (c.getRetryCount() >= props.getMaxRetry()) {
+                c.setStatus(CaseStatus.FAILED);
+                c.setLockedBy(null);
+                c.setLockedAt(null);
+                c.setFailureCode("CLAIM_EXHAUSTED");
+                c.setFailureMessage("多次接管仍失败，转人工排查");
+                caseRepository.save(c);
+                log.error("工单 {} 多次接管失败，标记 FAILED", c.getId());
+                continue;
+            }
             c.setStatus(CaseStatus.PENDING);
             c.setLockedBy(null);
             c.setLockedAt(null);
-            c.setFailureMessage("Worker 超时接管，重新投递");
+            c.setRetryCount(c.getRetryCount() + 1);
+            c.setFailureMessage("Worker 超时接管，重新投递（第 " + c.getRetryCount() + " 次）");
             caseRepository.save(c);
             redisTemplate.opsForStream().add(StreamRecords.string(
                     Map.of("caseId", String.valueOf(c.getId()))).withStreamKey(props.getStream()));

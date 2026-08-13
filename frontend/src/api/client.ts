@@ -63,6 +63,9 @@ export interface DueDiligenceReport {
   riskPoints: string[]
   conclusion: string
   evidenceChain: string[]
+  manualReviewRequired: boolean
+  findingCodes: string[]
+  actionCodes: string[]
 }
 
 export interface Page<T> {
@@ -140,7 +143,11 @@ export async function listLogs(id: number): Promise<CaseLog[]> {
 }
 
 /** 订阅工单工作流实时进度（SSE 通过 query 携带 token），返回取消订阅函数 */
-export function subscribeCase(id: number, onEvent: (e: WorkflowEvent) => void): () => void {
+export function subscribeCase(
+  id: number,
+  onEvent: (e: WorkflowEvent) => void,
+  onToken?: (token: string) => void,
+): () => void {
   const token = getToken()
   const base = `/api/cases/${id}/events`
   const url = token ? `${base}?token=${encodeURIComponent(token)}` : base
@@ -152,6 +159,15 @@ export function subscribeCase(id: number, onEvent: (e: WorkflowEvent) => void): 
       /* ignore */
     }
   })
+  if (onToken) {
+    es.addEventListener('token', (ev: MessageEvent<string>) => {
+      try {
+        onToken(JSON.parse(ev.data).token)
+      } catch {
+        /* ignore */
+      }
+    })
+  }
   return () => es.close()
 }
 
@@ -182,8 +198,60 @@ export async function reviewStats(): Promise<{ reviewedCount: number; agreementR
 }
 
 // ---------- 评测 ----------
-export async function runAgentEval(): Promise<Record<string, unknown>> {
-  return (await api.post('/eval/run')).data
+export interface RuleRegressionReport {
+  totalCases: number
+  highRiskRecallRate: number
+  lowRiskFalsePositiveRate: number
+  accuracy: number
+  manualReviewMissCount: number
+  manualReviewTotal: number
+  p50DurationMs: number
+  p95DurationMs: number
+  confusionMatrix: number[][]
+  details: Array<{
+    id: string
+    scenario: string
+    expectedRiskLevel: string
+    baselineRiskLevel: string
+    finalRiskLevel: string
+    escalated: boolean
+  }>
+}
+
+/** 确定性规则回归，不代表真实模型或 Agent 效果。 */
+export async function runRuleRegression(): Promise<RuleRegressionReport> {
+  return (await api.post('/eval/rules')).data
+}
+
+export interface AgentEvalDatasetSummary {
+  datasetId: string
+  version: string
+  sourceType: string
+  annotationMethod: string
+  reviewStatus: string
+  totalCases: number
+  splitCounts: Record<string, number>
+  scenarioCounts: Record<string, number>
+  riskLevelCounts: Record<string, number>
+}
+
+export async function getAgentEvalStatus(): Promise<{
+  ready: boolean
+  datasetReady: boolean
+  enabledSplit: 'DEV'
+  dataset: AgentEvalDatasetSummary
+  message: string
+}> {
+  return (await api.get('/eval/agent/status')).data
+}
+
+/** 仅运行 DEV 分片；后端会拒绝 Mock/fallback，并保持 TEST 标准答案冻结。 */
+export async function runAgentDevEval(): Promise<Record<string, unknown>> {
+  return (await api.post('/eval/agent/dev')).data
+}
+
+export async function getAgentEvalDatasetSummary(): Promise<AgentEvalDatasetSummary> {
+  return (await api.get('/eval/agent/dataset')).data
 }
 
 export async function runRagEval(): Promise<Record<string, unknown>> {

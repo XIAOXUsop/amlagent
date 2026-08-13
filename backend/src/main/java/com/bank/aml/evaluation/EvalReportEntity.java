@@ -11,7 +11,7 @@ import jakarta.persistence.Table;
 import java.time.LocalDateTime;
 
 /**
- * 评测报告记录（Agent / RAG），用于版本对比与历史回溯。
+ * 评测报告记录，用于版本对比与历史回溯。
  */
 @Entity
 @Table(name = "eval_report")
@@ -21,15 +21,15 @@ public class EvalReportEntity {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    /** 评测类型：AGENT / RAG */
-    @Column(nullable = false, length = 16)
+    /** 评测类型：RULE_REGRESSION / AGENT / RAG */
+    @Column(nullable = false, length = 32)
     private String evalType;
 
     /** 版本标识 */
     @Column(length = 64)
     private String versionTag;
 
-    @Column(columnDefinition = "TEXT")
+    @Column(columnDefinition = "MEDIUMTEXT")
     private String metricsJson;
 
     @Column(nullable = false)

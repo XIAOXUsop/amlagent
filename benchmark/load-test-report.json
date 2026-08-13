@@ -1,0 +1,14 @@
+{
+  "count": 100,
+  "concurrency": 20,
+  "customer": "C003",
+  "created": 100,
+  "createFailures": 0,
+  "createQps": 379.2,
+  "timedOut": 0,
+  "e2eSuccess": 100,
+  "e2eP50Ms": 8930,
+  "e2eP95Ms": 14134,
+  "e2eP99Ms": 14394,
+  "e2eMeanMs": 9206
+}

@@ -57,7 +57,10 @@ public class RuleBasedReporter {
                 riskPoints,
                 conclusion(riskLevel),
                 List.of("交易数据源：Mock 核心交易系统", "工商股权：Mock 工商数据库", "黑名单：OFAC/国内制裁名单",
-                        "法规：人民银行反洗钱规章")
+                        "法规：人民银行反洗钱规章"),
+                false,
+                List.of(),
+                List.of()
         );
     }
 

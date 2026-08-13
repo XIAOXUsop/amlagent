@@ -3,26 +3,30 @@ package com.bank.aml.agent.guardrail;
 import com.bank.aml.agent.DueDiligenceReport;
 import com.bank.aml.datasource.mock.MockDataSource;
 import com.bank.aml.risk.RiskContext;
+import com.bank.aml.risk.RiskFactAssembler;
 import com.bank.aml.risk.RiskRuleEngine;
 import com.bank.aml.risk.RiskRuleEngine.TriggeredRule;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Set;
 
 /**
  * Guardrails 安全护栏：由配置化风险规则（{@code risk_rule} 表）驱动，
  * 独立于 LLM 校验并强制修正风险评级，输出可解释决策。
  * <p>核心原则：大模型负责理解推理总结，确定性规则系统掌握最终风险决策权。
+ * 结构化风险事实由 {@link RiskFactAssembler} 从工具结果统一组装，不依赖模型声明。
  */
 @Component
 public class GuardrailEngine {
 
-    private final MockDataSource dataSource;
+    private final RiskFactAssembler riskFactAssembler;
     private final RiskRuleEngine ruleEngine;
 
-    public GuardrailEngine(MockDataSource dataSource, RiskRuleEngine ruleEngine) {
-        this.dataSource = dataSource;
+    public GuardrailEngine(RiskFactAssembler riskFactAssembler, RiskRuleEngine ruleEngine) {
+        this.riskFactAssembler = riskFactAssembler;
         this.ruleEngine = ruleEngine;
     }
 
@@ -31,7 +35,9 @@ public class GuardrailEngine {
             String modelRiskLevel,
             String finalRiskLevel,
             List<TriggeredRule> triggeredRules,
-            String requiredAction
+            String requiredAction,
+            /** 最终处置代码（模型输出 + 规则补充，已去重） */
+            List<String> actionCodes
     ) {
     }
 
@@ -45,27 +51,43 @@ public class GuardrailEngine {
     ) {
     }
 
+    /** 生产链路入口：从客户数据源组装风险事实后执行护栏决策 */
     public GuardrailResult apply(MockDataSource.Customer customer, DueDiligenceReport report) {
-        List<MockDataSource.SanctionEntry> hits = searchSanctions(customer);
-        int maxSeverity = hits.stream().mapToInt(MockDataSource.SanctionEntry::severity).max().orElse(0);
-        boolean sanctionHit = !hits.isEmpty();
-
-        // 交易聚合
-        var txns = dataSource.transactionsOf(customer.id());
-        long night = txns.stream().filter(t -> isNight(t.date())).count();
-        long cross = txns.stream().filter(t -> t.country().isCrossBorder()).count();
-        long large = txns.stream().filter(t -> t.amount().compareTo(MILLION) >= 0).count();
-        double nightRatio = txns.isEmpty() ? 0 : 100.0 * night / txns.size();
-        double crossRatio = txns.isEmpty() ? 0 : 100.0 * cross / txns.size();
-
         String modelLevel = report.riskLevel() == null ? "低风险" : report.riskLevel();
-        RiskContext ctx = new RiskContext(maxSeverity, sanctionHit, crossRatio, nightRatio,
-                large, modelLevel, levelCode(modelLevel));
+        RiskContext ctx = riskFactAssembler.assemble(customer, modelLevel);
+        return applyRules(ctx, report, riskFactAssembler.searchSanctions(customer));
+    }
 
-        List<TriggeredRule> triggered = ruleEngine.evaluate(ctx);
+    /**
+     * 使用已经聚合好的风险事实执行护栏决策。
+     * <p>该入口不访问数据源，适用于离线评测、回放和单元测试。
+     */
+    public GuardrailResult apply(RiskContext context, DueDiligenceReport report) {
+        String modelLevel = report.riskLevel() == null ? "低风险" : report.riskLevel();
+        RiskContext effectiveContext = new RiskContext(
+                context.maxSeverity(),
+                context.sanctionHit(),
+                context.crossRatio(),
+                context.nightRatio(),
+                context.largeCount(),
+                context.transactionDataComplete(),
+                context.transactionRiskExplained(),
+                context.transactionPatternSeverity(),
+                context.uboRiskSeverity(),
+                modelLevel,
+                levelCode(modelLevel));
+        return applyRules(effectiveContext, report, List.of());
+    }
+
+    private GuardrailResult applyRules(RiskContext context,
+                                       DueDiligenceReport report,
+                                       List<MockDataSource.SanctionEntry> sanctionHits) {
+        String modelLevel = context.modelRiskLevel();
+        List<TriggeredRule> triggered = ruleEngine.evaluate(context);
 
         String finalRisk = modelLevel;
-        boolean mustEscalate = false;
+        // 护栏只能追加处置或上调风险，不能取消模型已经明确要求的人工复核。
+        boolean mustEscalate = Boolean.TRUE.equals(report.manualReviewRequired());
         List<String> corrections = new ArrayList<>();
         for (TriggeredRule rule : triggered) {
             if (levelCode(rule.targetRiskLevel()) > levelCode(finalRisk)) {
@@ -79,22 +101,19 @@ public class GuardrailEngine {
             }
         }
 
-        String requiredAction = mustEscalate ? "MANUAL_REVIEW" : "AUTO_DONE";
-        GuardrailDecision decision = new GuardrailDecision(modelLevel, finalRisk, triggered, requiredAction);
-        return new GuardrailResult(finalRisk, corrections, mustEscalate, hits, decision);
-    }
-
-    private List<MockDataSource.SanctionEntry> searchSanctions(MockDataSource.Customer customer) {
-        List<MockDataSource.SanctionEntry> hits = new ArrayList<>(dataSource.searchSanctions(customer.name()));
-        if (customer.idCard() != null && !customer.idCard().isBlank()) {
-            hits.addAll(dataSource.searchSanctions(customer.idCard()));
+        // 最终处置代码：模型输出 + 规则补充（转人工时强制含 MANUAL_REVIEW），去重
+        Set<String> actionCodes = new LinkedHashSet<>();
+        if (report.actionCodes() != null) {
+            actionCodes.addAll(report.actionCodes());
         }
-        return hits.stream().distinct().toList();
-    }
+        if (mustEscalate) {
+            actionCodes.add("MANUAL_REVIEW");
+        }
 
-    private boolean isNight(java.time.LocalDateTime date) {
-        int hour = date.getHour();
-        return hour >= 22 || hour < 6;
+        String requiredAction = mustEscalate ? "MANUAL_REVIEW" : "AUTO_DONE";
+        GuardrailDecision decision = new GuardrailDecision(modelLevel, finalRisk, triggered,
+                requiredAction, List.copyOf(actionCodes));
+        return new GuardrailResult(finalRisk, corrections, mustEscalate, sanctionHits, decision);
     }
 
     private int levelCode(String level) {
@@ -104,6 +123,4 @@ public class GuardrailEngine {
             default -> 1;
         };
     }
-
-    private static final java.math.BigDecimal MILLION = new java.math.BigDecimal("1000000");
 }

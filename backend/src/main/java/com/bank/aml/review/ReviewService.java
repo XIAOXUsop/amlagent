@@ -42,7 +42,7 @@ public class ReviewService {
         ManualReview review = new ManualReview();
         review.setCaseId(caseId);
         review.setReviewerId(reviewerId);
-        review.setAgentRiskLevel(c.getRiskLevel());
+        review.setAgentRiskLevel(c.getRawRiskLevel() != null ? c.getRawRiskLevel() : c.getRiskLevel());
         review.setGuardrailRiskLevel(c.getRiskLevel());
         review.setReviewerRiskLevel(reviewerRiskLevel);
         review.setDecision(decision);

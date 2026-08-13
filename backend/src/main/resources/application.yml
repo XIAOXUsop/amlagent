@@ -53,7 +53,8 @@ aml:
     max-retry: 3
     claim-idle-seconds: 60
     outbox-poll-seconds: 5
-    retry-backoff-seconds: 10
+    retry-backoff-seconds: 5   # 指数退避基数（5s、15s、45s）
+    retry-poll-seconds: 5
 
   # 多 LLM 提供商：切换 aml.llm.active-provider 即可换模型。
   # 未配置 API Key 时自动降级到 Mock 模型（可离线演示完整链路）。
@@ -63,7 +64,7 @@ aml:
       deepseek:
         type: openai-compatible
         base-url: https://api.deepseek.com
-        # 真实 Key 放在 application-dev.yml（不提交 GitHub）；未配置时自动降级 Mock
+        # 真实 Key 仅通过环境变量注入；未配置时自动降级 Mock
         api-key: ${DEEPSEEK_API_KEY:}
         model-name: deepseek-v4-flash
       openai:
@@ -86,6 +87,11 @@ aml:
 
   # RAG 向量库（PostgreSQL + pgvector），独立于 MySQL 业务库
   rag:
+    cache-ttl-minutes: 60   # 检索结果缓存 TTL（分钟）
+    rerank:
+      enabled: true         # 召回后精排（bge-reranker 本地 cross-encoder）
+      recall-size: 20       # 召回候选数
+      model-dir: ${user.home}/.cache/aml-reranker/bge-reranker-base
     pg:
       url: jdbc:postgresql://localhost:5433/aml_rag
       username: ${PG_USER:aml}
@@ -93,3 +99,7 @@ aml:
       table: legal_docs
       dimensions: 384   # all-MiniLM-L6-v2 输出维度
     data-dir: ./data/legal
+
+  # 成本路由：默认关闭规则兜底（不影响真实模型评测）；开启后 SIMPLE 工单零 LLM 成本
+  cost-routing:
+    rule-fallback-enabled: false

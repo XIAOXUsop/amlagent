@@ -29,15 +29,17 @@ public class WorkflowConsumer implements ApplicationRunner, DisposableBean {
     private final StringRedisTemplate redisTemplate;
     private final QueueProperties props;
     private final WorkflowMessageHandler handler;
+    private final WorkerIdentity workerIdentity;
 
     private StreamMessageListenerContainer<String, MapRecord<String, String, String>> container;
 
     public WorkflowConsumer(RedisConnectionFactory connectionFactory, StringRedisTemplate redisTemplate,
-                            QueueProperties props, WorkflowMessageHandler handler) {
+                            QueueProperties props, WorkflowMessageHandler handler, WorkerIdentity workerIdentity) {
         this.connectionFactory = connectionFactory;
         this.redisTemplate = redisTemplate;
         this.props = props;
         this.handler = handler;
+        this.workerIdentity = workerIdentity;
     }
 
     @Override
@@ -59,12 +61,12 @@ public class WorkflowConsumer implements ApplicationRunner, DisposableBean {
 
         container = StreamMessageListenerContainer.create(connectionFactory, options);
         container.receive(
-                Consumer.from(props.getGroup(), props.getConsumer()),
+                Consumer.from(props.getGroup(), workerIdentity.consumerName()),
                 StreamOffset.create(props.getStream(), ReadOffset.lastConsumed()),
                 handler::onMessage);
         container.start();
         log.info("Redis Streams 消费者已启动 stream={} group={} consumer={}",
-                props.getStream(), props.getGroup(), props.getConsumer());
+                props.getStream(), props.getGroup(), workerIdentity.consumerName());
     }
 
     @Override

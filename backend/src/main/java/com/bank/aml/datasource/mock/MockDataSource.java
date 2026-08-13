@@ -95,7 +95,7 @@ public class MockDataSource {
         seedTransactionsFor("C001", 120, 0.50, 0.33, 50_000, 8_000_000, 500_000,
                 List.of(CountryRegion.HK, CountryRegion.IRAN, CountryRegion.UAE), true, 987654321L);
         seedTransactionsFor("C002", 80, 0.30, 0.00, 20_000, 300_000, 100_000,
-                List.of(CountryRegion.CHINA), false, 123456789L);
+                List.of(CountryRegion.CHINA), true, 123456789L);
         seedTransactionsFor("C003", 15, 0.05, 0.00, 2_000, 80_000, 50_000,
                 List.of(CountryRegion.CHINA), false, 555555555L);
     }

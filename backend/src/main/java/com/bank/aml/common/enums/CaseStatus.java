@@ -13,5 +13,7 @@ public enum CaseStatus {
     /** 转人工复核（命中底线规则，如一级制裁） */
     HOLD,
     /** 执行失败 */
-    FAILED
+    FAILED,
+    /** 重试等待（可重试失败后，按指数退避等待重新入队） */
+    RETRY_WAIT
 }

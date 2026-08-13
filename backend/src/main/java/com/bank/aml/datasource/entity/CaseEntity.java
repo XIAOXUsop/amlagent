@@ -39,9 +39,13 @@ public class CaseEntity {
     @Column(nullable = false, length = 32)
     private CaseStatus status = CaseStatus.PENDING;
 
-    /** 最终风险评级：低风险 / 中风险 / 高风险 */
+    /** 最终风险评级（Guardrail 后）：低风险 / 中风险 / 高风险 */
     @Column(length = 32)
     private String riskLevel;
+
+    /** 模型原始风险评级（Guardrail 前），用于分层审计 */
+    @Column(length = 32)
+    private String rawRiskLevel;
 
     /** 尽调报告（JSON 序列化） */
     @Column(columnDefinition = "TEXT")
@@ -62,9 +66,15 @@ public class CaseEntity {
     /** 执行加锁时间 */
     private LocalDateTime lockedAt;
 
+    /** 最近心跳时间（长模型调用期间周期性刷新，用于区分"崩溃"与"慢任务"） */
+    private LocalDateTime heartbeatAt;
+
     /** 累计重试次数 */
     @Column(nullable = false)
     private int retryCount = 0;
+
+    /** 下次重试时间（RETRY_WAIT 状态下的指数退避调度） */
+    private LocalDateTime nextRetryAt;
 
     /** 最近失败码 */
     @Column(length = 64)
@@ -135,6 +145,14 @@ public class CaseEntity {
         this.riskLevel = riskLevel;
     }
 
+    public String getRawRiskLevel() {
+        return rawRiskLevel;
+    }
+
+    public void setRawRiskLevel(String rawRiskLevel) {
+        this.rawRiskLevel = rawRiskLevel;
+    }
+
     public String getReportJson() {
         return reportJson;
     }
@@ -175,12 +193,28 @@ public class CaseEntity {
         this.lockedAt = lockedAt;
     }
 
+    public LocalDateTime getHeartbeatAt() {
+        return heartbeatAt;
+    }
+
+    public void setHeartbeatAt(LocalDateTime heartbeatAt) {
+        this.heartbeatAt = heartbeatAt;
+    }
+
     public int getRetryCount() {
         return retryCount;
     }
 
     public void setRetryCount(int retryCount) {
         this.retryCount = retryCount;
+    }
+
+    public LocalDateTime getNextRetryAt() {
+        return nextRetryAt;
+    }
+
+    public void setNextRetryAt(LocalDateTime nextRetryAt) {
+        this.nextRetryAt = nextRetryAt;
     }
 
     public String getFailureCode() {
