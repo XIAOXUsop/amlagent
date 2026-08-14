@@ -4,11 +4,24 @@
 ALTER TABLE aml_case
     ADD COLUMN review_revision INT NOT NULL DEFAULT 0;
 
--- 人工复核审计字段 + 唯一键（caseId + reviewRevision）
+-- 人工复核审计字段（先加列，不立即加唯一键）
 ALTER TABLE manual_review
     ADD COLUMN review_revision INT NOT NULL DEFAULT 0,
     ADD COLUMN case_status_before VARCHAR(32),
-    ADD COLUMN case_status_after VARCHAR(32),
+    ADD COLUMN case_status_after VARCHAR(32);
+
+-- 棕地迁移：为历史复核记录按 case_id + created_at + id 生成连续 revision，
+-- 避免历史数据全部 review_revision=0 导致 (case_id, 0) 唯一键冲突
+UPDATE manual_review m
+JOIN (
+    SELECT id,
+           ROW_NUMBER() OVER (PARTITION BY case_id ORDER BY created_at, id) - 1 AS rev
+    FROM manual_review
+) r ON m.id = r.id
+SET m.review_revision = r.rev;
+
+-- 生成连续 revision 后再创建唯一键
+ALTER TABLE manual_review
     ADD UNIQUE KEY uk_review_case_revision (case_id, review_revision);
 
 -- 生产工具调用轨迹

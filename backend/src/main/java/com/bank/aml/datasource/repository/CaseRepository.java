@@ -199,20 +199,7 @@ public interface CaseRepository extends JpaRepository<CaseEntity, Long> {
                        @Param("hold") CaseStatus hold,
                        @Param("expectedRevision") int expectedRevision);
 
-    /** 人工重试：FAILED → PENDING，清锁与失败信息（条件更新，非 FAILED 返回 0） */
-    @Modifying
-    @Transactional
-    @Query("""
-            UPDATE CaseEntity c
-            SET c.status = :pending, c.lockedBy = NULL, c.lockedAt = NULL, c.heartbeatAt = NULL,
-                c.failureCode = NULL, c.failureMessage = NULL
-            WHERE c.id = :id AND c.status = :failed
-            """)
-    int retryFailed(@Param("id") Long id,
-                    @Param("pending") CaseStatus pending,
-                    @Param("failed") CaseStatus failed);
-
-    /** 死信重放：FAILED → PENDING，重置重试次数与失败信息（条件更新，非 FAILED 返回 0） */
+    /** 人工重试：FAILED → PENDING，清锁、失败信息并清零重试计数（条件更新，非 FAILED 返回 0） */
     @Modifying
     @Transactional
     @Query("""
@@ -222,7 +209,22 @@ public interface CaseRepository extends JpaRepository<CaseEntity, Long> {
                 c.failureCode = NULL, c.failureMessage = NULL
             WHERE c.id = :id AND c.status = :failed
             """)
+    int retryFailed(@Param("id") Long id,
+                    @Param("pending") CaseStatus pending,
+                    @Param("failed") CaseStatus failed);
+
+    /** 死信重放：仅限指定死信 failureCode 的 FAILED → PENDING，重置重试次数（条件更新） */
+    @Modifying
+    @Transactional
+    @Query("""
+            UPDATE CaseEntity c
+            SET c.status = :pending, c.retryCount = 0, c.nextRetryAt = NULL,
+                c.lockedBy = NULL, c.lockedAt = NULL, c.heartbeatAt = NULL,
+                c.failureCode = NULL, c.failureMessage = NULL
+            WHERE c.id = :id AND c.status = :failed AND c.failureCode IN :allowedFailureCodes
+            """)
     int replayDeadLetter(@Param("id") Long id,
                          @Param("pending") CaseStatus pending,
-                         @Param("failed") CaseStatus failed);
+                         @Param("failed") CaseStatus failed,
+                         @Param("allowedFailureCodes") java.util.Collection<String> allowedFailureCodes);
 }

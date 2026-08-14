@@ -67,6 +67,12 @@ public class WorkflowMessageHandler {
         }
 
         int expectedVersion = parseVersion(value.get("executionVersion"));
+        if (expectedVersion < 0) {
+            // 消息版本缺失或格式错误：记录并 ACK 丢弃，避免畸形旧消息抢占版本为 0 的工单
+            log.warn("消息版本无效，丢弃 caseId={} executionVersion={}", caseId, value.get("executionVersion"));
+            ack(record);
+            return;
+        }
         String worker = workerIdentity.consumerName();
         // 抢占执行权：仅 PENDING 可抢占（FAILED 只能通过显式管理命令恢复）；消息版本不匹配则丢弃
         boolean locked = caseRepository.tryLock(caseId, worker, LocalDateTime.now(),
@@ -152,9 +158,9 @@ public class WorkflowMessageHandler {
 
     private int parseVersion(String value) {
         try {
-            return value == null ? 0 : Integer.parseInt(value);
+            return value == null ? -1 : Integer.parseInt(value);
         } catch (NumberFormatException e) {
-            return 0;
+            return -1;
         }
     }
 }

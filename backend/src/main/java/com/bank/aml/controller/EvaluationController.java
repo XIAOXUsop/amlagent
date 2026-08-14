@@ -13,6 +13,7 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -101,35 +102,46 @@ public class EvaluationController {
         if (!Boolean.parseBoolean(System.getenv().getOrDefault("RUN_HIDDEN_AGENT_EVAL", "false"))) {
             throw new IllegalStateException("隐藏 TEST 评测需显式设置环境变量 RUN_HIDDEN_AGENT_EVAL=true");
         }
-        // 冻结审计：记录 prompt 版本与数据集哈希，运行后任何改动都可被追溯
-        log.info("隐藏 TEST 冻结审计：promptVersion={} datasetHash={}",
-                AgentEvalRunner.PROMPT_VERSION, agentEvalDatasetLoader.datasetHash());
-        // 一次性锁：同一 freezeId 只能正式执行一次，防止反复挑选最好结果
-        String freezeId = computeFreezeId();
-        if (evalFreezeRunRepository.findByFreezeId(freezeId).isPresent()) {
-            throw new IllegalStateException("该 freezeId 已运行过，同一冻结基线不能重复执行 TEST");
+        String commitSha = System.getenv("BUILD_GIT_SHA");
+        if (commitSha == null || commitSha.isBlank()) {
+            throw new IllegalStateException("隐藏 TEST 评测需通过环境变量 BUILD_GIT_SHA 注入当前 commit SHA");
         }
+        log.info("隐藏 TEST 冻结审计：commitSha={} promptVersion={} datasetHash={}",
+                commitSha, AgentEvalRunner.PROMPT_VERSION, agentEvalDatasetLoader.datasetHash());
+        // 一次性锁：freezeId 唯一，用唯一键冲突（而非先查后插）避免并发竞态
+        String freezeId = computeFreezeId(commitSha);
         EvalFreezeRun run = new EvalFreezeRun();
         run.setFreezeId(freezeId);
         run.setStatus("RUNNING");
         run.setStartedAt(LocalDateTime.now());
-        evalFreezeRunRepository.save(run);
+        try {
+            evalFreezeRunRepository.saveAndFlush(run);
+        } catch (DataIntegrityViolationException e) {
+            throw new IllegalStateException("该 freezeId 已运行过，同一冻结基线不能重复执行 TEST");
+        }
 
-        // 先脱敏为聚合版，再持久化，避免数据库写入逐案例金标
-        AgentEvalReport aggregate = agentEvalRunner.runTest().aggregateOnly();
-        persistIfCompleted(aggregate, "AGENT_TEST");
-
-        run.setStatus(aggregate.runStatus());
-        run.setRunId(aggregate.runId());
-        run.setAggregateJson(writeJson(aggregate));
-        run.setCompletedAt(LocalDateTime.now());
-        evalFreezeRunRepository.save(run);
-        return aggregate; // 盲测：只返回聚合指标，不暴露逐案例 expectedRisk/requiredFindingCodes 金标
+        try {
+            // 先脱敏为聚合版，再持久化，避免数据库写入逐案例金标
+            AgentEvalReport aggregate = agentEvalRunner.runTest().aggregateOnly();
+            persistIfCompleted(aggregate, "AGENT_TEST");
+            run.setStatus(aggregate.runStatus());
+            run.setRunId(aggregate.runId());
+            run.setAggregateJson(writeJson(aggregate));
+            run.setCompletedAt(LocalDateTime.now());
+            return aggregate; // 盲测：只返回聚合指标，不暴露逐案例 expectedRisk/requiredFindingCodes 金标
+        } catch (Exception e) {
+            // 模型调用异常不应让记录永久停留在 RUNNING
+            run.setStatus("CONSUMED_FAILED");
+            run.setCompletedAt(LocalDateTime.now());
+            log.error("隐藏 TEST 执行失败，freezeId={}", freezeId, e);
+            throw e;
+        } finally {
+            evalFreezeRunRepository.save(run);
+        }
     }
 
     /** freezeId = sha256(commitSha + promptVersion + datasetHash)，同一基线唯一 */
-    private String computeFreezeId() {
-        String commitSha = System.getenv().getOrDefault("BUILD_GIT_SHA", "unknown");
+    private String computeFreezeId(String commitSha) {
         String raw = commitSha + "|" + AgentEvalRunner.PROMPT_VERSION + "|" + agentEvalDatasetLoader.datasetHash();
         try {
             MessageDigest digest = MessageDigest.getInstance("SHA-256");

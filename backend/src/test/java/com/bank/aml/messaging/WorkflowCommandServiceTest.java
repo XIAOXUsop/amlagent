@@ -12,6 +12,7 @@ import java.util.Optional;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyCollection;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -108,7 +109,7 @@ class WorkflowCommandServiceTest {
         OutboxService outbox = mock(OutboxService.class);
         WorkflowCommandService svc = new WorkflowCommandService(repo, outbox);
 
-        when(repo.replayDeadLetter(eq(1L), eq(CaseStatus.PENDING), eq(CaseStatus.FAILED))).thenReturn(0);
+        when(repo.replayDeadLetter(eq(1L), eq(CaseStatus.PENDING), eq(CaseStatus.FAILED), anyCollection())).thenReturn(0);
         CaseEntity done = new CaseEntity();
         done.setStatus(CaseStatus.DONE);
         when(repo.findById(1L)).thenReturn(Optional.of(done));

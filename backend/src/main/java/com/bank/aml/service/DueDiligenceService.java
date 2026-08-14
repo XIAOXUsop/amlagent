@@ -26,6 +26,8 @@ import com.bank.aml.messaging.ExecutionLease;
 import com.bank.aml.observability.MetricsRecorder;
 import com.bank.aml.observability.ModelPurposeContext;
 import com.bank.aml.tools.ToolExecutionTrace;
+import com.bank.aml.tools.ToolExecutionTraceEntity;
+import com.bank.aml.tools.ToolExecutionTraceRepository;
 import com.bank.aml.workflow.CaseExecution;
 import com.bank.aml.workflow.CaseExecution.ExecutionStatus;
 import com.bank.aml.workflow.CaseExecutionRepository;
@@ -78,6 +80,7 @@ public class DueDiligenceService {
     private final ObjectMapper objectMapper;
     private final ExecutorService summaryExecutor;
     private final ModelPurposeContext purposeContext;
+    private final ToolExecutionTraceRepository toolTraceRepository;
 
     /** 阶段耗时测量（每工单独立） */
     private final ThreadLocal<LocalDateTime> lastStageAt = new ThreadLocal<>();
@@ -96,7 +99,8 @@ public class DueDiligenceService {
                                @Value("${aml.cost-routing.summary-enabled:false}") boolean summaryEnabled,
                                StreamingAnalysisAgent streamingAnalysisAgent, StreamingChatModel streamingChatModel,
                                LegalKeywordResolver legalKeywordResolver, ObjectMapper objectMapper,
-                               ExecutorService summaryExecutor, ModelPurposeContext purposeContext) {
+                               ExecutorService summaryExecutor, ModelPurposeContext purposeContext,
+                               ToolExecutionTraceRepository toolTraceRepository) {
         this.caseRepository = caseRepository;
         this.caseLogRepository = caseLogRepository;
         this.caseExecutionRepository = caseExecutionRepository;
@@ -119,6 +123,7 @@ public class DueDiligenceService {
         this.objectMapper = objectMapper;
         this.summaryExecutor = summaryExecutor;
         this.purposeContext = purposeContext;
+        this.toolTraceRepository = toolTraceRepository;
     }
 
     /** 创建预警工单；autoProcess=true 时与工单同事务写入 Outbox，自动触发尽调 */
@@ -205,13 +210,18 @@ public class DueDiligenceService {
                 record(c, WorkflowStage.COLLECTING, "RULE_ONLY 路由，跳过所有模型调用（零 LLM 成本）");
             } else {
                 // 主 Agent 使用 ObservedChatModel（purpose=main_agent 固定），无需 ThreadLocal
+                DueDiligenceAgentFactory.AgentWithTools agentWithTools = null;
                 try {
-                    var agentWithTools = agentFactory.createWithTraces(snapshot);
+                    agentWithTools = agentFactory.createWithTraces(snapshot);
                     report = agentWithTools.agent().investigate(context.toPrompt());
-                    recordToolTraces(c, agentWithTools.tools().traces());
                 } catch (Exception e) {
                     log.warn("Agent 调用失败，进入规则降级 caseId={}: {}", caseId, e.getMessage());
                     report = null;
+                } finally {
+                    // Agent 异常/工具轮次耗尽时也保留已执行的部分工具轨迹
+                    if (agentWithTools != null) {
+                        persistToolTraces(c, snapshot, agentWithTools.tools().traces());
+                    }
                 }
             }
 
@@ -365,10 +375,26 @@ public class DueDiligenceService {
         metrics.recordStageDuration(durationMs);
     }
 
-    /** 记录工具调用轨迹（工具名/成功/耗时，不落参数明文），供报告追溯调用了哪些工具 */
-    private void recordToolTraces(CaseEntity c, List<ToolExecutionTrace> traces) {
+    /** 持久化工具调用轨迹（不落参数明文）：写入 tool_execution_trace 表 + 工单日志可读摘要 */
+    private void persistToolTraces(CaseEntity c, InvestigationSnapshot snapshot, List<ToolExecutionTrace> traces) {
         if (traces == null || traces.isEmpty()) {
             return;
+        }
+        long seq = 0;
+        for (ToolExecutionTrace t : traces) {
+            ToolExecutionTraceEntity entity = new ToolExecutionTraceEntity();
+            entity.setCaseId(c.getId());
+            entity.setExecutionVersion(c.getExecutionVersion());
+            entity.setSnapshotId(snapshot.snapshotId());
+            entity.setSequenceNo(seq++);
+            entity.setToolName(t.toolName());
+            entity.setRequested(true);
+            entity.setExecuted(true);
+            entity.setSuccess(t.success());
+            entity.setArgumentValid(t.argumentValid());
+            entity.setDurationMs(t.durationMs());
+            entity.setErrorCode(t.errorCode());
+            toolTraceRepository.save(entity);
         }
         String summary = traces.stream()
                 .map(t -> t.toolName() + (t.success() ? "✓" : "✗") + "(" + t.durationMs() + "ms)")

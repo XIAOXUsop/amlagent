@@ -94,10 +94,11 @@ public class WorkflowCommandService {
         return false;
     }
 
-    /** 死信重放：FAILED → PENDING（条件更新，重置重试次数）+ 入队，非 FAILED 返回 409 */
+    /** 死信重放：仅限 RETRY_EXHAUSTED/CLAIM_EXHAUSTED 的 FAILED → PENDING + 入队，其余返回 409 */
     @Transactional
     public CaseEntity replayDead(Long caseId) {
-        if (caseRepository.replayDeadLetter(caseId, CaseStatus.PENDING, CaseStatus.FAILED) == 0) {
+        if (caseRepository.replayDeadLetter(caseId, CaseStatus.PENDING, CaseStatus.FAILED,
+                Set.of("RETRY_EXHAUSTED", "CLAIM_EXHAUSTED")) == 0) {
             CaseEntity c = caseRepository.findById(caseId)
                     .orElseThrow(() -> new IllegalArgumentException("工单不存在：" + caseId));
             throw new WorkflowStateConflictException(caseId, c.getStatus(), Set.of(CaseStatus.FAILED));

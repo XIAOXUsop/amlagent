@@ -95,7 +95,8 @@ public class SnapshotToolSuite {
         CustomerProfile c = snapshot.customer();
         boolean nameMatch = customerName != null && normalize(customerName).equals(normalize(c.name()));
         boolean idMatch = idCard != null && idCard.equals(c.idCard());
-        if (!nameMatch && !idMatch) {
+        // 制裁检索要求姓名与证件号两个可信字段都匹配，避免"同名不同证件号"也能取得制裁结果
+        if (!nameMatch || !idMatch) {
             throw new IllegalArgumentException("客户姓名/证件号与当前工单快照不匹配");
         }
     }
