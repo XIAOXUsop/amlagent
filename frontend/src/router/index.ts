@@ -1,5 +1,5 @@
 import { createRouter, createWebHistory } from 'vue-router'
-import { currentUser } from '../auth'
+import { authReady, currentUser } from '../auth'
 
 /**
  * 前端路由：刷新后保留详情页 URL；各视图按需异步加载，维持代码分割。
@@ -28,8 +28,9 @@ const router = createRouter({
   ],
 })
 
-// 角色守卫：仅做前端体验控制，越权仍由后端拦截
-router.beforeEach((to) => {
+// 角色守卫：等待认证初始化完成，避免刷新受限路由时 currentUser 尚未恢复导致错误跳转
+router.beforeEach(async (to) => {
+  await authReady
   const roles = to.meta.roles as string[] | undefined
   if (roles && roles.length > 0) {
     const role = currentUser.value?.role

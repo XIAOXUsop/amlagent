@@ -2,7 +2,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { checkAuth, logout as apiLogout, type AuthenticatedUser } from './api/client'
-import { currentUser } from './auth'
+import { currentUser, markAuthReady } from './auth'
 import LoginView from './views/LoginView.vue'
 
 const route = useRoute()
@@ -19,6 +19,7 @@ onMounted(async () => {
     currentUser.value = null
   } finally {
     authReady.value = true
+    markAuthReady()
   }
 })
 
