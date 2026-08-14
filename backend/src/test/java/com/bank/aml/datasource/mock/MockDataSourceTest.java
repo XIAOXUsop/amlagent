@@ -1,6 +1,8 @@
 package com.bank.aml.datasource.mock;
 
 import com.bank.aml.common.enums.CountryRegion;
+import com.bank.aml.domain.CustomerProfile;
+import com.bank.aml.domain.TransactionRecord;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -20,8 +22,8 @@ class MockDataSourceTest {
 
     @Test
     void allTransactionHoursAreLegal() {
-        for (MockDataSource.Customer customer : dataSource.allCustomers()) {
-            for (MockDataSource.Transaction t : dataSource.transactionsOf(customer.id())) {
+        for (CustomerProfile customer : dataSource.allCustomers()) {
+            for (TransactionRecord t : dataSource.transactionsOf(customer.id())) {
                 assertThat(t.date().getHour()).isBetween(0, 23);
             }
         }
@@ -29,8 +31,8 @@ class MockDataSourceTest {
 
     @Test
     void amountsAreStableAndScaled() {
-        for (MockDataSource.Customer customer : dataSource.allCustomers()) {
-            for (MockDataSource.Transaction t : dataSource.transactionsOf(customer.id())) {
+        for (CustomerProfile customer : dataSource.allCustomers()) {
+            for (TransactionRecord t : dataSource.transactionsOf(customer.id())) {
                 assertThat(t.amount()).isNotNull();
                 assertThat(t.amount().scale()).isEqualTo(2);
             }
@@ -39,7 +41,7 @@ class MockDataSourceTest {
 
     @Test
     void countriesUseEnum() {
-        List<MockDataSource.Transaction> txns = dataSource.transactionsOf("C001");
+        List<TransactionRecord> txns = dataSource.transactionsOf("C001");
         assertThat(txns).isNotEmpty();
         assertThat(txns).allMatch(t -> t.country() != null);
         assertThat(txns).anyMatch(t -> t.country().isCrossBorder());
@@ -49,8 +51,8 @@ class MockDataSourceTest {
     void deterministicDataWithFixedSeed() {
         MockDataSource another = new MockDataSource();
         another.init();
-        List<MockDataSource.Transaction> a = dataSource.transactionsOf("C001");
-        List<MockDataSource.Transaction> b = another.transactionsOf("C001");
+        List<TransactionRecord> a = dataSource.transactionsOf("C001");
+        List<TransactionRecord> b = another.transactionsOf("C001");
         assertThat(a).hasSameSizeAs(b);
         assertThat(a.get(0).amount()).isEqualByComparingTo(b.get(0).amount());
         assertThat(a.get(0).date()).isEqualTo(b.get(0).date());

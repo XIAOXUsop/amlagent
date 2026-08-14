@@ -34,6 +34,14 @@ public class OutboxEvent {
     @Column(name = "event_type", nullable = false, length = 64)
     private String eventType;
 
+    /** 事件对应的执行版本（来自工单 executionVersion），用于幂等去重 */
+    @Column(name = "execution_version", nullable = false)
+    private int executionVersion = 0;
+
+    /** 幂等键：caseId:eventType:executionVersion，唯一索引防止重复入队 */
+    @Column(name = "idempotency_key", unique = true, length = 160)
+    private String idempotencyKey;
+
     @Column(columnDefinition = "TEXT")
     private String payload;
 
@@ -77,6 +85,22 @@ public class OutboxEvent {
 
     public void setEventType(String eventType) {
         this.eventType = eventType;
+    }
+
+    public int getExecutionVersion() {
+        return executionVersion;
+    }
+
+    public void setExecutionVersion(int executionVersion) {
+        this.executionVersion = executionVersion;
+    }
+
+    public String getIdempotencyKey() {
+        return idempotencyKey;
+    }
+
+    public void setIdempotencyKey(String idempotencyKey) {
+        this.idempotencyKey = idempotencyKey;
     }
 
     public String getPayload() {

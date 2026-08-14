@@ -1,11 +1,8 @@
 package com.bank.aml.controller;
 
-import com.bank.aml.common.enums.CaseStatus;
-import com.bank.aml.datasource.entity.CaseEntity;
-import com.bank.aml.datasource.repository.CaseRepository;
 import com.bank.aml.dto.CaseDto;
 import com.bank.aml.messaging.DeadLetterService;
-import com.bank.aml.service.DueDiligenceService;
+import com.bank.aml.messaging.WorkflowCommandService;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -21,17 +18,15 @@ import java.util.Map;
  */
 @RestController
 @RequestMapping("/api/queues")
+@PreAuthorize("hasRole('ADMIN')")
 public class QueueController {
 
     private final DeadLetterService deadLetterService;
-    private final CaseRepository caseRepository;
-    private final DueDiligenceService dueDiligenceService;
+    private final WorkflowCommandService workflowCommandService;
 
-    public QueueController(DeadLetterService deadLetterService, CaseRepository caseRepository,
-                           DueDiligenceService dueDiligenceService) {
+    public QueueController(DeadLetterService deadLetterService, WorkflowCommandService workflowCommandService) {
         this.deadLetterService = deadLetterService;
-        this.caseRepository = caseRepository;
-        this.dueDiligenceService = dueDiligenceService;
+        this.workflowCommandService = workflowCommandService;
     }
 
     /** 死信队列消息 */
@@ -40,22 +35,9 @@ public class QueueController {
         return deadLetterService.list();
     }
 
-    /** 死信重放（仅 ADMIN）：重置工单并重新入队，产生新 executionVersion */
+    /** 死信重放（仅 ADMIN）：重置工单并通过 Outbox 重新入队，产生新 executionVersion */
     @PostMapping("/dead/{caseId}/replay")
-    @PreAuthorize("hasRole('ADMIN')")
     public CaseDto replay(@PathVariable Long caseId) {
-        CaseEntity c = caseRepository.findById(caseId)
-                .orElseThrow(() -> new IllegalArgumentException("工单不存在：" + caseId));
-        c.setStatus(CaseStatus.PENDING);
-        c.setRetryCount(0);
-        c.setNextRetryAt(null);
-        c.setLockedBy(null);
-        c.setLockedAt(null);
-        c.setHeartbeatAt(null);
-        c.setFailureCode(null);
-        c.setFailureMessage(null);
-        caseRepository.save(c);
-        dueDiligenceService.enqueue(caseId);
-        return CaseDto.from(c);
+        return CaseDto.from(workflowCommandService.replayDead(caseId));
     }
 }

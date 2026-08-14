@@ -1,6 +1,7 @@
 package com.bank.aml.controller;
 
-import com.bank.aml.datasource.mock.MockDataSource;
+import com.bank.aml.datasource.CustomerDataPort;
+import com.bank.aml.domain.CustomerProfile;
 import com.bank.aml.dto.CaseDto;
 import com.bank.aml.dto.CaseLogDto;
 import com.bank.aml.service.DueDiligenceService;
@@ -11,6 +12,7 @@ import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -32,10 +34,10 @@ public class CaseController {
     private final DueDiligenceService service;
     private final WorkflowEventService workflowEventService;
     private final CaseExecutionRepository caseExecutionRepository;
-    private final MockDataSource dataSource;
+    private final CustomerDataPort dataSource;
 
     public CaseController(DueDiligenceService service, WorkflowEventService workflowEventService,
-                          CaseExecutionRepository caseExecutionRepository, MockDataSource dataSource) {
+                          CaseExecutionRepository caseExecutionRepository, CustomerDataPort dataSource) {
         this.service = service;
         this.workflowEventService = workflowEventService;
         this.caseExecutionRepository = caseExecutionRepository;
@@ -49,15 +51,17 @@ public class CaseController {
         return service.listCasesPageable(PageRequest.of(page, Math.min(size, 100))).map(CaseDto::from);
     }
 
-    /** 创建预警工单；autoProcess 默认 true，创建后自动触发尽调 */
+    /** 创建预警工单；autoProcess 默认 true，创建后自动触发尽调（仅 ANALYST/ADMIN） */
     @PostMapping
+    @PreAuthorize("hasAnyRole('ANALYST','ADMIN')")
     public CaseDto create(@Valid @RequestBody CreateCaseRequest req) {
         boolean autoProcess = req.autoProcess() == null || req.autoProcess();
         return CaseDto.from(service.createCase(req.customerId(), req.alertRule(), autoProcess));
     }
 
-    /** 手动触发处理（幂等：已在执行中的工单会因抢占失败而忽略） */
+    /** 手动触发处理（幂等：已在执行中的工单会因抢占失败而忽略；仅 ANALYST/ADMIN） */
     @PostMapping("/{id}/process")
+    @PreAuthorize("hasAnyRole('ANALYST','ADMIN')")
     public CaseDto process(@PathVariable Long id) {
         service.trigger(id);
         return CaseDto.from(service.getCase(id));
@@ -87,16 +91,24 @@ public class CaseController {
         return caseExecutionRepository.findByCaseIdOrderByStartedAtAsc(id);
     }
 
-    /** 人工重试（置回 PENDING 并重新入队） */
+    /** 人工重试（置回 PENDING 并重新入队；仅 ANALYST/ADMIN） */
     @PostMapping("/{id}/retry")
+    @PreAuthorize("hasAnyRole('ANALYST','ADMIN')")
     public CaseDto retry(@PathVariable Long id) {
         return CaseDto.from(service.retry(id));
     }
 
-    /** 可供选择的演示客户 */
+    /** 可供选择的演示客户（脱敏 DTO，不含证件号） */
     @GetMapping("/customers")
-    public List<MockDataSource.Customer> customers() {
-        return dataSource.allCustomers();
+    public List<CustomerSummary> customers() {
+        return dataSource.allCustomers().stream().map(CustomerSummary::from).toList();
+    }
+
+    /** 演示客户摘要（脱敏，不返回证件号） */
+    public record CustomerSummary(String id, String name, String type, String industry, String region, String regCapital) {
+        static CustomerSummary from(CustomerProfile c) {
+            return new CustomerSummary(c.id(), c.name(), c.type(), c.industry(), c.region(), c.regCapital());
+        }
     }
 
     public record CreateCaseRequest(

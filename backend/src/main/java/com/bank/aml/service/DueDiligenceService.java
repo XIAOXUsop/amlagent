@@ -14,10 +14,12 @@ import com.bank.aml.cost.CostRouter;
 import com.bank.aml.security.PromptInjectionGuard;
 import com.bank.aml.datasource.entity.CaseEntity;
 import com.bank.aml.datasource.entity.CaseLogEntity;
-import com.bank.aml.datasource.mock.MockDataSource;
+import com.bank.aml.datasource.CustomerDataPort;
+import com.bank.aml.domain.CustomerProfile;
 import com.bank.aml.datasource.repository.CaseLogRepository;
 import com.bank.aml.datasource.repository.CaseRepository;
-import com.bank.aml.messaging.OutboxService;
+import com.bank.aml.messaging.WorkflowCommandService;
+import com.bank.aml.risk.RiskFactAssembler;
 import com.bank.aml.observability.MetricsRecorder;
 import com.bank.aml.workflow.CaseExecution;
 import com.bank.aml.workflow.CaseExecution.ExecutionStatus;
@@ -51,13 +53,14 @@ public class DueDiligenceService {
     private final CaseRepository caseRepository;
     private final CaseLogRepository caseLogRepository;
     private final CaseExecutionRepository caseExecutionRepository;
-    private final OutboxService outboxService;
+    private final WorkflowCommandService workflowCommandService;
     private final MetricsRecorder metrics;
     private final DueDiligenceAgent agent;
     private final RuleBasedReporter ruleReporter;
     private final GuardrailEngine guardrailEngine;
+    private final RiskFactAssembler riskFactAssembler;
     private final WorkflowEventService workflowEventService;
-    private final MockDataSource dataSource;
+    private final CustomerDataPort dataSource;
     private final FaultInjector faultInjector;
     private final PromptInjectionGuard promptInjectionGuard;
     private final CostRouter costRouter;
@@ -72,11 +75,12 @@ public class DueDiligenceService {
     private final ThreadLocal<LocalDateTime> lastStageAt = new ThreadLocal<>();
 
     public DueDiligenceService(CaseRepository caseRepository, CaseLogRepository caseLogRepository,
-                               CaseExecutionRepository caseExecutionRepository, OutboxService outboxService,
+                               CaseExecutionRepository caseExecutionRepository, WorkflowCommandService workflowCommandService,
                                MetricsRecorder metrics,
                                DueDiligenceAgent agent, RuleBasedReporter ruleReporter,
-                               GuardrailEngine guardrailEngine, WorkflowEventService workflowEventService,
-                               MockDataSource dataSource, FaultInjector faultInjector,
+                               GuardrailEngine guardrailEngine, RiskFactAssembler riskFactAssembler,
+                               WorkflowEventService workflowEventService,
+                               CustomerDataPort dataSource, FaultInjector faultInjector,
                                PromptInjectionGuard promptInjectionGuard, CostRouter costRouter,
                                @Value("${aml.cost-routing.rule-fallback-enabled:false}") boolean ruleFallbackEnabled,
                                @Value("${aml.cost-routing.summary-enabled:false}") boolean summaryEnabled,
@@ -85,11 +89,12 @@ public class DueDiligenceService {
         this.caseRepository = caseRepository;
         this.caseLogRepository = caseLogRepository;
         this.caseExecutionRepository = caseExecutionRepository;
-        this.outboxService = outboxService;
+        this.workflowCommandService = workflowCommandService;
         this.metrics = metrics;
         this.agent = agent;
         this.ruleReporter = ruleReporter;
         this.guardrailEngine = guardrailEngine;
+        this.riskFactAssembler = riskFactAssembler;
         this.workflowEventService = workflowEventService;
         this.dataSource = dataSource;
         this.faultInjector = faultInjector;
@@ -106,7 +111,7 @@ public class DueDiligenceService {
     /** 创建预警工单；autoProcess=true 时与工单同事务写入 Outbox，自动触发尽调 */
     @Transactional
     public CaseEntity createCase(String customerId, String alertRule, boolean autoProcess) {
-        MockDataSource.Customer customer = dataSource.findCustomer(customerId)
+        CustomerProfile customer = dataSource.findCustomer(customerId)
                 .orElseThrow(() -> new NonRetryableWorkflowException("客户不存在：" + customerId));
         CaseEntity c = new CaseEntity();
         c.setCustomerId(customer.id());
@@ -125,47 +130,34 @@ public class DueDiligenceService {
         return saved;
     }
 
-    /** 写入 Outbox（事务提交后调用），由发布器投递到 Redis Streams */
+    /** 写入 Outbox（首次入队，由发布器投递到 Redis Streams） */
     public void enqueue(Long caseId) {
-        outboxService.record(caseId);
+        workflowCommandService.enqueueCaseCreated(caseId);
     }
 
     /** 手动触发：统一写入 Outbox 队列，由 Worker 消费 + 抢占，消除直接异步执行的旁路 */
     public void trigger(Long caseId) {
         CaseEntity c = getCase(caseId);
         if (c.getStatus() == CaseStatus.PENDING || c.getStatus() == CaseStatus.FAILED) {
-            enqueue(caseId);
+            workflowCommandService.triggerManual(caseId, c.getExecutionVersion());
         } else {
             log.info("工单 {} 状态为 {}，忽略手动触发（幂等）", caseId, c.getStatus());
         }
     }
 
-    /** 人工重试：重置为 PENDING 并重新写入 Outbox 入队 */
-    @Transactional
+    /** 人工重试：重置为 PENDING 并重新写入 Outbox 入队（由 {@link WorkflowCommandService} 原子完成） */
     public CaseEntity retry(Long caseId) {
-        CaseEntity c = getCase(caseId);
-        c.setStatus(CaseStatus.PENDING);
-        c.setLockedBy(null);
-        c.setLockedAt(null);
-        c.setFailureCode(null);
-        c.setFailureMessage(null);
-        caseRepository.save(c);
-        enqueue(caseId);
-        return c;
+        return workflowCommandService.retryManual(caseId);
     }
 
     /**
      * 执行尽调工作流（由 Worker 消费任务后调用）。
      * 正常完成置 DONE/HOLD；失败按异常类型抛出（重试/不可重试），由 Worker 决定重试策略。
      */
-    public CaseEntity process(Long caseId) {
+    public CaseEntity process(Long caseId, String worker, int executionVersion) {
         lastStageAt.remove();
         CaseEntity c = caseRepository.findById(caseId)
                 .orElseThrow(() -> new NonRetryableWorkflowException("工单不存在：" + caseId));
-        c.setStatus(CaseStatus.RUNNING);
-        c.setFailureCode(null);
-        c.setFailureMessage(null);
-        caseRepository.save(c);
 
         try {
             // 0. Prompt 注入检测（代码层确定性防护，命中仍继续由模型按 prompt 隔离处理）
@@ -221,10 +213,14 @@ public class DueDiligenceService {
 
             // 4. 规则护栏
             record(c, WorkflowStage.GUARDRAIL, "执行规则护栏校验（制裁名单 / 评级一致性）...");
-            MockDataSource.Customer customer = dataSource.findCustomer(c.getCustomerId()).orElse(null);
+            CustomerProfile customer = dataSource.findCustomer(c.getCustomerId()).orElse(null);
             if (customer != null) {
                 String rawAgentRiskLevel = report.riskLevel(); // 模型原始评级（Guardrail 前）
-                GuardrailEngine.GuardrailResult gr = guardrailEngine.apply(customer, report);
+                // 冻结尽调快照：Agent 推理与 Guardrails 共享同一份数据事实，避免二次读取变化数据
+                var snapshot = riskFactAssembler.assembleSnapshot(c.getId(), c.getExecutionVersion(),
+                        customer, rawAgentRiskLevel);
+                record(c, WorkflowStage.GUARDRAIL, "尽调快照已冻结 snapshotId=" + snapshot.snapshotId());
+                GuardrailEngine.GuardrailResult gr = guardrailEngine.apply(snapshot, report);
                 gr.decision().triggeredRules().forEach(r -> record(c, WorkflowStage.GUARDRAIL,
                         "触发规则【" + r.ruleCode() + " v" + r.ruleVersion() + "】→ " + r.targetRiskLevel()
                                 + "，动作 " + r.action() + "，证据：" + r.evidence()));
@@ -260,23 +256,23 @@ public class DueDiligenceService {
             record(c, WorkflowStage.DONE, "尽调完成。评级：" + c.getRiskLevel() + "，状态：" + c.getStatus());
         } catch (NonRetryableWorkflowException e) {
             metrics.caseFailed();
-            c.setFailureMessage(e.getMessage());
-            caseRepository.save(c);
             throw e;
         } catch (RetryableWorkflowException e) {
             metrics.caseFailed();
-            c.setFailureMessage(e.getMessage());
-            caseRepository.save(c);
             throw e;
         } catch (Exception e) {
             metrics.caseFailed();
-            c.setFailureMessage(e.getMessage());
-            caseRepository.save(c);
             throw new RetryableWorkflowException("未知异常", e);
         } finally {
             lastStageAt.remove();
         }
-        return caseRepository.save(c);
+        // 终态原子落库：绑定 worker+executionVersion，被接管后的陈旧写入不生效（0 行更新被丢弃）
+        int updated = caseRepository.finishCase(c.getId(), worker, executionVersion,
+                c.getStatus(), c.getRiskLevel(), c.getRawRiskLevel(), c.getReportJson(), c.getSummary());
+        if (updated == 0) {
+            log.warn("工单 {} 终态落库被丢弃（已被接管，worker/version 不匹配）", caseId);
+        }
+        return c;
     }
 
     public List<CaseEntity> listCases() {

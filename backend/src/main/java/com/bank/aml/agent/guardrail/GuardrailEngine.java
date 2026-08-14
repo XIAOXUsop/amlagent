@@ -1,7 +1,9 @@
 package com.bank.aml.agent.guardrail;
 
 import com.bank.aml.agent.DueDiligenceReport;
-import com.bank.aml.datasource.mock.MockDataSource;
+import com.bank.aml.domain.CustomerProfile;
+import com.bank.aml.domain.InvestigationSnapshot;
+import com.bank.aml.domain.SanctionRecord;
 import com.bank.aml.risk.RiskContext;
 import com.bank.aml.risk.RiskFactAssembler;
 import com.bank.aml.risk.RiskRuleEngine;
@@ -46,16 +48,30 @@ public class GuardrailEngine {
             String finalRiskLevel,
             List<String> corrections,
             boolean mustEscalate,
-            List<MockDataSource.SanctionEntry> sanctionHits,
+            List<SanctionRecord> sanctionHits,
             GuardrailDecision decision
     ) {
     }
 
     /** 生产链路入口：从客户数据源组装风险事实后执行护栏决策 */
-    public GuardrailResult apply(MockDataSource.Customer customer, DueDiligenceReport report) {
+    public GuardrailResult apply(CustomerProfile customer, DueDiligenceReport report) {
         String modelLevel = report.riskLevel() == null ? "低风险" : report.riskLevel();
         RiskContext ctx = riskFactAssembler.assemble(customer, modelLevel);
         return applyRules(ctx, report, riskFactAssembler.searchSanctions(customer));
+    }
+
+    /**
+     * 快照入口：从已冻结的尽调快照提取风险事实执行护栏决策，不二次读取数据源。
+     * <p>Agent 推理与 Guardrails 校验因此共享同一份数据事实，避免数据源在两者之间变化导致的不一致。
+     */
+    public GuardrailResult apply(InvestigationSnapshot snapshot, DueDiligenceReport report) {
+        String modelLevel = report.riskLevel() == null ? "低风险" : report.riskLevel();
+        RiskContext facts = snapshot.riskFacts();
+        RiskContext effectiveContext = new RiskContext(
+                facts.maxSeverity(), facts.sanctionHit(), facts.crossRatio(), facts.nightRatio(),
+                facts.largeCount(), facts.transactionDataComplete(), facts.transactionRiskExplained(),
+                facts.transactionPatternSeverity(), facts.uboRiskSeverity(), modelLevel, levelCode(modelLevel));
+        return applyRules(effectiveContext, report, snapshot.sanctionHits());
     }
 
     /**
@@ -81,7 +97,7 @@ public class GuardrailEngine {
 
     private GuardrailResult applyRules(RiskContext context,
                                        DueDiligenceReport report,
-                                       List<MockDataSource.SanctionEntry> sanctionHits) {
+                                       List<SanctionRecord> sanctionHits) {
         String modelLevel = context.modelRiskLevel();
         List<TriggeredRule> triggered = ruleEngine.evaluate(context);
 

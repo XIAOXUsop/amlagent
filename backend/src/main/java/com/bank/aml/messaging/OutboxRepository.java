@@ -9,4 +9,6 @@ import java.util.List;
 public interface OutboxRepository extends JpaRepository<OutboxEvent, Long> {
 
     List<OutboxEvent> findByStatusAndNextRetryAtLessThanEqualOrderByIdAsc(OutboxStatus status, LocalDateTime now);
+
+    boolean existsByIdempotencyKey(String idempotencyKey);
 }

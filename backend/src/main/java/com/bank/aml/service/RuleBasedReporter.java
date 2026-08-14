@@ -1,7 +1,7 @@
 package com.bank.aml.service;
 
 import com.bank.aml.agent.DueDiligenceReport;
-import com.bank.aml.datasource.mock.MockDataSource;
+import com.bank.aml.domain.CustomerProfile;
 import com.bank.aml.tools.CorporateTool;
 import com.bank.aml.tools.LegalSearchTool;
 import com.bank.aml.tools.SanctionTool;
@@ -37,7 +37,7 @@ public class RuleBasedReporter {
         this.legalSearchTool = legalSearchTool;
     }
 
-    public DueDiligenceReport generate(MockDataSource.Customer customer, String alertRule) {
+    public DueDiligenceReport generate(CustomerProfile customer, String alertRule) {
         String tx = transactionTool.transactionProfile(customer.id());
         String corp = corporateTool.corporateProfile(customer.id());
         String sanction = sanctionTool.checkSanctions(customer.name(), customer.idCard());

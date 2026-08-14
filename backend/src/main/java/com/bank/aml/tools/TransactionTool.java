@@ -1,6 +1,7 @@
 package com.bank.aml.tools;
 
-import com.bank.aml.datasource.mock.MockDataSource;
+import com.bank.aml.datasource.CustomerDataPort;
+import com.bank.aml.domain.TransactionRecord;
 import dev.langchain4j.agent.tool.P;
 import dev.langchain4j.agent.tool.Tool;
 import org.springframework.stereotype.Component;
@@ -21,26 +22,26 @@ public class TransactionTool {
     private static final BigDecimal MILLION = new BigDecimal("1000000");
     private static final BigDecimal HALF_MILLION = new BigDecimal("500000");
 
-    private final MockDataSource dataSource;
+    private final CustomerDataPort dataSource;
 
-    public TransactionTool(MockDataSource dataSource) {
+    public TransactionTool(CustomerDataPort dataSource) {
         this.dataSource = dataSource;
     }
 
     @Tool("查询客户近180天交易画像，返回交易笔数、总额、夜间交易占比、跨境交易占比、大额交易笔数与涉及地区等风险特征")
     public String transactionProfile(@P("客户编号，如 C001") String customerId) {
-        List<MockDataSource.Transaction> txns = dataSource.transactionsOf(customerId);
+        List<TransactionRecord> txns = dataSource.transactionsOf(customerId);
         if (txns.isEmpty()) {
             return "未查询到客户 " + customerId + " 的交易记录。";
         }
 
         int total = txns.size();
         BigDecimal totalAmount = txns.stream()
-                .map(MockDataSource.Transaction::amount)
+                .map(TransactionRecord::amount)
                 .reduce(BigDecimal.ZERO, BigDecimal::add)
                 .setScale(2, RoundingMode.HALF_UP);
         long nightCount = txns.stream().filter(t -> isNight(t.date())).count();
-        List<MockDataSource.Transaction> cross = txns.stream()
+        List<TransactionRecord> cross = txns.stream()
                 .filter(t -> t.country().isCrossBorder()).toList();
         long largeCount = txns.stream().filter(t -> t.amount().compareTo(MILLION) >= 0).count();
         long large50 = txns.stream().filter(t -> t.amount().compareTo(HALF_MILLION) >= 0).count();
@@ -60,7 +61,7 @@ public class TransactionTool {
                 nightCount, 100.0 * nightCount / total,
                 cross.size(), 100.0 * cross.size() / total, countries.isEmpty() ? "无" : countries,
                 largeCount, large50,
-                txns.stream().map(MockDataSource.Transaction::counterparty).distinct().limit(5).collect(Collectors.joining("、")));
+                txns.stream().map(TransactionRecord::counterparty).distinct().limit(5).collect(Collectors.joining("、")));
     }
 
     private boolean isNight(LocalDateTime date) {

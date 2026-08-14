@@ -1,7 +1,11 @@
 package com.bank.aml.risk;
 
 import com.bank.aml.datasource.CustomerDataPort;
-import com.bank.aml.datasource.mock.MockDataSource;
+import com.bank.aml.domain.CustomerProfile;
+import com.bank.aml.domain.InvestigationSnapshot;
+import com.bank.aml.domain.SanctionRecord;
+import com.bank.aml.domain.ShareholdingRecord;
+import com.bank.aml.domain.TransactionRecord;
 import org.springframework.stereotype.Component;
 
 import java.math.BigDecimal;
@@ -28,9 +32,23 @@ public class RiskFactAssembler {
     }
 
     /** 从客户数据源组装完整 RiskContext（制裁 + 交易聚合 + 新增风险事实） */
-    public RiskContext assemble(MockDataSource.Customer customer, String modelRiskLevel) {
-        List<MockDataSource.SanctionEntry> hits = searchSanctions(customer);
-        int maxSeverity = hits.stream().mapToInt(MockDataSource.SanctionEntry::severity).max().orElse(0);
+    public RiskContext assemble(CustomerProfile customer, String modelRiskLevel) {
+        return assembleWithHits(customer, modelRiskLevel, searchSanctions(customer));
+    }
+
+    /** 组装不可变尽调快照：一次性读取风险事实与制裁命中并冻结，供 Agent 推理与 Guardrails 校验共享 */
+    public InvestigationSnapshot assembleSnapshot(Long caseId, int executionVersion,
+                                                  CustomerProfile customer, String modelRiskLevel) {
+        List<SanctionRecord> hits = searchSanctions(customer);
+        RiskContext riskFacts = assembleWithHits(customer, modelRiskLevel, hits);
+        return new InvestigationSnapshot(
+                "case-" + caseId + "-v" + executionVersion,
+                caseId, executionVersion, dataSource.asOfTime(), customer, riskFacts, hits);
+    }
+
+    private RiskContext assembleWithHits(CustomerProfile customer, String modelRiskLevel,
+                                         List<SanctionRecord> hits) {
+        int maxSeverity = hits.stream().mapToInt(SanctionRecord::severity).max().orElse(0);
         boolean sanctionHit = !hits.isEmpty();
 
         var txns = dataSource.transactionsOf(customer.id());
@@ -41,7 +59,7 @@ public class RiskFactAssembler {
         double crossRatio = txns.isEmpty() ? 0 : 100.0 * cross / txns.size();
 
         boolean dataComplete = !txns.isEmpty();
-        boolean riskExplained = false; // Mock 数据源无业务材料概念，默认未解释
+        boolean riskExplained = false; // Mock 数据源无业务材料概念；真实数据源应由结构化业务字段派生
         int patternSeverity = assessPatternSeverity(txns);
         int uboRiskSeverity = assessUboRisk(dataSource.shareholdingsOf(customer.id()));
 
@@ -51,8 +69,8 @@ public class RiskFactAssembler {
     }
 
     /** 检索制裁名单（按姓名 + 证件号），返回命中条目 */
-    public List<MockDataSource.SanctionEntry> searchSanctions(MockDataSource.Customer customer) {
-        List<MockDataSource.SanctionEntry> hits = new ArrayList<>(dataSource.searchSanctions(customer.name()));
+    public List<SanctionRecord> searchSanctions(CustomerProfile customer) {
+        List<SanctionRecord> hits = new ArrayList<>(dataSource.searchSanctions(customer.name()));
         if (customer.idCard() != null && !customer.idCard().isBlank()) {
             hits.addAll(dataSource.searchSanctions(customer.idCard()));
         }
@@ -60,18 +78,18 @@ public class RiskFactAssembler {
     }
 
     /** 交易模式严重度：拆分/分层（同一金额大量重复）→ 2，否则 0 */
-    private int assessPatternSeverity(List<MockDataSource.Transaction> txns) {
+    private int assessPatternSeverity(List<TransactionRecord> txns) {
         if (txns.isEmpty()) {
             return 0;
         }
         Map<BigDecimal, Long> amountCounts = txns.stream()
-                .collect(Collectors.groupingBy(MockDataSource.Transaction::amount, Collectors.counting()));
+                .collect(Collectors.groupingBy(TransactionRecord::amount, Collectors.counting()));
         long maxSameAmount = amountCounts.values().stream().mapToLong(Long::longValue).max().orElse(0);
         return maxSameAmount >= 5 ? 2 : 0;
     }
 
     /** 受益所有人风险：境外/信托股东 → 2（无法核实）；关联公司/L2 → 1（材料待更新）；否则 0 */
-    private int assessUboRisk(List<MockDataSource.Shareholding> shareholdings) {
+    private int assessUboRisk(List<ShareholdingRecord> shareholdings) {
         boolean hasOffshore = shareholdings.stream().anyMatch(s ->
                 s.holder().toUpperCase().contains("LTD")
                         || s.holder().toUpperCase().contains("TRUST")

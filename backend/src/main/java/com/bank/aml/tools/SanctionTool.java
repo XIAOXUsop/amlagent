@@ -1,6 +1,7 @@
 package com.bank.aml.tools;
 
-import com.bank.aml.datasource.mock.MockDataSource;
+import com.bank.aml.datasource.CustomerDataPort;
+import com.bank.aml.domain.SanctionRecord;
 import dev.langchain4j.agent.tool.P;
 import dev.langchain4j.agent.tool.Tool;
 import org.springframework.stereotype.Component;
@@ -15,20 +16,20 @@ import java.util.stream.Collectors;
 @Component
 public class SanctionTool {
 
-    private final MockDataSource dataSource;
+    private final CustomerDataPort dataSource;
 
-    public SanctionTool(MockDataSource dataSource) {
+    public SanctionTool(CustomerDataPort dataSource) {
         this.dataSource = dataSource;
     }
 
     @Tool("检索制裁黑名单（OFAC / 国内制裁名单），按客户姓名与证件号匹配，返回命中条目、名单类型与风险等级")
     public String checkSanctions(@P("客户姓名") String customerName, @P("客户证件号") String idCard) {
-        List<MockDataSource.SanctionEntry> hits = new ArrayList<>(dataSource.searchSanctions(customerName));
+        List<SanctionRecord> hits = new ArrayList<>(dataSource.searchSanctions(customerName));
         if (idCard != null && !idCard.isBlank()) {
             hits.addAll(dataSource.searchSanctions(idCard));
         }
         // 去重
-        List<MockDataSource.SanctionEntry> distinct = hits.stream().distinct().toList();
+        List<SanctionRecord> distinct = hits.stream().distinct().toList();
 
         if (distinct.isEmpty()) {
             return "未命中制裁黑名单（OFAC / 国内名单）。";
