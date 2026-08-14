@@ -25,4 +25,10 @@ public record InvestigationSnapshot(
         String legalIndexVersion,
         String sourceDigest
 ) {
+    public InvestigationSnapshot {
+        // 防御性拷贝：冻结集合不可被外部修改（Record 字段本身不可重新赋值，但 List 引用可变）
+        transactions = transactions == null ? List.of() : List.copyOf(transactions);
+        shareholdings = shareholdings == null ? List.of() : List.copyOf(shareholdings);
+        sanctionHits = sanctionHits == null ? List.of() : List.copyOf(sanctionHits);
+    }
 }

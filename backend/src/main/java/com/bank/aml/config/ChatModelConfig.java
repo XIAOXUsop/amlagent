@@ -1,6 +1,9 @@
 package com.bank.aml.config;
 
 import com.bank.aml.observability.ChatModelTokenListener;
+import com.bank.aml.observability.MetricsRecorder;
+import com.bank.aml.observability.ModelInvocationTags;
+import com.bank.aml.observability.ObservedChatModel;
 import dev.langchain4j.model.anthropic.AnthropicChatModel;
 import dev.langchain4j.model.chat.ChatModel;
 import dev.langchain4j.model.chat.DisabledStreamingChatModel;
@@ -43,8 +46,7 @@ public class ChatModelConfig {
                 var b = AnthropicChatModel.builder()
                         .apiKey(active.getApiKey())
                         .modelName(active.getModelName())
-                        .temperature(active.getTemperature())
-                        .listeners(tokenListener);
+                        .temperature(active.getTemperature());
                 if (active.getBaseUrl() != null && !active.getBaseUrl().isBlank()) {
                     b.baseUrl(active.getBaseUrl());
                 }
@@ -61,8 +63,7 @@ public class ChatModelConfig {
                         .modelName(active.getModelName())
                         .temperature(active.getTemperature())
                         // DeepSeek 等支持并行工具调用
-                        .parallelToolCalls(true)
-                        .listeners(tokenListener);
+                        .parallelToolCalls(true);
                 if (active.getBaseUrl() != null && !active.getBaseUrl().isBlank()) {
                     b.baseUrl(active.getBaseUrl());
                 }
@@ -75,6 +76,17 @@ public class ChatModelConfig {
                 return b.build();
             }
         }
+    }
+
+    /**
+     * 主尽调 Agent 使用的同步模型：显式包装 purpose=main_agent，
+     * 避免依赖 ThreadLocal（异步回调线程不传播导致 purpose=unknown）。
+     */
+    @Bean
+    public ChatModel mainAgentChatModel(ChatModel chatModel, MetricsRecorder metrics, LlmProperties props) {
+        LlmProviderProperties active = props.active();
+        return new ObservedChatModel(chatModel, metrics,
+                new ModelInvocationTags(props.getActiveProvider(), active.getModelName(), "main_agent"));
     }
 
     /** 流式模型：用于报告分析过程的 token 级流式输出；无 API Key 时返回禁用实现（优雅降级） */

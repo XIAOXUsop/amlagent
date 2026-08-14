@@ -12,17 +12,20 @@ import org.springframework.stereotype.Component;
 public class ChatModelTokenListener implements ChatModelListener {
 
     private final MetricsRecorder metrics;
+    private final ModelPurposeContext purposeContext;
 
-    public ChatModelTokenListener(MetricsRecorder metrics) {
+    public ChatModelTokenListener(MetricsRecorder metrics, ModelPurposeContext purposeContext) {
         this.metrics = metrics;
+        this.purposeContext = purposeContext;
     }
 
     @Override
     public void onResponse(ChatModelResponseContext context) {
-        metrics.llmRequest();
+        String purpose = purposeContext.get();
+        metrics.llmRequest(purpose);
         var tokenUsage = context.chatResponse().tokenUsage();
         if (tokenUsage != null && tokenUsage.totalTokenCount() != null) {
-            metrics.llmTokens(tokenUsage.totalTokenCount());
+            metrics.llmTokens(purpose, tokenUsage.totalTokenCount());
         }
     }
 }

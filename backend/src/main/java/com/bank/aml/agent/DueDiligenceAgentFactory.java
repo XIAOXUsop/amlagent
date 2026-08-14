@@ -5,6 +5,7 @@ import com.bank.aml.rag.LegalDocumentSearcher;
 import com.bank.aml.tools.SnapshotToolSuite;
 import dev.langchain4j.model.chat.ChatModel;
 import dev.langchain4j.service.AiServices;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Component;
 
 /**
@@ -18,19 +19,29 @@ public class DueDiligenceAgentFactory {
     private final ChatModel chatModel;
     private final LegalDocumentSearcher searcher;
 
-    public DueDiligenceAgentFactory(ChatModel chatModel, LegalDocumentSearcher searcher) {
+    public DueDiligenceAgentFactory(@Qualifier("mainAgentChatModel") ChatModel chatModel,
+                                    LegalDocumentSearcher searcher) {
         this.chatModel = chatModel;
         this.searcher = searcher;
     }
 
     public DueDiligenceAgent create(InvestigationSnapshot snapshot) {
+        return createWithTraces(snapshot).agent();
+    }
+
+    /** 创建 Agent 并返回工具套件，供工作流读取工具调用轨迹 */
+    public AgentWithTools createWithTraces(InvestigationSnapshot snapshot) {
         SnapshotToolSuite tools = new SnapshotToolSuite(snapshot, searcher);
-        return AiServices.builder(DueDiligenceAgent.class)
+        DueDiligenceAgent agent = AiServices.builder(DueDiligenceAgent.class)
                 .chatModel(chatModel)
                 .tools(tools)
                 .executeToolsConcurrently()
                 // 循环防护：限制工具调用最大轮次，防止 Agent 无限循环
                 .maxToolCallingRoundTrips(5)
                 .build();
+        return new AgentWithTools(agent, tools);
+    }
+
+    public record AgentWithTools(DueDiligenceAgent agent, SnapshotToolSuite tools) {
     }
 }

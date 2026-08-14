@@ -13,23 +13,21 @@ import java.time.Duration;
 @Component
 public class MetricsRecorder {
 
+    private final MeterRegistry registry;
     private final Counter caseTotal;
     private final Counter caseHoldTotal;
     private final Counter caseFailedTotal;
     private final Counter guardrailCorrectionTotal;
-    private final Counter llmRequestTotal;
-    private final Counter llmTokenTotal;
     private final Counter ragCacheHitTotal;
     private final Counter ragCacheMissTotal;
     private final Timer stageDuration;
 
     public MetricsRecorder(MeterRegistry registry) {
+        this.registry = registry;
         this.caseTotal = registry.counter("aml_case_total");
         this.caseHoldTotal = registry.counter("aml_case_hold_total");
         this.caseFailedTotal = registry.counter("aml_case_failed_total");
         this.guardrailCorrectionTotal = registry.counter("aml_guardrail_correction_total");
-        this.llmRequestTotal = registry.counter("aml_llm_request_total");
-        this.llmTokenTotal = registry.counter("aml_llm_token_total");
         this.ragCacheHitTotal = registry.counter("aml_rag_cache_hit_total");
         this.ragCacheMissTotal = registry.counter("aml_rag_cache_miss_total");
         this.stageDuration = registry.timer("aml_stage_duration_seconds");
@@ -51,12 +49,19 @@ public class MetricsRecorder {
         guardrailCorrectionTotal.increment();
     }
 
-    public void llmRequest() {
-        llmRequestTotal.increment();
+    /** 模型请求数（按 purpose 区分 main_agent / summary） */
+    public void llmRequest(String purpose) {
+        registry.counter("aml_llm_request_total", "purpose", purpose).increment();
     }
 
-    public void llmTokens(long tokens) {
-        llmTokenTotal.increment(tokens);
+    /** 模型 Token 数（按 purpose 区分 main_agent / summary） */
+    public void llmTokens(String purpose, long tokens) {
+        registry.counter("aml_llm_token_total", "purpose", purpose).increment(tokens);
+    }
+
+    /** 模型调用错误（按 purpose 区分） */
+    public void llmError(String purpose) {
+        registry.counter("aml_llm_error_total", "purpose", purpose).increment();
     }
 
     public void ragCacheHit() {

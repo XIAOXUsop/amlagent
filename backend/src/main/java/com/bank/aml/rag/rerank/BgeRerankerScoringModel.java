@@ -131,10 +131,10 @@ public class BgeRerankerScoringModel implements ScoringModel {
     }
 
     private ScoreResult tryScore(String query, String document) {
-        if (session == null || tokenizer == null) {
+        if (session == null || tokenizer == null || env == null) {
             tryReload(); // 初始加载失败后，冷却结束尝试重新加载
         }
-        if (session == null || tokenizer == null) {
+        if (session == null || tokenizer == null || env == null) {
             return new ScoreResult(false, 0.0);
         }
         try {
@@ -166,20 +166,39 @@ public class BgeRerankerScoringModel implements ScoringModel {
     }
 
     private synchronized void tryReload() {
-        if (session != null) {
-            return;
+        if (session != null && tokenizer != null && env != null) {
+            return; // 完整状态已就绪
         }
+        OrtEnvironment newEnv = null;
+        OrtSession newSession = null;
+        HuggingFaceTokenizer newTokenizer = null;
         try {
             Path dir = modelProvider.locateModel();
             if (dir == null) {
                 return;
             }
-            this.env = OrtEnvironment.getEnvironment();
-            this.session = env.createSession(dir.resolve("model.onnx").toString(), new OrtSession.SessionOptions());
-            this.tokenizer = HuggingFaceTokenizer.newInstance(dir.resolve("tokenizer.json"));
+            // 原子加载：局部变量全部创建成功后再赋值，避免 Session 已建、Tokenizer 失败的半初始化状态
+            newEnv = OrtEnvironment.getEnvironment();
+            newSession = newEnv.createSession(dir.resolve("model.onnx").toString(), new OrtSession.SessionOptions());
+            newTokenizer = HuggingFaceTokenizer.newInstance(dir.resolve("tokenizer.json"));
+            this.env = newEnv;
+            this.session = newSession;
+            this.tokenizer = newTokenizer;
             log.info("rerank 模型重新加载成功");
         } catch (Exception e) {
+            closeQuietly(newTokenizer);
+            closeQuietly(newSession);
             log.warn("rerank 模型重新加载失败：{}", e.getMessage());
+        }
+    }
+
+    private void closeQuietly(AutoCloseable resource) {
+        if (resource != null) {
+            try {
+                resource.close();
+            } catch (Exception ignored) {
+                // 忽略关闭异常
+            }
         }
     }
 
