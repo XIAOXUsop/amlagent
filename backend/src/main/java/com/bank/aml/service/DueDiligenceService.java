@@ -191,6 +191,7 @@ public class DueDiligenceService {
             faultInjector.inject(WorkflowStage.COLLECTING); // 故障注入埋点（默认关闭）
 
             DueDiligenceReport report = null;
+            String reportSource = "AGENT";
             if (route == CostRouter.Route.RULE_ONLY) {
                 // 零 LLM：简单工单彻底跳过所有模型调用（含流式），由规则引擎兜底
                 record(c, WorkflowStage.COLLECTING, "RULE_ONLY 路由，跳过所有模型调用（零 LLM 成本）");
@@ -220,6 +221,7 @@ public class DueDiligenceService {
                 DueDiligenceReport fallback = ruleReporter.generate(snapshot.customer(), c.getAlertRule());
                 if (fallback != null) {
                     report = fallback;
+                    reportSource = "RULE_FALLBACK"; // 规则降级输出，不再是模型评级
                 }
             }
             if (report == null) {
@@ -256,7 +258,10 @@ public class DueDiligenceService {
             // 5. 报告生成与落库
             c.setReportJson(writeJson(report));
             c.setSummary(report.conclusion());
-            record(c, WorkflowStage.REPORTING, "尽调初审报告已生成并归档，最终评级：" + c.getRiskLevel());
+            c.setReportSource(reportSource);
+            c.setSnapshotId(snapshot.snapshotId());
+            record(c, WorkflowStage.REPORTING, "尽调初审报告已生成并归档，来源=" + reportSource
+                    + "，最终评级：" + c.getRiskLevel());
             record(c, WorkflowStage.DONE, "尽调完成。评级：" + c.getRiskLevel() + "，状态：" + c.getStatus());
         } catch (NonRetryableWorkflowException e) {
             metrics.caseFailed();
@@ -273,7 +278,8 @@ public class DueDiligenceService {
         }
         // 终态原子落库：绑定 worker+executionVersion，被接管后的陈旧写入不生效（0 行更新被丢弃）
         int updated = caseRepository.finishCase(c.getId(), worker, executionVersion,
-                c.getStatus(), c.getRiskLevel(), c.getRawRiskLevel(), c.getReportJson(), c.getSummary());
+                c.getStatus(), c.getRiskLevel(), c.getRawRiskLevel(), c.getReportJson(), c.getSummary(),
+                c.getReportSource(), c.getSnapshotId());
         if (updated == 0) {
             log.warn("工单 {} 终态落库被丢弃（已被接管，worker/version 不匹配）", caseId);
         }

@@ -101,6 +101,7 @@ public interface CaseRepository extends JpaRepository<CaseEntity, Long> {
             UPDATE CaseEntity c
             SET c.status = :status, c.riskLevel = :riskLevel, c.rawRiskLevel = :rawRiskLevel,
                 c.reportJson = :reportJson, c.summary = :summary,
+                c.reportSource = :reportSource, c.snapshotId = :snapshotId,
                 c.failureCode = NULL, c.failureMessage = NULL,
                 c.lockedBy = NULL, c.lockedAt = NULL
             WHERE c.id = :id AND c.lockedBy = :worker AND c.executionVersion = :version
@@ -112,7 +113,9 @@ public interface CaseRepository extends JpaRepository<CaseEntity, Long> {
                    @Param("riskLevel") String riskLevel,
                    @Param("rawRiskLevel") String rawRiskLevel,
                    @Param("reportJson") String reportJson,
-                   @Param("summary") String summary);
+                   @Param("summary") String summary,
+                   @Param("reportSource") String reportSource,
+                   @Param("snapshotId") String snapshotId);
 
     /** 重试到期后重新置为 PENDING（由 RetryScheduler 调用） */
     @Modifying

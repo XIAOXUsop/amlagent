@@ -54,6 +54,14 @@ public class CaseEntity {
     @Column(length = 255)
     private String summary;
 
+    /** 报告来源：AGENT / RULE_FALLBACK */
+    @Column(length = 32)
+    private String reportSource;
+
+    /** 尽调快照 ID（用于追溯 Agent 与 Guardrail 使用的数据版本） */
+    @Column(length = 64)
+    private String snapshotId;
+
     // ---- 可靠执行控制（P1）----
     /** 执行版本：每次抢占自增，用于幂等 */
     @Column(nullable = false)
@@ -167,6 +175,22 @@ public class CaseEntity {
 
     public void setSummary(String summary) {
         this.summary = summary;
+    }
+
+    public String getReportSource() {
+        return reportSource;
+    }
+
+    public void setReportSource(String reportSource) {
+        this.reportSource = reportSource;
+    }
+
+    public String getSnapshotId() {
+        return snapshotId;
+    }
+
+    public void setSnapshotId(String snapshotId) {
+        this.snapshotId = snapshotId;
     }
 
     public int getExecutionVersion() {
