@@ -60,7 +60,8 @@ public class BgeRerankerScoringModel implements ScoringModel {
         try {
             Path dir = modelProvider.locateModel();
             if (dir == null) {
-                log.warn("rerank 模型不可用，RAG 将降级为无 rerank");
+                log.warn("rerank 模型不可用，RAG 将降级为无 rerank（可重试）");
+                this.circuitOpenedAt = System.currentTimeMillis();
                 return;
             }
             this.env = OrtEnvironment.getEnvironment();
@@ -69,8 +70,9 @@ public class BgeRerankerScoringModel implements ScoringModel {
             this.available = true;
             log.info("bge-reranker 模型加载成功，rerank 已启用");
         } catch (Exception e) {
-            log.warn("bge-reranker 加载失败，降级为无 rerank：{}", e.getMessage());
+            log.warn("bge-reranker 加载失败，降级为无 rerank（可重试）：{}", e.getMessage());
             this.available = false;
+            this.circuitOpenedAt = System.currentTimeMillis();
         }
     }
 
@@ -107,11 +109,11 @@ public class BgeRerankerScoringModel implements ScoringModel {
             if (circuitOpenedAt == 0 || System.currentTimeMillis() - circuitOpenedAt < COOLDOWN_MS) {
                 return 0.0;
             }
-            // 半开探测：冷却结束后允许一次探测，成功则恢复
+            // 半开探测：冷却结束后允许一次探测，成功（未抛异常且返回有限值）则恢复
             synchronized (this) {
                 if (!available && System.currentTimeMillis() - circuitOpenedAt >= COOLDOWN_MS) {
-                    double probe = tryScore(query, document);
-                    if (probe > 0) {
+                    ScoreResult probe = tryScore(query, document);
+                    if (probe.success()) {
                         available = true;
                         consecutiveFailures.set(0);
                         circuitOpenedAt = 0;
@@ -120,15 +122,21 @@ public class BgeRerankerScoringModel implements ScoringModel {
                         circuitOpenedAt = System.currentTimeMillis();
                         log.warn("rerank 半开探测失败，继续熔断");
                     }
-                    return probe;
+                    return probe.score();
                 }
             }
             return 0.0;
         }
-        return tryScore(query, document);
+        return tryScore(query, document).score();
     }
 
-    private double tryScore(String query, String document) {
+    private ScoreResult tryScore(String query, String document) {
+        if (session == null || tokenizer == null) {
+            tryReload(); // 初始加载失败后，冷却结束尝试重新加载
+        }
+        if (session == null || tokenizer == null) {
+            return new ScoreResult(false, 0.0);
+        }
         try {
             Encoding encoding = tokenizer.encode(query, document, true, false);
             long[] ids = encoding.getIds();
@@ -140,7 +148,8 @@ public class BgeRerankerScoringModel implements ScoringModel {
                 try (OrtSession.Result result = session.run(inputs)) {
                     float[][] logits = (float[][]) result.get(0).getValue();
                     consecutiveFailures.set(0); // 成功重置
-                    return logits[0][0];
+                    double score = logits[0][0];
+                    return new ScoreResult(Double.isFinite(score), score);
                 }
             }
         } catch (Exception e) {
@@ -152,7 +161,28 @@ public class BgeRerankerScoringModel implements ScoringModel {
             } else {
                 log.warn("rerank 打分失败，返回 0：{}", e.getMessage());
             }
-            return 0.0;
+            return new ScoreResult(false, 0.0);
         }
+    }
+
+    private synchronized void tryReload() {
+        if (session != null) {
+            return;
+        }
+        try {
+            Path dir = modelProvider.locateModel();
+            if (dir == null) {
+                return;
+            }
+            this.env = OrtEnvironment.getEnvironment();
+            this.session = env.createSession(dir.resolve("model.onnx").toString(), new OrtSession.SessionOptions());
+            this.tokenizer = HuggingFaceTokenizer.newInstance(dir.resolve("tokenizer.json"));
+            log.info("rerank 模型重新加载成功");
+        } catch (Exception e) {
+            log.warn("rerank 模型重新加载失败：{}", e.getMessage());
+        }
+    }
+
+    private record ScoreResult(boolean success, double score) {
     }
 }
