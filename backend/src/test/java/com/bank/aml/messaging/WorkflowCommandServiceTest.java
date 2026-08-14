@@ -50,4 +50,35 @@ class WorkflowCommandServiceTest {
         assertThat(reclaimed).isTrue();
         verify(outbox).record(1L, WorkflowEventType.CASE_RECLAIMED.name(), 3);
     }
+
+    @Test
+    void markDeadLetterFailsAndEnqueuesDeadLetterEvent() {
+        CaseRepository repo = mock(CaseRepository.class);
+        OutboxService outbox = mock(OutboxService.class);
+        WorkflowCommandService svc = new WorkflowCommandService(repo, outbox);
+
+        when(repo.failCase(eq(1L), eq(CaseStatus.FAILED), eq(3), eq("RETRY_EXHAUSTED"),
+                anyString(), eq("worker-a"), eq(2))).thenReturn(1);
+
+        boolean marked = svc.markDeadLetter(1L, "worker-a", 2, 3, "重试超限");
+
+        assertThat(marked).isTrue();
+        verify(outbox).record(1L, WorkflowEventType.CASE_DEAD_LETTER.name(), 2);
+    }
+
+    @Test
+    void markDeadLetterDoesNotEnqueueWhenAlreadyReclaimed() {
+        CaseRepository repo = mock(CaseRepository.class);
+        OutboxService outbox = mock(OutboxService.class);
+        WorkflowCommandService svc = new WorkflowCommandService(repo, outbox);
+
+        // 已失去租约（worker/version 不匹配），failCase 返回 0
+        when(repo.failCase(eq(1L), eq(CaseStatus.FAILED), eq(3), eq("RETRY_EXHAUSTED"),
+                anyString(), eq("worker-a"), eq(2))).thenReturn(0);
+
+        boolean marked = svc.markDeadLetter(1L, "worker-a", 2, 3, "重试超限");
+
+        assertThat(marked).isFalse();
+        verify(outbox, never()).record(anyLong(), anyString(), anyInt());
+    }
 }

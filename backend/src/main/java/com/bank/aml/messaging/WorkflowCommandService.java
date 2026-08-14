@@ -83,6 +83,17 @@ public class WorkflowCommandService {
                 executionVersion, worker, heartbeatThreshold) == 1;
     }
 
+    /** 重试超限进死信：RUNNING → FAILED + 死信 Outbox（同一事务，不直接写 Redis） */
+    @Transactional
+    public boolean markDeadLetter(Long caseId, String worker, int executionVersion, int retry, String message) {
+        if (caseRepository.failCase(caseId, CaseStatus.FAILED, retry, "RETRY_EXHAUSTED", message,
+                worker, executionVersion) == 1) {
+            outboxService.record(caseId, WorkflowEventType.CASE_DEAD_LETTER.name(), executionVersion);
+            return true;
+        }
+        return false;
+    }
+
     /** 死信重放：重置为 PENDING 并重新入队，返回更新后的工单 */
     @Transactional
     public CaseEntity replayDead(Long caseId) {

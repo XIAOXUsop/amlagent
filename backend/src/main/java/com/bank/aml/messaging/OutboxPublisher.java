@@ -44,8 +44,13 @@ public class OutboxPublisher {
         StreamOperations<String, String, String> ops = redisTemplate.opsForStream();
         for (OutboxEvent event : pending) {
             try {
-                ops.add(StreamRecords.string(
-                        Map.of("caseId", String.valueOf(event.getAggregateId()))).withStreamKey(props.getStream()));
+                String streamKey = isDeadLetter(event) ? props.getDeadStream() : props.getStream();
+                ops.add(StreamRecords.string(Map.of(
+                        "caseId", String.valueOf(event.getAggregateId()),
+                        "eventType", event.getEventType(),
+                        "executionVersion", String.valueOf(event.getExecutionVersion()),
+                        "idempotencyKey", event.getIdempotencyKey() == null ? "" : event.getIdempotencyKey()
+                )).withStreamKey(streamKey));
                 event.setStatus(OutboxStatus.PUBLISHED);
                 event.setPublishedAt(now);
                 outboxRepository.save(event);
@@ -60,5 +65,9 @@ public class OutboxPublisher {
                 log.error("Outbox 发布失败 eventId={} caseId={}", event.getId(), event.getAggregateId(), e);
             }
         }
+    }
+
+    private boolean isDeadLetter(OutboxEvent event) {
+        return WorkflowEventType.CASE_DEAD_LETTER.name().equals(event.getEventType());
     }
 }

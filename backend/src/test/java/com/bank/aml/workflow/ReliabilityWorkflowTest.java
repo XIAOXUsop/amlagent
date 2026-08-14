@@ -3,26 +3,23 @@ package com.bank.aml.workflow;
 import com.bank.aml.common.enums.CaseStatus;
 import com.bank.aml.datasource.entity.CaseEntity;
 import com.bank.aml.datasource.repository.CaseRepository;
-import com.bank.aml.messaging.DeadLetterService;
 import com.bank.aml.messaging.OutboxRepository;
 import com.bank.aml.messaging.OutboxService;
 import com.bank.aml.messaging.PendingClaimer;
 import com.bank.aml.messaging.QueueProperties;
 import com.bank.aml.messaging.RetryScheduler;
+import com.bank.aml.messaging.WorkflowCommandService;
 import com.bank.aml.messaging.WorkflowEventType;
 import com.bank.aml.service.DueDiligenceService;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.data.redis.connection.stream.StreamRecords;
-import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 
 import java.time.LocalDateTime;
-import java.util.Map;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -57,11 +54,9 @@ class ReliabilityWorkflowTest {
     @Autowired
     private RetryScheduler retryScheduler;
     @Autowired
+    private WorkflowCommandService workflowCommandService;
+    @Autowired
     private PendingClaimer pendingClaimer;
-    @Autowired
-    private DeadLetterService deadLetterService;
-    @Autowired
-    private StringRedisTemplate redisTemplate;
     @Autowired
     private QueueProperties props;
 
@@ -153,9 +148,9 @@ class ReliabilityWorkflowTest {
         assertThat(service.getCase(c.getId()).getStatus()).isEqualTo(CaseStatus.RUNNING);
     }
 
-    /** 死信兜底：重试超限 → FAILED（RETRY_EXHAUSTED）+ 写入死信 Stream，可被列出来人工重放 */
+    /** 死信兜底：重试超限 → FAILED（RETRY_EXHAUSTED）+ 死信 Outbox 事件（由发布器异步投递到 Dead Stream） */
     @Test
-    void retryExhaustionMarksFailedAndDeadLetter() {
+    void retryExhaustionMarksFailedAndEnqueuesDeadLetter() {
         CaseEntity c = service.createCase("C002", "常规监测", false);
         c.setStatus(CaseStatus.RUNNING);
         c.setLockedBy("worker-x");
@@ -163,19 +158,17 @@ class ReliabilityWorkflowTest {
         c.setRetryCount(props.getMaxRetry() - 1); // 下一次失败即超限
         caseRepository.save(c);
 
-        // 与 handleRetry 死信分支一致：标记 FAILED + 写死信 Stream
-        int updated = caseRepository.failCase(c.getId(), CaseStatus.FAILED, props.getMaxRetry(),
-                "RETRY_EXHAUSTED", "重试超限进死信", "worker-x", 2);
-        assertThat(updated).isEqualTo(1);
-        redisTemplate.opsForStream().add(StreamRecords.string(Map.of("caseId", String.valueOf(c.getId())))
-                .withStreamKey(props.getDeadStream()));
+        // 走 markDeadLetter：FAILED 与死信 Outbox 同事务（不再直接写 Redis）
+        boolean marked = workflowCommandService.markDeadLetter(c.getId(), "worker-x", 2,
+                props.getMaxRetry(), "重试超限进死信");
+        assertThat(marked).isTrue();
 
         CaseEntity failed = service.getCase(c.getId());
         assertThat(failed.getStatus()).isEqualTo(CaseStatus.FAILED);
         assertThat(failed.getFailureCode()).isEqualTo("RETRY_EXHAUSTED");
         assertThat(failed.getRetryCount()).isEqualTo(props.getMaxRetry());
 
-        assertThat(deadLetterService.list().stream()
-                .anyMatch(m -> String.valueOf(c.getId()).equals(m.get("caseId")))).isTrue();
+        String key = OutboxService.idempotencyKey(c.getId(), WorkflowEventType.CASE_DEAD_LETTER.name(), 2);
+        assertThat(outboxRepository.existsByIdempotencyKey(key)).isTrue();
     }
 }

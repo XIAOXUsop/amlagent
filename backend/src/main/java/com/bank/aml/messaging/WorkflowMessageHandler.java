@@ -37,16 +37,19 @@ public class WorkflowMessageHandler {
 
     private final CaseRepository caseRepository;
     private final DueDiligenceService dueDiligenceService;
+    private final WorkflowCommandService workflowCommandService;
     private final StringRedisTemplate redisTemplate;
     private final QueueProperties props;
     private final WorkerIdentity workerIdentity;
     private final ScheduledExecutorService heartbeatExecutor;
 
     public WorkflowMessageHandler(CaseRepository caseRepository, DueDiligenceService dueDiligenceService,
+                                  WorkflowCommandService workflowCommandService,
                                   StringRedisTemplate redisTemplate, QueueProperties props,
                                   WorkerIdentity workerIdentity, ScheduledExecutorService heartbeatExecutor) {
         this.caseRepository = caseRepository;
         this.dueDiligenceService = dueDiligenceService;
+        this.workflowCommandService = workflowCommandService;
         this.redisTemplate = redisTemplate;
         this.props = props;
         this.workerIdentity = workerIdentity;
@@ -64,9 +67,9 @@ public class WorkflowMessageHandler {
         }
 
         String worker = workerIdentity.consumerName();
-        // 抢占执行权：仅 PENDING/FAILED 可抢占，executionVersion 自增
+        // 抢占执行权：仅 PENDING 可抢占（FAILED 只能通过显式管理命令恢复），executionVersion 自增
         boolean locked = caseRepository.tryLock(caseId, worker, LocalDateTime.now(),
-                CaseStatus.RUNNING, List.of(CaseStatus.PENDING, CaseStatus.FAILED)) == 1;
+                CaseStatus.RUNNING, List.of(CaseStatus.PENDING)) == 1;
         if (!locked) {
             // 已在执行/已完成，幂等丢弃（重复消息不重复处理）
             ack(record);
@@ -112,9 +115,8 @@ public class WorkflowMessageHandler {
         CaseEntity c = caseRepository.findById(caseId).orElse(null);
         int retry = (c == null ? 0 : c.getRetryCount()) + 1;
         if (retry >= props.getMaxRetry()) {
-            redisTemplate.opsForStream().add(StreamRecords.string(
-                    Map.of("caseId", String.valueOf(caseId))).withStreamKey(props.getDeadStream()));
-            caseRepository.failCase(caseId, CaseStatus.FAILED, retry, "RETRY_EXHAUSTED", message, worker, executionVersion);
+            // 死信走 Outbox：RUNNING → FAILED 与死信事件同事务，不直接写 Redis
+            workflowCommandService.markDeadLetter(caseId, worker, executionVersion, retry, message);
             ack(record);
             log.error("工单重试超限进死信 caseId={} retry={}", caseId, retry);
         } else {

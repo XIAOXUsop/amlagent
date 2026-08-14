@@ -13,5 +13,7 @@ public enum WorkflowEventType {
     /** Worker 超时被接管，重新投递 */
     CASE_RECLAIMED,
     /** 死信重放 */
-    CASE_DEAD_REPLAYED
+    CASE_DEAD_REPLAYED,
+    /** 重试超限进死信 */
+    CASE_DEAD_LETTER
 }
