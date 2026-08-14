@@ -212,6 +212,16 @@ function legalBody(text: string): string {
     <div v-if="report" class="card">
       <h3 class="card-title">尽调初审报告</h3>
       <div class="report">
+        <div v-if="caseItem?.reportSource || caseItem?.snapshotId" class="report-row">
+          <div class="report-label">执行溯源</div>
+          <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap">
+            <el-tag v-if="caseItem?.reportSource" size="small" :type="caseItem.reportSource === 'AGENT' ? 'success' : 'warning'">
+              {{ caseItem.reportSource === 'AGENT' ? 'Agent 生成' : '规则降级' }}
+            </el-tag>
+            <span v-if="caseItem?.snapshotId" style="font-size: 12px; color: #909399">快照 {{ caseItem.snapshotId }}</span>
+          </div>
+        </div>
+
         <div class="report-row">
           <div class="report-label">风险评级</div>
           <el-tag :type="riskMeta[report.riskLevel]?.type ?? 'info'" size="large">{{ report.riskLevel }}</el-tag>

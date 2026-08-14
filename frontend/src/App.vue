@@ -1,23 +1,31 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { checkAuth, logout as apiLogout } from './api/client'
+import { checkAuth, logout as apiLogout, type AuthenticatedUser } from './api/client'
+import { currentUser } from './auth'
 import LoginView from './views/LoginView.vue'
 
 const route = useRoute()
 const router = useRouter()
-const loggedIn = ref(false)
-const role = ref('')
+const authReady = ref(false)
+
+const loggedIn = computed(() => currentUser.value !== null)
+const role = computed(() => currentUser.value?.role ?? '')
 
 onMounted(async () => {
   try {
-    const me = await checkAuth()
-    role.value = me.role
-    loggedIn.value = true
+    currentUser.value = await checkAuth()
   } catch {
-    loggedIn.value = false
+    currentUser.value = null
+  } finally {
+    authReady.value = true
   }
 })
+
+function handleLoggedIn(user: AuthenticatedUser) {
+  currentUser.value = user
+  router.replace('/cases')
+}
 
 function openCase(id: number) {
   router.push(`/cases/${id}`)
@@ -33,8 +41,7 @@ async function logout() {
   } catch {
     /* 忽略登出接口异常，本地直接清态 */
   }
-  loggedIn.value = false
-  role.value = ''
+  currentUser.value = null
   router.push('/cases')
 }
 
@@ -45,7 +52,8 @@ const isEval = () => route.path.startsWith('/eval')
 
 <template>
   <div class="app-shell">
-    <LoginView v-if="!loggedIn" @logged-in="loggedIn = true" />
+    <div v-if="!authReady" class="loading">加载中…</div>
+    <LoginView v-else-if="!loggedIn" @logged-in="handleLoggedIn" />
     <template v-else>
       <header class="topbar">
         <div class="brand">
@@ -81,5 +89,13 @@ const isEval = () => route.path.startsWith('/eval')
 .nav {
   display: flex;
   gap: 8px;
+}
+.loading {
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #909399;
+  font-size: 14px;
 }
 </style>

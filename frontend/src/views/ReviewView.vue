@@ -47,6 +47,7 @@ async function doSubmit() {
       reviewerRiskLevel: reviewerRiskLevel.value,
       decision: decision.value,
       comment: comment.value,
+      expectedReviewRevision: reviewing.value.reviewRevision ?? 0,
     })
     ElMessage.success('复核已提交')
     dialogOpen.value = false

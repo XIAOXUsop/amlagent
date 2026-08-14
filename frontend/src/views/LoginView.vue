@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { ref } from 'vue'
-import { login } from '../api/client'
+import { login, type AuthenticatedUser } from '../api/client'
 
-const emit = defineEmits<{ (e: 'logged-in'): void }>()
+const emit = defineEmits<{ (e: 'logged-in', user: AuthenticatedUser): void }>()
 
 const username = ref('')
 const password = ref('')
@@ -17,7 +17,7 @@ async function doLogin() {
   try {
     const r = await login(username.value, password.value)
     ElMessage.success(`欢迎，${r.username}（${r.role}）`)
-    emit('logged-in')
+    emit('logged-in', r)
   } catch {
     ElMessage.error('登录失败，请检查用户名或密码')
   } finally {

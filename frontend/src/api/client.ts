@@ -21,7 +21,10 @@ export interface CaseItem {
   rawRiskLevel: string | null
   reportJson: string | null
   summary: string | null
+  reportSource: string | null
+  snapshotId: string | null
   executionVersion: number
+  reviewRevision: number
   retryCount: number
   failureCode: string | null
   failureMessage: string | null
@@ -104,12 +107,19 @@ api.interceptors.response.use(
 )
 
 // ---------- 认证 ----------
-export async function login(username: string, password: string): Promise<{ username: string; role: string }> {
+export type UserRole = 'ADMIN' | 'REVIEWER' | 'ANALYST'
+
+export interface AuthenticatedUser {
+  username: string
+  role: UserRole
+}
+
+export async function login(username: string, password: string): Promise<AuthenticatedUser> {
   return (await api.post('/auth/login', { username, password })).data
 }
 
 /** 刷新后恢复登录态（未认证由后端返回 401） */
-export async function checkAuth(): Promise<{ username: string; role: string }> {
+export async function checkAuth(): Promise<AuthenticatedUser> {
   return (await api.get('/auth/me')).data
 }
 
@@ -189,7 +199,7 @@ export async function listPendingReviews(): Promise<CaseItem[]> {
 
 export async function submitReview(
   caseId: number,
-  body: { reviewerRiskLevel: string; decision: string; comment: string },
+  body: { reviewerRiskLevel: string; decision: string; comment: string; expectedReviewRevision: number },
 ): Promise<ManualReview> {
   return (await api.post(`/reviews/${caseId}`, body)).data
 }
