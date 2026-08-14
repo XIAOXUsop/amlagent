@@ -22,11 +22,14 @@ public class ProductionConfigValidator implements ApplicationRunner {
 
     private final String jwtSecret;
     private final String dbPassword;
+    private final boolean cookieSecure;
 
     public ProductionConfigValidator(@Value("${aml.security.jwt-secret:}") String jwtSecret,
-                                     @Value("${spring.datasource.password:}") String dbPassword) {
+                                     @Value("${spring.datasource.password:}") String dbPassword,
+                                     @Value("${aml.security.cookie-secure:false}") boolean cookieSecure) {
         this.jwtSecret = jwtSecret;
         this.dbPassword = dbPassword;
+        this.cookieSecure = cookieSecure;
     }
 
     @Override
@@ -37,6 +40,9 @@ public class ProductionConfigValidator implements ApplicationRunner {
         }
         if (dbPassword == null || dbPassword.isBlank() || dbPassword.contains("aml123456") || dbPassword.contains("root123456")) {
             violations.add("数据库密码使用默认值");
+        }
+        if (!cookieSecure) {
+            violations.add("生产环境必须启用 Secure Cookie（aml.security.cookie-secure=true）");
         }
         if (!violations.isEmpty()) {
             String message = "生产环境配置校验失败：" + String.join("；", violations);

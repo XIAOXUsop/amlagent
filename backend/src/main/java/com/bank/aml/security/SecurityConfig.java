@@ -15,6 +15,7 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.provisioning.InMemoryUserDetailsManager;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
+import org.springframework.security.web.csrf.CookieCsrfTokenRepository;
 
 /**
  * Spring Security 配置：无状态 JWT 认证，内置三角色用户。
@@ -54,7 +55,12 @@ public class SecurityConfig {
 
     @Bean
     public SecurityFilterChain filterChain(HttpSecurity http, JwtAuthenticationFilter jwtFilter) throws Exception {
-        http.csrf(csrf -> csrf.disable())
+        http.csrf(csrf -> csrf
+                        // HttpOnly Cookie 认证下，浏览器会自动携带认证 Cookie，必须启用 CSRF 防护。
+                        // 可读的 XSRF-TOKEN Cookie 供前端读取写入 X-XSRF-TOKEN header。
+                        .csrfTokenRepository(CookieCsrfTokenRepository.withHttpOnlyFalse())
+                        .ignoringRequestMatchers("/api/auth/login", "/actuator/**",
+                                "/swagger-ui/**", "/swagger-ui.html", "/v3/api-docs/**"))
                 .sessionManagement(sm -> sm.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers("/api/auth/login", "/api/auth/logout", "/actuator/**",

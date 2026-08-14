@@ -78,7 +78,21 @@ export interface ManualReview {
 
 export const api = axios.create({ baseURL: '/api', timeout: 120000 })
 
+// CSRF 防护：从可读的 XSRF-TOKEN Cookie 取值，写入 X-XSRF-TOKEN header（写请求）
+function readCsrfToken(): string {
+  const match = document.cookie.match(/(?:^|;\s*)XSRF-TOKEN=([^;]+)/)
+  return match ? match[1] : ''
+}
+
 // 认证走 HttpOnly Cookie（浏览器自动携带），不再手动附加 Authorization 头
+api.interceptors.request.use((config) => {
+  const method = (config.method || 'GET').toUpperCase()
+  if (['POST', 'PUT', 'DELETE', 'PATCH'].includes(method)) {
+    config.headers['X-XSRF-TOKEN'] = readCsrfToken()
+  }
+  return config
+})
+
 api.interceptors.response.use(
   (r) => r,
   (err) => {
