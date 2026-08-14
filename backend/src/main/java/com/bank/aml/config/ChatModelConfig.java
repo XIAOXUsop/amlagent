@@ -4,6 +4,7 @@ import com.bank.aml.observability.ChatModelTokenListener;
 import com.bank.aml.observability.MetricsRecorder;
 import com.bank.aml.observability.ModelInvocationTags;
 import com.bank.aml.observability.ObservedChatModel;
+import com.bank.aml.observability.ObservedStreamingChatModel;
 import dev.langchain4j.model.anthropic.AnthropicChatModel;
 import dev.langchain4j.model.chat.ChatModel;
 import dev.langchain4j.model.chat.DisabledStreamingChatModel;
@@ -91,7 +92,7 @@ public class ChatModelConfig {
 
     /** 流式模型：用于报告分析过程的 token 级流式输出；无 API Key 时返回禁用实现（优雅降级） */
     @Bean
-    public StreamingChatModel streamingChatModel(LlmProperties props, ChatModelTokenListener tokenListener) {
+    public StreamingChatModel streamingChatModel(LlmProperties props) {
         LlmProviderProperties active = props.active();
         if (active.typeEnum() == LlmProperties.ProviderType.MOCK || !active.hasApiKey()) {
             log.warn("流式模型不可用（Mock 或无 API Key），流式输出降级为跳过");
@@ -100,12 +101,20 @@ public class ChatModelConfig {
         var b = OpenAiStreamingChatModel.builder()
                 .apiKey(active.getApiKey())
                 .modelName(active.getModelName())
-                .temperature(active.getTemperature())
-                .listeners(tokenListener);
+                .temperature(active.getTemperature());
         if (active.getBaseUrl() != null && !active.getBaseUrl().isBlank()) {
             b.baseUrl(active.getBaseUrl());
         }
         log.info("初始化流式模型: provider={}, model={}", props.getActiveProvider(), active.getModelName());
         return b.build();
+    }
+
+    /** 摘要用的流式模型：显式包装 purpose=summary，异步回调中记录 Token/错误不依赖 ThreadLocal */
+    @Bean
+    public StreamingChatModel summaryStreamingChatModel(StreamingChatModel streamingChatModel,
+                                                        MetricsRecorder metrics, LlmProperties props) {
+        LlmProviderProperties active = props.active();
+        return new ObservedStreamingChatModel(streamingChatModel, metrics,
+                new ModelInvocationTags(props.getActiveProvider(), active.getModelName(), "summary"));
     }
 }

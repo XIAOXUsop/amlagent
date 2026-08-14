@@ -16,7 +16,10 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
+import java.util.HexFormat;
 import java.util.List;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -51,6 +54,12 @@ public class LegalDocIngestor implements ApplicationRunner {
                 log.warn("RAG 导入：目录 {} 下未找到法规文档，跳过导入", props.getDataDir());
                 return;
             }
+            // 内容哈希幂等：法规未变化时跳过重建，避免每次启动 removeAll 清空索引（旧快照读到空/新索引）
+            String contentHash = computeContentHash(files);
+            if (contentHash.equals(readIndexVersion())) {
+                log.info("RAG 索引未变化（hash={}），跳过重建", contentHash.substring(0, 8));
+                return;
+            }
             List<TextSegment> segments = new ArrayList<>();
             for (int i = 0; i < files.size(); i++) {
                 segments.addAll(splitFile(files.get(i), i));
@@ -62,9 +71,46 @@ public class LegalDocIngestor implements ApplicationRunner {
             embeddingStore.removeAll();
             List<Embedding> embeddings = embeddingModel.embedAll(segments).content();
             embeddingStore.addAll(embeddings, segments);
-            log.info("RAG 导入完成：{} 个文档片段向量化入库（表 {}）", segments.size(), props.getPg().getTable());
+            writeIndexVersion(contentHash);
+            log.info("RAG 导入完成：{} 个文档片段向量化入库（表 {}，hash={}）",
+                    segments.size(), props.getPg().getTable(), contentHash.substring(0, 8));
         } catch (Exception e) {
             log.error("RAG 文档导入失败", e);
+        }
+    }
+
+    /** 法规索引内容哈希（所有文档内容拼接后的 SHA-256），用于幂等导入与版本审计 */
+    private String computeContentHash(List<Path> files) throws IOException {
+        MessageDigest digest;
+        try {
+            digest = MessageDigest.getInstance("SHA-256");
+        } catch (NoSuchAlgorithmException e) {
+            throw new IllegalStateException("SHA-256 不可用", e);
+        }
+        for (Path file : files) {
+            digest.update(Files.readAllBytes(file));
+        }
+        return HexFormat.of().formatHex(digest.digest());
+    }
+
+    private Path versionFile() {
+        return Path.of(props.getDataDir(), ".index-version");
+    }
+
+    private String readIndexVersion() {
+        try {
+            Path f = versionFile();
+            return Files.exists(f) ? Files.readString(f, StandardCharsets.UTF_8).strip() : "";
+        } catch (IOException e) {
+            return "";
+        }
+    }
+
+    private void writeIndexVersion(String hash) {
+        try {
+            Files.writeString(versionFile(), hash, StandardCharsets.UTF_8);
+        } catch (IOException e) {
+            log.warn("写入法规索引版本文件失败：{}", e.getMessage());
         }
     }
 

@@ -5,6 +5,7 @@ import com.bank.aml.agent.StreamingAnalysisAgent;
 import dev.langchain4j.model.chat.ChatModel;
 import dev.langchain4j.model.chat.StreamingChatModel;
 import dev.langchain4j.service.AiServices;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
@@ -23,9 +24,10 @@ public class AgentAiConfig {
                 .build();
     }
 
-    /** 流式风险分析 Agent：token 级流式输出分析过程 */
+    /** 流式风险分析 Agent：使用 purpose=summary 的显式包装模型，异步回调中指标不落 unknown */
     @Bean
-    public StreamingAnalysisAgent streamingAnalysisAgent(StreamingChatModel streamingChatModel) {
+    public StreamingAnalysisAgent streamingAnalysisAgent(
+            @Qualifier("summaryStreamingChatModel") StreamingChatModel streamingChatModel) {
         return AiServices.builder(StreamingAnalysisAgent.class)
                 .streamingChatModel(streamingChatModel)
                 .build();
