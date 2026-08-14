@@ -20,6 +20,9 @@ e2e_*.py
 verify_*.py
 *.out.txt
 
+# ===== 运行时生成的 RAG 法规索引版本（启动时重算，不提交）=====
+backend/data/**/.index-version
+
 # ===== IDE / 系统 =====
 .idea/
 .vscode/

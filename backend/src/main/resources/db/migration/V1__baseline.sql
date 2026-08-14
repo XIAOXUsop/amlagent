@@ -91,7 +91,7 @@ CREATE TABLE risk_rule (
     condition_expression VARCHAR(255),
     target_risk_level   VARCHAR(32),
     action              VARCHAR(32)  DEFAULT 'AUTO_DONE',
-    enabled             TINYINT(1)   NOT NULL DEFAULT 1,
+    enabled             BIT(1)       NOT NULL DEFAULT b'1',
     effective_from      DATETIME(6),
     effective_to        DATETIME(6),
     description         VARCHAR(255),

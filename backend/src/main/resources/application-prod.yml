@@ -10,3 +10,10 @@ spring:
 aml:
   security:
     cookie-secure: true
+
+# 生产默认关闭 Swagger / OpenAPI（避免暴露接口清单）
+springdoc:
+  api-docs:
+    enabled: false
+  swagger-ui:
+    enabled: false
