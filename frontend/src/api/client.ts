@@ -99,7 +99,9 @@ api.interceptors.request.use((config) => {
 api.interceptors.response.use(
   (r) => r,
   (err) => {
-    if (err.response?.status === 401) {
+    // /auth/me 返回 401 表示"未登录"这一正常状态（初始加载校验），不应触发整页跳转，
+    // 否则会与 App 挂载时的 checkAuth 形成 401 → 跳转 → 再校验 的无限循环。
+    if (err.response?.status === 401 && !err.config?.url?.includes('/auth/me')) {
       window.location.href = '/'
     }
     return Promise.reject(err)
