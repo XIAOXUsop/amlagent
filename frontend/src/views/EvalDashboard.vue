@@ -5,7 +5,6 @@ import {
   getAgentEvalStatus,
   getAgentEvalDatasetSummary,
   runAgentDevEval,
-  runAgentTestEval,
 } from '../api/client'
 
 const status = ref<Record<string, any> | null>(null)
@@ -22,14 +21,14 @@ onMounted(async () => {
   }
 })
 
-async function run(split: 'DEV' | 'TEST') {
+async function runDev() {
   loading.value = true
   result.value = null
   try {
-    result.value = split === 'DEV' ? await runAgentDevEval() : await runAgentTestEval()
-    ElMessage.success(`${split} 评测已提交`)
+    result.value = await runAgentDevEval()
+    ElMessage.success('DEV 评测已提交')
   } catch {
-    ElMessage.error(`${split} 评测失败（可能未配置真实模型 Key）`)
+    ElMessage.error('DEV 评测失败（可能未配置真实模型 Key）')
   } finally {
     loading.value = false
   }
@@ -93,10 +92,9 @@ const baseline = [
     <div class="card">
       <h3 class="card-title">运行真实模型评测</h3>
       <div style="display: flex; gap: 12px">
-        <el-button type="primary" :loading="loading" @click="run('DEV')">运行 DEV 分片</el-button>
-        <el-button type="warning" :loading="loading" @click="run('TEST')">运行冻结 TEST 分片</el-button>
+        <el-button type="primary" :loading="loading" @click="runDev">运行 DEV 分片</el-button>
       </div>
-      <p class="hint">需配置真实模型 Key（如 DEEPSEEK_API_KEY）；Mock/fallback 会被拒绝并返回 INVALID_MODEL_FALLBACK。</p>
+      <p class="hint">需配置真实模型 Key（如 DEEPSEEK_API_KEY）；Mock/fallback 会被拒绝并返回 INVALID_MODEL_FALLBACK。隐藏 TEST 分片仅通过 CLI/集成测试一次性运行（RUN_HIDDEN_AGENT_EVAL=true），不在页面暴露。</p>
     </div>
 
     <div v-if="result" class="card">

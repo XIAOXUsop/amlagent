@@ -79,12 +79,16 @@ public class EvaluationController {
     }
 
     /**
-     * 运行冻结的隐藏 TEST 分片（最终评测）。标准答案冻结，仅返回聚合指标与案例结果；
-     * 数据集内容哈希用于冻结审计，任何改动都会改变哈希。
+     * 运行冻结的隐藏 TEST 分片（最终评测）。标准答案冻结，仅返回聚合指标，不返回逐案例金标。
+     * <p>需显式设置环境变量 {@code RUN_HIDDEN_AGENT_EVAL=true}，避免在普通 Web 页面反复调用 TEST 造成指标泄漏。
      */
     @PostMapping("/agent/test")
     public AgentEvalReport agentTest() {
-        return persistIfCompleted(agentEvalRunner.runTest(), "AGENT_TEST");
+        if (!Boolean.parseBoolean(System.getenv().getOrDefault("RUN_HIDDEN_AGENT_EVAL", "false"))) {
+            throw new IllegalStateException("隐藏 TEST 评测需显式设置环境变量 RUN_HIDDEN_AGENT_EVAL=true");
+        }
+        AgentEvalReport report = persistIfCompleted(agentEvalRunner.runTest(), "AGENT_TEST");
+        return report.aggregateOnly(); // 盲测：只返回聚合指标，不暴露逐案例 expectedRisk/requiredFindingCodes 金标
     }
 
     private AgentEvalReport persistIfCompleted(AgentEvalReport report, String evalType) {

@@ -76,6 +76,17 @@ public record AgentEvalReport(
                 cases.stream().map(CaseResult::withoutSensitiveDetails).toList());
     }
 
+    /** 仅聚合指标版本：隐藏 TEST 盲测不返回逐案例金标，避免针对测试集调优导致指标泄漏 */
+    public AgentEvalReport aggregateOnly() {
+        return new AgentEvalReport(
+                runId, datasetId, datasetVersion, split, promptVersion, runtime, runStatus, omit(invalidReason),
+                startedAt, durationMs, attempted, completed, scored, invalid, strictPassCount,
+                strictPassRate, taskPassCount, taskPassRate, forbiddenClaimGatePolicy,
+                schema, rawRisk, finalRisk, guardrails,
+                rawEscalation, finalEscalation, findings, actions, citations, tools, forbiddenClaims,
+                latency, tokens, List.of());
+    }
+
     public record RuntimeInfo(
             String provider,
             String configuredModel,
