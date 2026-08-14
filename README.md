@@ -59,7 +59,7 @@ $env:RUN_LIVE_AGENT_EVAL = "true"
 
 | 要素 | 值 |
 |---|---|
-| 代码基线 | `master / 18a2bbc`（本地分支超前 origin/master 若干提交） |
+| 代码基线 | `master / 49ad3c2`（本地分支领先 origin/master） |
 | Prompt 版本 | `aml-dd-agent-v5-manual-review-consistency` |
 | 模型 | `deepseek-v4-flash`（多提供商可切换） |
 | 数据集 | `agent-cases-v1.json`（15 条：DEV 9 / TEST 6，`PENDING_DOMAIN_REVIEW`） |
@@ -230,13 +230,28 @@ docker-compose.yml        MySQL + PostgreSQL(pgvector) + Redis
 - **Mock 模型 agentic 循环**：无 API Key 时 Mock 模型模拟多轮工具调用，保证链路离线可演示。
 - **本地 embedding**：DeepSeek 无官方 embedding API，默认用 all-MiniLM-L6-v2 离线向量化，可在配置中切换中文 embedding 服务。
 
+## 设计文档
+
+- [Snapshot First 尽调执行模型](docs/architecture/snapshot-first.md)
+- [可靠工作流：Outbox、租约与状态机](docs/architecture/workflow-reliability.md)
+- [隐藏 TEST 盲测协议](docs/evaluation/hidden-test-protocol.md)
+- [Cookie 认证与 CSRF 模型](docs/security/cookie-csrf-model.md)
+
 ## 自动化测试
 
 ```bash
+# 后端：91 项确定性单元测试（排除集成）+ 8 项工作流集成/E2E
 cd backend
-./mvnw test                        # 单元测试
-./mvnw test -Dgroups=integration   # 集成测试（复用本机 Docker 服务）
+./mvnw test                        # 单元测试（不依赖 Docker）
+./mvnw test -Dgroups=integration   # 集成测试（需本机 Docker 的 MySQL/Redis/pgvector）
+
+# 前端：Vitest 组件测试 + 生产构建
+cd frontend
+npm test                           # 组件测试
+npm run build                      # vue-tsc 类型检查 + Vite 生产构建
 ```
+
+> 集成测试与真实模型评测（`AgentEvalLiveTest`）默认不调用外部模型；真实 DEV/TEST 评测需显式配置模型 Key。
 
 ## 性能压测与可靠性演示
 
