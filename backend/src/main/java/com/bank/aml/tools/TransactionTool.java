@@ -30,7 +30,11 @@ public class TransactionTool {
 
     @Tool("查询客户近180天交易画像，返回交易笔数、总额、夜间交易占比、跨境交易占比、大额交易笔数与涉及地区等风险特征")
     public String transactionProfile(@P("客户编号，如 C001") String customerId) {
-        List<TransactionRecord> txns = dataSource.transactionsOf(customerId);
+        return format(dataSource.transactionsOf(customerId), customerId);
+    }
+
+    /** 从已冻结的交易原始数据生成画像文本（快照工具与 Spring 工具复用同一格式化逻辑） */
+    public static String format(List<TransactionRecord> txns, String customerId) {
         if (txns.isEmpty()) {
             return "未查询到客户 " + customerId + " 的交易记录。";
         }
@@ -64,7 +68,7 @@ public class TransactionTool {
                 txns.stream().map(TransactionRecord::counterparty).distinct().limit(5).collect(Collectors.joining("、")));
     }
 
-    private boolean isNight(LocalDateTime date) {
+    private static boolean isNight(LocalDateTime date) {
         int hour = date.getHour();
         return hour >= 22 || hour < 6;
     }

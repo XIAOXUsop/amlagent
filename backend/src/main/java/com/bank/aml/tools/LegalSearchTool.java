@@ -24,7 +24,11 @@ public class LegalSearchTool {
 
     @Tool("检索反洗钱监管法规条文，返回与查询相关的法规标题、证据ID(evidenceId)与条文原文，供尽调报告引用")
     public String searchLegal(@P("法规查询关键词，如'大额交易报告'或'客户尽职调查'") String query) {
-        List<LegalDoc> docs = searcher.search(query, 3);
+        return format(searcher.search(query, 3));
+    }
+
+    /** 从法规检索结果生成文本（快照工具与 Spring 工具复用同一格式化逻辑） */
+    public static String format(List<LegalDoc> docs) {
         if (docs.isEmpty()) {
             return "未检索到相关法规条文。";
         }

@@ -28,9 +28,12 @@ public class SanctionTool {
         if (idCard != null && !idCard.isBlank()) {
             hits.addAll(dataSource.searchSanctions(idCard));
         }
-        // 去重
-        List<SanctionRecord> distinct = hits.stream().distinct().toList();
+        return format(hits);
+    }
 
+    /** 从已冻结的制裁命中生成文本（快照工具与 Spring 工具复用同一格式化逻辑；内部去重） */
+    public static String format(List<SanctionRecord> hits) {
+        List<SanctionRecord> distinct = hits.stream().distinct().toList();
         if (distinct.isEmpty()) {
             return "未命中制裁黑名单（OFAC / 国内名单）。";
         }

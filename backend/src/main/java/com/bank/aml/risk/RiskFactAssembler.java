@@ -2,7 +2,6 @@ package com.bank.aml.risk;
 
 import com.bank.aml.datasource.CustomerDataPort;
 import com.bank.aml.domain.CustomerProfile;
-import com.bank.aml.domain.InvestigationSnapshot;
 import com.bank.aml.domain.SanctionRecord;
 import com.bank.aml.domain.ShareholdingRecord;
 import com.bank.aml.domain.TransactionRecord;
@@ -18,7 +17,8 @@ import java.util.stream.Collectors;
 /**
  * 风险事实组装器：把工具原始结果（交易/股权/黑名单）转换为统一的 {@link RiskContext}。
  * <p>Guardrails 使用的结构化事实必须来自工具结果或数据质量元数据，不能依赖模型自行声明。
- * 依赖 {@link CustomerDataPort} 接口，生产链路与评测链路共用同一组装逻辑，数据源可替换。
+ * 提供纯函数 {@link #assembleFrom(List, List, List, String)}，可从已冻结的原始数据计算风险事实，
+ * 供快照工厂复用；生产与评测链路共用同一组装逻辑，数据源可替换。
  */
 @Component
 public class RiskFactAssembler {
@@ -33,25 +33,22 @@ public class RiskFactAssembler {
 
     /** 从客户数据源组装完整 RiskContext（制裁 + 交易聚合 + 新增风险事实） */
     public RiskContext assemble(CustomerProfile customer, String modelRiskLevel) {
-        return assembleWithHits(customer, modelRiskLevel, searchSanctions(customer));
+        return assembleFrom(
+                dataSource.transactionsOf(customer.id()),
+                dataSource.shareholdingsOf(customer.id()),
+                searchSanctions(customer),
+                modelRiskLevel);
     }
 
-    /** 组装不可变尽调快照：一次性读取风险事实与制裁命中并冻结，供 Agent 推理与 Guardrails 校验共享 */
-    public InvestigationSnapshot assembleSnapshot(Long caseId, int executionVersion,
-                                                  CustomerProfile customer, String modelRiskLevel) {
-        List<SanctionRecord> hits = searchSanctions(customer);
-        RiskContext riskFacts = assembleWithHits(customer, modelRiskLevel, hits);
-        return new InvestigationSnapshot(
-                "case-" + caseId + "-v" + executionVersion,
-                caseId, executionVersion, dataSource.asOfTime(), customer, riskFacts, hits);
-    }
-
-    private RiskContext assembleWithHits(CustomerProfile customer, String modelRiskLevel,
-                                         List<SanctionRecord> hits) {
+    /**
+     * 纯函数：从已冻结的原始数据计算 RiskContext，不访问数据源。
+     * 用于快照工厂在单次读取后派生风险事实，保证 Agent 与 Guardrails 共享同一份数据。
+     */
+    public RiskContext assembleFrom(List<TransactionRecord> txns, List<ShareholdingRecord> shareholdings,
+                                    List<SanctionRecord> hits, String modelRiskLevel) {
         int maxSeverity = hits.stream().mapToInt(SanctionRecord::severity).max().orElse(0);
         boolean sanctionHit = !hits.isEmpty();
 
-        var txns = dataSource.transactionsOf(customer.id());
         long night = txns.stream().filter(t -> isNight(t.date())).count();
         long cross = txns.stream().filter(t -> t.country().isCrossBorder()).count();
         long large = txns.stream().filter(t -> t.amount().compareTo(MILLION) >= 0).count();
@@ -61,7 +58,7 @@ public class RiskFactAssembler {
         boolean dataComplete = !txns.isEmpty();
         boolean riskExplained = false; // Mock 数据源无业务材料概念；真实数据源应由结构化业务字段派生
         int patternSeverity = assessPatternSeverity(txns);
-        int uboRiskSeverity = assessUboRisk(dataSource.shareholdingsOf(customer.id()));
+        int uboRiskSeverity = assessUboRisk(shareholdings);
 
         String modelLevel = modelRiskLevel == null ? "低风险" : modelRiskLevel;
         return new RiskContext(maxSeverity, sanctionHit, crossRatio, nightRatio, large,

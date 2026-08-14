@@ -1,8 +1,9 @@
 package com.bank.aml.service;
 
-import com.bank.aml.agent.DueDiligenceAgent;
+import com.bank.aml.agent.DueDiligenceAgentFactory;
 import com.bank.aml.agent.DueDiligenceContext;
 import com.bank.aml.agent.DueDiligenceReport;
+import com.bank.aml.agent.InvestigationSnapshotFactory;
 import com.bank.aml.agent.StreamingAnalysisAgent;
 import com.bank.aml.agent.guardrail.GuardrailEngine;
 import com.bank.aml.common.enums.CaseStatus;
@@ -16,10 +17,10 @@ import com.bank.aml.datasource.entity.CaseEntity;
 import com.bank.aml.datasource.entity.CaseLogEntity;
 import com.bank.aml.datasource.CustomerDataPort;
 import com.bank.aml.domain.CustomerProfile;
+import com.bank.aml.domain.InvestigationSnapshot;
 import com.bank.aml.datasource.repository.CaseLogRepository;
 import com.bank.aml.datasource.repository.CaseRepository;
 import com.bank.aml.messaging.WorkflowCommandService;
-import com.bank.aml.risk.RiskFactAssembler;
 import com.bank.aml.observability.MetricsRecorder;
 import com.bank.aml.workflow.CaseExecution;
 import com.bank.aml.workflow.CaseExecution.ExecutionStatus;
@@ -55,10 +56,10 @@ public class DueDiligenceService {
     private final CaseExecutionRepository caseExecutionRepository;
     private final WorkflowCommandService workflowCommandService;
     private final MetricsRecorder metrics;
-    private final DueDiligenceAgent agent;
+    private final DueDiligenceAgentFactory agentFactory;
     private final RuleBasedReporter ruleReporter;
     private final GuardrailEngine guardrailEngine;
-    private final RiskFactAssembler riskFactAssembler;
+    private final InvestigationSnapshotFactory snapshotFactory;
     private final WorkflowEventService workflowEventService;
     private final CustomerDataPort dataSource;
     private final FaultInjector faultInjector;
@@ -77,8 +78,8 @@ public class DueDiligenceService {
     public DueDiligenceService(CaseRepository caseRepository, CaseLogRepository caseLogRepository,
                                CaseExecutionRepository caseExecutionRepository, WorkflowCommandService workflowCommandService,
                                MetricsRecorder metrics,
-                               DueDiligenceAgent agent, RuleBasedReporter ruleReporter,
-                               GuardrailEngine guardrailEngine, RiskFactAssembler riskFactAssembler,
+                               DueDiligenceAgentFactory agentFactory, RuleBasedReporter ruleReporter,
+                               GuardrailEngine guardrailEngine, InvestigationSnapshotFactory snapshotFactory,
                                WorkflowEventService workflowEventService,
                                CustomerDataPort dataSource, FaultInjector faultInjector,
                                PromptInjectionGuard promptInjectionGuard, CostRouter costRouter,
@@ -91,10 +92,10 @@ public class DueDiligenceService {
         this.caseExecutionRepository = caseExecutionRepository;
         this.workflowCommandService = workflowCommandService;
         this.metrics = metrics;
-        this.agent = agent;
+        this.agentFactory = agentFactory;
         this.ruleReporter = ruleReporter;
         this.guardrailEngine = guardrailEngine;
-        this.riskFactAssembler = riskFactAssembler;
+        this.snapshotFactory = snapshotFactory;
         this.workflowEventService = workflowEventService;
         this.dataSource = dataSource;
         this.faultInjector = faultInjector;
@@ -171,11 +172,17 @@ public class DueDiligenceService {
             // 1. 任务规划
             record(c, WorkflowStage.PLANNING, "解析预警工单，拆解子任务：\n" + String.join("\n", planTasks(c.getAlertRule())));
 
-            // 2. 数据采集（工具调用在 Agent 内部完成）
+            // 2. 数据采集（Snapshot First：先冻结业务事实，再让 Agent 基于快照推理）
             CostRouter.Route route = costRouter.route(c.getAlertRule(), ruleFallbackEnabled, summaryEnabled);
             record(c, WorkflowStage.COLLECTING, "成本路由：" + route);
 
-            DueDiligenceContext context = buildContext(c);
+            CustomerProfile customer = dataSource.findCustomer(c.getCustomerId())
+                    .orElseThrow(() -> new NonRetryableWorkflowException("客户不存在：" + c.getCustomerId()));
+            InvestigationSnapshot snapshot = snapshotFactory.create(c.getId(), executionVersion, customer, null);
+            record(c, WorkflowStage.COLLECTING, "尽调快照已冻结 snapshotId=" + snapshot.snapshotId()
+                    + " sourceDigest=" + snapshot.sourceDigest());
+
+            DueDiligenceContext context = buildContext(snapshot, c);
             record(c, WorkflowStage.COLLECTING, "调用工具并行采集数据（交易画像 / 股权穿透 / 黑名单 / 法规检索）...");
             faultInjector.inject(WorkflowStage.COLLECTING); // 故障注入埋点（默认关闭）
 
@@ -185,7 +192,7 @@ public class DueDiligenceService {
                 record(c, WorkflowStage.COLLECTING, "RULE_ONLY 路由，跳过所有模型调用（零 LLM 成本）");
             } else {
                 try {
-                    report = agent.investigate(context.toPrompt());
+                    report = agentFactory.create(snapshot).investigate(context.toPrompt());
                 } catch (Exception e) {
                     log.warn("Agent 调用失败，进入规则降级 caseId={}: {}", caseId, e.getMessage());
                     report = null;
@@ -200,9 +207,7 @@ public class DueDiligenceService {
             }
 
             if (report == null || report.riskLevel() == null || report.riskLevel().isBlank()) {
-                DueDiligenceReport fallback = dataSource.findCustomer(c.getCustomerId())
-                        .map(customer -> ruleReporter.generate(customer, c.getAlertRule()))
-                        .orElse(null);
+                DueDiligenceReport fallback = ruleReporter.generate(snapshot.customer(), c.getAlertRule());
                 if (fallback != null) {
                     report = fallback;
                 }
@@ -211,42 +216,31 @@ public class DueDiligenceService {
                 throw new RetryableWorkflowException("尽调报告生成失败（LLM 与规则引擎均未产出结果）");
             }
 
-            // 4. 规则护栏
+            // 4. 规则护栏（基于与 Agent 相同的冻结快照，不二次读取数据源）
             record(c, WorkflowStage.GUARDRAIL, "执行规则护栏校验（制裁名单 / 评级一致性）...");
-            CustomerProfile customer = dataSource.findCustomer(c.getCustomerId()).orElse(null);
-            if (customer != null) {
-                String rawAgentRiskLevel = report.riskLevel(); // 模型原始评级（Guardrail 前）
-                // 冻结尽调快照：Agent 推理与 Guardrails 共享同一份数据事实，避免二次读取变化数据
-                var snapshot = riskFactAssembler.assembleSnapshot(c.getId(), c.getExecutionVersion(),
-                        customer, rawAgentRiskLevel);
-                record(c, WorkflowStage.GUARDRAIL, "尽调快照已冻结 snapshotId=" + snapshot.snapshotId());
-                GuardrailEngine.GuardrailResult gr = guardrailEngine.apply(snapshot, report);
-                gr.decision().triggeredRules().forEach(r -> record(c, WorkflowStage.GUARDRAIL,
-                        "触发规则【" + r.ruleCode() + " v" + r.ruleVersion() + "】→ " + r.targetRiskLevel()
-                                + "，动作 " + r.action() + "，证据：" + r.evidence()));
-                gr.corrections().forEach(corr -> record(c, WorkflowStage.GUARDRAIL, corr));
-                if (!gr.corrections().isEmpty()) {
-                    metrics.guardrailCorrection();
-                }
-                // 同步最终报告字段（风险评级 / 人工复核标志 / 处置代码）
-                report = withGuardrailDecision(report, gr);
-                if (!gr.finalRiskLevel().equals(rawAgentRiskLevel)) {
-                    record(c, WorkflowStage.GUARDRAIL, "评级由【" + rawAgentRiskLevel + "】修正为：【" + gr.finalRiskLevel() + "】");
-                }
-                c.setRiskLevel(gr.finalRiskLevel());
-                c.setRawRiskLevel(rawAgentRiskLevel);
-                c.setStatus(gr.mustEscalate() ? CaseStatus.HOLD : CaseStatus.DONE);
-                if (gr.mustEscalate()) {
-                    metrics.caseHold();
-                    String escalateRules = gr.decision().triggeredRules().stream()
-                            .filter(r -> "MANUAL_REVIEW".equals(r.action()))
-                            .map(r -> r.ruleCode()).toList().toString();
-                    record(c, WorkflowStage.GUARDRAIL, "触发转人工（规则 " + escalateRules + "），工单进入人工复核队列。");
-                }
-            } else {
-                c.setRiskLevel(report.riskLevel());
-                c.setRawRiskLevel(report.riskLevel());
-                c.setStatus(CaseStatus.DONE);
+            String rawAgentRiskLevel = report.riskLevel(); // 模型原始评级（Guardrail 前）
+            GuardrailEngine.GuardrailResult gr = guardrailEngine.apply(snapshot, report);
+            gr.decision().triggeredRules().forEach(r -> record(c, WorkflowStage.GUARDRAIL,
+                    "触发规则【" + r.ruleCode() + " v" + r.ruleVersion() + "】→ " + r.targetRiskLevel()
+                            + "，动作 " + r.action() + "，证据：" + r.evidence()));
+            gr.corrections().forEach(corr -> record(c, WorkflowStage.GUARDRAIL, corr));
+            if (!gr.corrections().isEmpty()) {
+                metrics.guardrailCorrection();
+            }
+            // 同步最终报告字段（风险评级 / 人工复核标志 / 处置代码）
+            report = withGuardrailDecision(report, gr);
+            if (!gr.finalRiskLevel().equals(rawAgentRiskLevel)) {
+                record(c, WorkflowStage.GUARDRAIL, "评级由【" + rawAgentRiskLevel + "】修正为：【" + gr.finalRiskLevel() + "】");
+            }
+            c.setRiskLevel(gr.finalRiskLevel());
+            c.setRawRiskLevel(rawAgentRiskLevel);
+            c.setStatus(gr.mustEscalate() ? CaseStatus.HOLD : CaseStatus.DONE);
+            if (gr.mustEscalate()) {
+                metrics.caseHold();
+                String escalateRules = gr.decision().triggeredRules().stream()
+                        .filter(r -> "MANUAL_REVIEW".equals(r.action()))
+                        .map(r -> r.ruleCode()).toList().toString();
+                record(c, WorkflowStage.GUARDRAIL, "触发转人工（规则 " + escalateRules + "），工单进入人工复核队列。");
             }
 
             // 5. 报告生成与落库
@@ -292,13 +286,12 @@ public class DueDiligenceService {
                 .orElseThrow(() -> new IllegalArgumentException("工单不存在：" + caseId));
     }
 
-    private DueDiligenceContext buildContext(CaseEntity c) {
-        var customer = dataSource.findCustomer(c.getCustomerId()).orElse(null);
-        String idCard = customer != null ? customer.idCard() : "";
-        String asOfDate = java.time.LocalDate.now().toString();
+    private DueDiligenceContext buildContext(InvestigationSnapshot snapshot, CaseEntity c) {
+        CustomerProfile customer = snapshot.customer();
+        String asOfDate = snapshot.asOfTime().toString();
         List<String> legalKeywords = legalKeywordResolver.resolve(c.getAlertRule());
         return new DueDiligenceContext(
-                c.getId(), c.getCustomerId(), c.getCustomerName(), idCard, asOfDate, legalKeywords,
+                c.getId(), customer.id(), customer.name(), customer.idCard(), asOfDate, legalKeywords,
                 c.getAlertRule(), "请对该客户开展高风险客户尽职调查。");
     }
 

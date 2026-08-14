@@ -225,7 +225,7 @@ docker-compose.yml        MySQL + PostgreSQL(pgvector) + Redis
 - **DeepSeek 工具调用兼容**：V4 默认 thinking 模式要求多轮回传 `reasoning_content`；当前基线显式使用非思考模式，保证 LangChain4j 多轮工具调用稳定且温度设置有效。
 - **多数据源隔离**：MySQL 业务库（@Primary，JPA）与 PostgreSQL 向量库（pgDataSource，仅 RAG）通过显式 DataSource 分离，避免自动配置冲突。
 - **Port/Adapter 数据解耦**：领域模型（`CustomerProfile`/`TransactionRecord`/`ShareholdingRecord`/`SanctionRecord`）与数据源分离，`CustomerDataPort` 接口隔离 Mock 与真实数据源；工具/Service/Guardrails 依赖 Port 而非 Mock 实现，生产核心包不再引用 `datasource.mock` 内部类型。
-- **统一尽调快照**：`InvestigationSnapshot` 在 Agent 推理前一次性冻结风险事实（含 `snapshotId`/`asOfTime`/来源版本），Agent 推理与 Guardrails 校验共享同一份数据，避免数据源在两者之间变化导致的不一致。
+- **Snapshot First 统一快照**：`InvestigationSnapshotFactory` 在 Agent 推理前一次性冻结客户、交易、股权、制裁原始领域对象与派生风险事实，并计算 `sourceDigest`/`snapshotId`/`asOfTime`/`legalIndexVersion`；每个工单由 `DueDiligenceAgentFactory` 动态创建绑定只读快照工具套件（`SnapshotToolSuite`）的 Agent，Agent 工具与 Guardrails 只读同一份冻结快照，不再二次访问可变数据源，消除长链路时序不一致。
 - **Mock 可插拔数据层**：`MockDataSource` 内置交易/股权/黑名单演示数据；接入真实系统时替换实现即可，工具签名不变。
 - **Mock 模型 agentic 循环**：无 API Key 时 Mock 模型模拟多轮工具调用，保证链路离线可演示。
 - **本地 embedding**：DeepSeek 无官方 embedding API，默认用 all-MiniLM-L6-v2 离线向量化，可在配置中切换中文 embedding 服务。
