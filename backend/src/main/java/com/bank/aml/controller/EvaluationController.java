@@ -75,10 +75,22 @@ public class EvaluationController {
      */
     @PostMapping("/agent/dev")
     public AgentEvalReport agentDev() {
-        AgentEvalReport report = agentEvalRunner.runDev();
+        return persistIfCompleted(agentEvalRunner.runDev(), "AGENT_DEV");
+    }
+
+    /**
+     * 运行冻结的隐藏 TEST 分片（最终评测）。标准答案冻结，仅返回聚合指标与案例结果；
+     * 数据集内容哈希用于冻结审计，任何改动都会改变哈希。
+     */
+    @PostMapping("/agent/test")
+    public AgentEvalReport agentTest() {
+        return persistIfCompleted(agentEvalRunner.runTest(), "AGENT_TEST");
+    }
+
+    private AgentEvalReport persistIfCompleted(AgentEvalReport report, String evalType) {
         if ("COMPLETED".equals(report.runStatus()) || "COMPLETED_WITH_ERRORS".equals(report.runStatus())) {
             EvalReportEntity entity = new EvalReportEntity();
-            entity.setEvalType("AGENT_DEV");
+            entity.setEvalType(evalType);
             entity.setVersionTag(report.datasetVersion() + ":" + report.runtime().configuredModel());
             entity.setMetricsJson(writeJson(report.withoutSensitiveDetails()));
             evalReportRepository.save(entity);
@@ -96,7 +108,7 @@ public class EvaluationController {
     @GetMapping("/reports")
     public List<EvalReportEntity> reports(
             @RequestParam(defaultValue = "RULE_REGRESSION") String evalType) {
-        if (!List.of("RULE_REGRESSION", "AGENT_DEV").contains(evalType)) {
+        if (!List.of("RULE_REGRESSION", "AGENT_DEV", "AGENT_TEST").contains(evalType)) {
             throw new IllegalArgumentException("不支持的评测类型：" + evalType);
         }
         return evalReportRepository.findByEvalTypeOrderByCreatedAtDesc(evalType);

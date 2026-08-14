@@ -27,7 +27,8 @@ import java.util.function.Function;
 public class AgentEvalRunner {
 
     public static final String PROMPT_VERSION = "aml-dd-agent-v5-manual-review-consistency";
-    private static final String SPLIT = "DEV";
+    private static final String DEV_SPLIT = "DEV";
+    private static final String TEST_SPLIT = "TEST";
 
     private final ChatModel chatModel;
     private final LlmProperties llmProperties;
@@ -54,13 +55,23 @@ public class AgentEvalRunner {
 
     public Readiness readiness() {
         RuntimeDescriptor runtime = runtimeDescriptor();
-        return new Readiness(runtime.realModel(), true, SPLIT, datasetLoader.summary(),
+        return new Readiness(runtime.realModel(), true, DEV_SPLIT, datasetLoader.summary(),
                 runtime.realModel()
-                        ? "真实模型已配置，可运行 DEV Agent 评测"
+                        ? "真实模型已配置，可运行 DEV Agent 评测（TEST 分片保持冻结，仅 ADMIN 可运行）"
                         : "当前为 Mock 或 API Key 缺失后的 fallback；评测会拒绝运行，质量指标不会伪造");
     }
 
+    /** 运行 DEV 分片（可反复运行，用于迭代验证）。 */
     public AgentEvalReport runDev() {
+        return run(DEV_SPLIT);
+    }
+
+    /** 运行冻结的隐藏 TEST 分片（最终评测，标准答案冻结）。 */
+    public AgentEvalReport runTest() {
+        return run(TEST_SPLIT);
+    }
+
+    private AgentEvalReport run(String split) {
         LocalDateTime startedAt = LocalDateTime.now();
         long startedNanos = System.nanoTime();
         String runId = UUID.randomUUID().toString();
@@ -68,14 +79,14 @@ public class AgentEvalRunner {
         RuntimeDescriptor runtime = runtimeDescriptor();
 
         if (!runtime.realModel()) {
-            return invalidRun(runId, dataset, startedAt, elapsedMs(startedNanos), runtime);
+            return invalidRun(runId, dataset, startedAt, elapsedMs(startedNanos), runtime, split);
         }
 
-        List<AgentEvalCase> devCases = dataset.cases().stream()
-                .filter(evalCase -> SPLIT.equals(evalCase.split()))
+        List<AgentEvalCase> splitCases = dataset.cases().stream()
+                .filter(evalCase -> split.equals(evalCase.split()))
                 .toList();
         List<CaseResult> results = new ArrayList<>();
-        for (AgentEvalCase evalCase : devCases) {
+        for (AgentEvalCase evalCase : splitCases) {
             results.add(runCase(evalCase));
         }
 
@@ -84,7 +95,7 @@ public class AgentEvalRunner {
         int invalid = results.size() - completed;
         String status = invalid == 0 ? "COMPLETED" : "COMPLETED_WITH_ERRORS";
         return new AgentEvalReport(
-                runId, dataset.datasetId(), dataset.version(), SPLIT, PROMPT_VERSION,
+                runId, dataset.datasetId(), dataset.version(), split, PROMPT_VERSION,
                 runtime.toRuntimeInfo(), status, null, startedAt, elapsedMs(startedNanos),
                 results.size(), completed, completed, invalid,
                 Math.toIntExact(aggregate.strictPassCount()), aggregate.strictPassRate(),
@@ -219,10 +230,10 @@ public class AgentEvalRunner {
     }
 
     private AgentEvalReport invalidRun(String runId, AgentEvalDataset dataset, LocalDateTime startedAt,
-                                       long durationMs, RuntimeDescriptor runtime) {
+                                       long durationMs, RuntimeDescriptor runtime, String split) {
         var empty = scorer.aggregate(List.of());
         return new AgentEvalReport(
-                runId, dataset.datasetId(), dataset.version(), SPLIT, PROMPT_VERSION,
+                runId, dataset.datasetId(), dataset.version(), split, PROMPT_VERSION,
                 runtime.toRuntimeInfo(), "INVALID_MODEL_FALLBACK",
                 "真实 Agent 评测拒绝使用 Mock 模型或 API Key 缺失后的 fallback",
                 startedAt, durationMs, 0, 0, 0, 0, 0, empty.strictPassRate(),

@@ -9,12 +9,17 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * 人工复核服务：待复核队列、提交复核决定、反馈统计。
  */
 @Service
 public class ReviewService {
+
+    private static final Set<String> ALLOWED_RISK_LEVELS = Set.of("低风险", "中风险", "高风险");
+    private static final Set<String> ALLOWED_DECISIONS = Set.of("APPROVE", "REJECT", "ESCALATE");
+    private static final int MAX_COMMENT_LENGTH = 500;
 
     private final CaseRepository caseRepository;
     private final ManualReviewRepository reviewRepository;
@@ -32,10 +37,22 @@ public class ReviewService {
     /**
      * 提交复核决定：
      * APPROVE → 工单完成；REJECT → 工单失败（可人工重试补充尽调）；ESCALATE → 保持 HOLD。
+     * <p>reviewerRiskLevel / decision 使用闭集校验，非法输入直接拒绝（400），不再静默归一。
      */
     @Transactional
     public ManualReview submit(Long caseId, String reviewerId, String reviewerRiskLevel,
                                String decision, String comment) {
+        if (reviewerRiskLevel != null && !ALLOWED_RISK_LEVELS.contains(reviewerRiskLevel)) {
+            throw new IllegalArgumentException("非法风险等级：" + reviewerRiskLevel);
+        }
+        String normalizedDecision = decision == null ? "" : decision.toUpperCase();
+        if (!ALLOWED_DECISIONS.contains(normalizedDecision)) {
+            throw new IllegalArgumentException("非法复核决定：" + decision);
+        }
+        if (comment != null && comment.length() > MAX_COMMENT_LENGTH) {
+            throw new IllegalArgumentException("复核意见过长（最多 " + MAX_COMMENT_LENGTH + " 字）");
+        }
+
         CaseEntity c = caseRepository.findById(caseId)
                 .orElseThrow(() -> new IllegalArgumentException("工单不存在：" + caseId));
 
@@ -45,11 +62,11 @@ public class ReviewService {
         review.setAgentRiskLevel(c.getRawRiskLevel() != null ? c.getRawRiskLevel() : c.getRiskLevel());
         review.setGuardrailRiskLevel(c.getRiskLevel());
         review.setReviewerRiskLevel(reviewerRiskLevel);
-        review.setDecision(decision);
+        review.setDecision(normalizedDecision);
         review.setComment(comment);
         review.setCompletedAt(LocalDateTime.now());
 
-        switch (decision == null ? "" : decision.toUpperCase()) {
+        switch (normalizedDecision) {
             case "APPROVE" -> c.setStatus(CaseStatus.DONE);
             case "REJECT" -> {
                 c.setStatus(CaseStatus.FAILED);
@@ -57,8 +74,7 @@ public class ReviewService {
                 c.setFailureMessage("人工复核驳回，需补充尽调：" + (comment == null ? "" : comment));
             }
             default -> {
-                // ESCALATE / 其他：保持 HOLD，不改变
-                review.setDecision("ESCALATE");
+                // ESCALATE：保持 HOLD，不改变
             }
         }
         caseRepository.save(c);

@@ -50,7 +50,7 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
         if (bearer != null && bearer.startsWith("Bearer ")) {
             return bearer.substring(7);
         }
-        // SSE 优先用 HttpOnly Cookie（避免 JWT 进入 URL/日志）；query 参数作为兼容回退
+        // SSE 使用 HttpOnly Cookie（避免 JWT 进入 URL/日志）；不再支持 ?token= Query 参数回退
         Cookie[] cookies = request.getCookies();
         if (cookies != null) {
             for (Cookie cookie : cookies) {
@@ -59,6 +59,6 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
                 }
             }
         }
-        return request.getParameter("token");
+        return null;
     }
 }

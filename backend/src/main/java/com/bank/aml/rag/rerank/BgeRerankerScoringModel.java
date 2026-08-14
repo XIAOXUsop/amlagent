@@ -41,6 +41,9 @@ public class BgeRerankerScoringModel implements ScoringModel {
     /** 连续失败计数（熔断：连续失败超过阈值则临时降级为无 rerank） */
     private final java.util.concurrent.atomic.AtomicInteger consecutiveFailures = new java.util.concurrent.atomic.AtomicInteger(0);
     private static final int FAILURE_THRESHOLD = 10;
+    /** 熔断打开时间戳（0 表示未熔断）；冷却后进入半开探测 */
+    private volatile long circuitOpenedAt = 0;
+    private static final long COOLDOWN_MS = 60_000;
 
     public BgeRerankerScoringModel(RerankModelProvider modelProvider,
                                    @Value("${aml.rag.rerank.enabled:true}") boolean enabled) {
@@ -100,8 +103,32 @@ public class BgeRerankerScoringModel implements ScoringModel {
 
     private double crossScore(String query, String document) {
         if (!available) {
+            // 熔断冷却期：直接降级为无 rerank
+            if (circuitOpenedAt == 0 || System.currentTimeMillis() - circuitOpenedAt < COOLDOWN_MS) {
+                return 0.0;
+            }
+            // 半开探测：冷却结束后允许一次探测，成功则恢复
+            synchronized (this) {
+                if (!available && System.currentTimeMillis() - circuitOpenedAt >= COOLDOWN_MS) {
+                    double probe = tryScore(query, document);
+                    if (probe > 0) {
+                        available = true;
+                        consecutiveFailures.set(0);
+                        circuitOpenedAt = 0;
+                        log.info("rerank 半开探测成功，恢复 rerank 服务");
+                    } else {
+                        circuitOpenedAt = System.currentTimeMillis();
+                        log.warn("rerank 半开探测失败，继续熔断");
+                    }
+                    return probe;
+                }
+            }
             return 0.0;
         }
+        return tryScore(query, document);
+    }
+
+    private double tryScore(String query, String document) {
         try {
             Encoding encoding = tokenizer.encode(query, document, true, false);
             long[] ids = encoding.getIds();
@@ -117,9 +144,10 @@ public class BgeRerankerScoringModel implements ScoringModel {
                 }
             }
         } catch (Exception e) {
-            // 连续失败熔断：超过阈值临时降级为无 rerank，避免持续 native 异常
+            // 连续失败熔断：超过阈值临时降级为无 rerank，冷却后自动半开恢复
             if (consecutiveFailures.incrementAndGet() >= FAILURE_THRESHOLD) {
                 available = false;
+                circuitOpenedAt = System.currentTimeMillis();
                 log.error("rerank 连续失败 {} 次，触发熔断降级为无 rerank", FAILURE_THRESHOLD);
             } else {
                 log.warn("rerank 打分失败，返回 0：{}", e.getMessage());

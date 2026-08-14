@@ -31,28 +31,48 @@ public class CachingLegalSearcher implements LegalDocumentSearcher {
     private final MetricsRecorder metrics;
     private final ObjectMapper objectMapper;
     private final long ttlMinutes;
+    private final String corpusVersion;
+    private final String embeddingModel;
+    private final String rerankerVersion;
 
     public CachingLegalSearcher(ReRankingLegalSearcher delegate, StringRedisTemplate redisTemplate,
                                 MetricsRecorder metrics, ObjectMapper objectMapper,
-                                @Value("${aml.rag.cache-ttl-minutes:60}") long ttlMinutes) {
+                                @Value("${aml.rag.cache-ttl-minutes:60}") long ttlMinutes,
+                                @Value("${aml.rag.cache.corpus-version:v1}") String corpusVersion,
+                                @Value("${aml.rag.cache.embedding-model:all-minilm-l6-v2}") String embeddingModel,
+                                @Value("${aml.rag.cache.reranker-version:bge-reranker-base}") String rerankerVersion) {
         this.delegate = delegate;
         this.redisTemplate = redisTemplate;
         this.metrics = metrics;
         this.objectMapper = objectMapper;
         this.ttlMinutes = ttlMinutes;
+        this.corpusVersion = corpusVersion;
+        this.embeddingModel = embeddingModel;
+        this.rerankerVersion = rerankerVersion;
     }
 
     @Override
     public List<LegalDoc> search(String query, int topK) {
         String key = cacheKey(query, topK);
+        String cached = null;
         try {
-            String cached = redisTemplate.opsForValue().get(key);
-            if (cached != null) {
-                metrics.ragCacheHit();
-                return deserialize(cached);
-            }
+            cached = redisTemplate.opsForValue().get(key);
         } catch (Exception e) {
             log.warn("RAG 缓存读取失败，降级为直接检索：{}", e.getMessage());
+        }
+        if (cached != null) {
+            try {
+                metrics.ragCacheHit();
+                return deserialize(cached);
+            } catch (Exception e) {
+                // 坏缓存：删除坏 Key 后重检，避免后续请求反复命中损坏数据
+                log.warn("RAG 缓存反序列化失败，删除坏 Key 并降级重检：{}", e.getMessage());
+                try {
+                    redisTemplate.delete(key);
+                } catch (Exception ignored) {
+                    // 删除失败不影响重检
+                }
+            }
         }
 
         List<LegalDoc> result = delegate.search(query, topK);
@@ -65,14 +85,10 @@ public class CachingLegalSearcher implements LegalDocumentSearcher {
         return result;
     }
 
-    // 缓存 key 版本化：语料/embedding/reranker 变更时自动失效
-    private static final String CORPUS_VERSION = "v1";
-    private static final String EMBEDDING_MODEL = "all-minilm-l6-v2";
-    private static final String RERANKER_VERSION = "bge-reranker-base";
-
+    // 缓存 key 版本化：语料/embedding/reranker 版本从配置读取，变更时自动失效
     private String cacheKey(String query, int topK) {
         String hash = DigestUtils.md5DigestAsHex(query.getBytes(StandardCharsets.UTF_8));
-        return KEY_PREFIX + CORPUS_VERSION + ":" + EMBEDDING_MODEL + ":" + RERANKER_VERSION
+        return KEY_PREFIX + corpusVersion + ":" + embeddingModel + ":" + rerankerVersion
                 + ":" + hash + ":" + topK;
     }
 

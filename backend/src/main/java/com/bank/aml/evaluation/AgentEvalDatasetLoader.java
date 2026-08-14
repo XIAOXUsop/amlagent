@@ -66,7 +66,8 @@ public class AgentEvalDatasetLoader {
                 dataset.cases().size(),
                 counts(dataset.cases(), AgentEvalCase::split),
                 counts(dataset.cases(), AgentEvalCase::scenario),
-                counts(dataset.cases(), c -> c.expected().riskLevel())
+                counts(dataset.cases(), c -> c.expected().riskLevel()),
+                datasetHash
         );
     }
 
@@ -251,7 +252,8 @@ public class AgentEvalDatasetLoader {
             int totalCases,
             Map<String, Long> splitCounts,
             Map<String, Long> scenarioCounts,
-            Map<String, Long> riskLevelCounts
+            Map<String, Long> riskLevelCounts,
+            String datasetHash
     ) {
     }
 }
