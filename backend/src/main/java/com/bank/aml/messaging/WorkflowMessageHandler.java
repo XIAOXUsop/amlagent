@@ -74,18 +74,23 @@ public class WorkflowMessageHandler {
         }
         CaseEntity claimed = caseRepository.findById(caseId).orElse(null);
         int executionVersion = claimed == null ? 0 : claimed.getExecutionVersion();
+        ExecutionLease lease = new ExecutionLease(caseId, executionVersion, worker);
 
         // 心跳线程：长模型调用期间周期性刷新 heartbeatAt，避免被 PendingClaimer 错误接管；
-        // 心跳绑定 worker+executionVersion，仅当前租约持有者可刷新。
+        // 心跳绑定 worker+executionVersion，返回 0 说明租约已丢失，标记 leaseLost 停止推进。
         ScheduledFuture<?> heartbeat = heartbeatExecutor.scheduleAtFixedRate(() -> {
             try {
-                caseRepository.updateHeartbeat(caseId, worker, executionVersion, LocalDateTime.now());
+                int updated = caseRepository.updateHeartbeat(caseId, worker, executionVersion, LocalDateTime.now());
+                if (updated == 0) {
+                    lease.markLost();
+                    log.warn("工单 {} 心跳刷新失败（租约已丢失），停止推进业务阶段", caseId);
+                }
             } catch (Exception ignored) {
                 // 心跳失败不影响主流程
             }
         }, 30, 30, TimeUnit.SECONDS);
         try {
-            dueDiligenceService.process(caseId, worker, executionVersion);
+            dueDiligenceService.process(caseId, worker, executionVersion, lease);
             ack(record);
         } catch (ManualReviewRequiredException e) {
             ack(record);

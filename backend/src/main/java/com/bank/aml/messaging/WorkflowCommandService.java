@@ -6,6 +6,8 @@ import com.bank.aml.datasource.repository.CaseRepository;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.LocalDateTime;
+
 /**
  * 工单入队命令服务：所有"状态迁移 + 入队"在同一事务内完成，入队统一写入 Outbox，
  * 由 {@link OutboxPublisher} 异步投递到 Redis Streams，避免状态变更与消息投递不一致。
@@ -61,20 +63,24 @@ public class WorkflowCommandService {
         return false;
     }
 
-    /** 接管超时：RUNNING → PENDING（retryCount+1）+ 入队（条件更新保证并发下仅一次） */
+    /** 接管超时：RUNNING → PENDING（retryCount+1）+ 入队；绑定 worker+version+heartbeat 阈值，心跳刷新后不误接管 */
     @Transactional
-    public boolean reclaimExpiredCase(Long caseId, int executionVersion) {
-        if (caseRepository.reclaimStuckCase(caseId, CaseStatus.PENDING, CaseStatus.RUNNING) == 1) {
+    public boolean reclaimExpiredCase(Long caseId, int executionVersion, String worker,
+                                      LocalDateTime heartbeatThreshold) {
+        if (caseRepository.reclaimStuckCase(caseId, CaseStatus.PENDING, CaseStatus.RUNNING,
+                executionVersion, worker, heartbeatThreshold) == 1) {
             outboxService.record(caseId, WorkflowEventType.CASE_RECLAIMED.name(), executionVersion);
             return true;
         }
         return false;
     }
 
-    /** 接管耗尽：RUNNING → FAILED（终态转人工，无需入队） */
+    /** 接管耗尽：RUNNING → FAILED（终态转人工，无需入队）；同样绑定 worker+version+heartbeat 阈值 */
     @Transactional
-    public boolean failReclaimExhausted(Long caseId) {
-        return caseRepository.failReclaimExhausted(caseId, CaseStatus.FAILED, CaseStatus.RUNNING) == 1;
+    public boolean failReclaimExhausted(Long caseId, int executionVersion, String worker,
+                                        LocalDateTime heartbeatThreshold) {
+        return caseRepository.failReclaimExhausted(caseId, CaseStatus.FAILED, CaseStatus.RUNNING,
+                executionVersion, worker, heartbeatThreshold) == 1;
     }
 
     /** 死信重放：重置为 PENDING 并重新入队，返回更新后的工单 */

@@ -21,6 +21,7 @@ import com.bank.aml.domain.InvestigationSnapshot;
 import com.bank.aml.datasource.repository.CaseLogRepository;
 import com.bank.aml.datasource.repository.CaseRepository;
 import com.bank.aml.messaging.WorkflowCommandService;
+import com.bank.aml.messaging.ExecutionLease;
 import com.bank.aml.observability.MetricsRecorder;
 import com.bank.aml.workflow.CaseExecution;
 import com.bank.aml.workflow.CaseExecution.ExecutionStatus;
@@ -74,6 +75,8 @@ public class DueDiligenceService {
 
     /** 阶段耗时测量（每工单独立） */
     private final ThreadLocal<LocalDateTime> lastStageAt = new ThreadLocal<>();
+    /** 当前执行租约（每工单独立线程），用于旧 Worker 副作用隔离 */
+    private final ThreadLocal<ExecutionLease> currentLease = new ThreadLocal<>();
 
     public DueDiligenceService(CaseRepository caseRepository, CaseLogRepository caseLogRepository,
                                CaseExecutionRepository caseExecutionRepository, WorkflowCommandService workflowCommandService,
@@ -155,8 +158,9 @@ public class DueDiligenceService {
      * 执行尽调工作流（由 Worker 消费任务后调用）。
      * 正常完成置 DONE/HOLD；失败按异常类型抛出（重试/不可重试），由 Worker 决定重试策略。
      */
-    public CaseEntity process(Long caseId, String worker, int executionVersion) {
+    public CaseEntity process(Long caseId, String worker, int executionVersion, ExecutionLease lease) {
         lastStageAt.remove();
+        currentLease.set(lease);
         CaseEntity c = caseRepository.findById(caseId)
                 .orElseThrow(() -> new NonRetryableWorkflowException("工单不存在：" + caseId));
 
@@ -197,6 +201,12 @@ public class DueDiligenceService {
                     log.warn("Agent 调用失败，进入规则降级 caseId={}: {}", caseId, e.getMessage());
                     report = null;
                 }
+            }
+
+            // Agent 长调用期间可能被接管：租约丢失则停止后续阶段，不再写 Guardrail/报告/终态
+            if (lease != null && !lease.isValid()) {
+                log.warn("工单 {} Agent 调用后租约已丢失，跳过 Guardrail 与报告", caseId);
+                return c;
             }
 
             // 3. 风险推理
@@ -259,6 +269,7 @@ public class DueDiligenceService {
             throw new RetryableWorkflowException("未知异常", e);
         } finally {
             lastStageAt.remove();
+            currentLease.remove();
         }
         // 终态原子落库：绑定 worker+executionVersion，被接管后的陈旧写入不生效（0 行更新被丢弃）
         int updated = caseRepository.finishCase(c.getId(), worker, executionVersion,
@@ -306,6 +317,11 @@ public class DueDiligenceService {
 
     /** 记录阶段日志 + SSE 推送 + 执行检查点（case_execution） */
     private void record(CaseEntity c, WorkflowStage stage, String content) {
+        ExecutionLease lease = currentLease.get();
+        if (lease != null && !lease.isValid()) {
+            // 租约已丢失：旧 Worker 不再产生日志/SSE/检查点等对用户可见的副作用
+            return;
+        }
         LocalDateTime now = LocalDateTime.now();
         CaseLogEntity l = new CaseLogEntity();
         l.setCaseId(c.getId());

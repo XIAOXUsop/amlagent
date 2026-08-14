@@ -126,30 +126,43 @@ public interface CaseRepository extends JpaRepository<CaseEntity, Long> {
                          @Param("pending") CaseStatus pending,
                          @Param("retryWait") CaseStatus retryWait);
 
-    /** 接管超时工单：RUNNING → PENDING，retryCount+1，清锁（条件更新，避免并发重复接管） */
+    /** 接管超时工单：RUNNING → PENDING，retryCount+1，清锁；
+     *  绑定 worker+executionVersion+heartbeat 阈值，心跳在扫描后刷新则更新行数为 0，不误接管 */
     @Modifying
     @Transactional
     @Query("""
             UPDATE CaseEntity c
             SET c.status = :pending, c.retryCount = c.retryCount + 1,
-                c.lockedBy = NULL, c.lockedAt = NULL, c.nextRetryAt = NULL,
+                c.lockedBy = NULL, c.lockedAt = NULL, c.heartbeatAt = NULL, c.nextRetryAt = NULL,
                 c.failureMessage = 'Worker 超时接管，重新投递'
             WHERE c.id = :id AND c.status = :running
+              AND c.executionVersion = :version
+              AND c.lockedBy = :worker
+              AND c.heartbeatAt < :heartbeatThreshold
             """)
     int reclaimStuckCase(@Param("id") Long id,
                          @Param("pending") CaseStatus pending,
-                         @Param("running") CaseStatus running);
+                         @Param("running") CaseStatus running,
+                         @Param("version") int version,
+                         @Param("worker") String worker,
+                         @Param("heartbeatThreshold") LocalDateTime heartbeatThreshold);
 
-    /** 接管耗尽：RUNNING → FAILED（终态转人工） */
+    /** 接管耗尽：RUNNING → FAILED（终态转人工）；同样绑定 worker+version+heartbeat 阈值 */
     @Modifying
     @Transactional
     @Query("""
             UPDATE CaseEntity c
-            SET c.status = :failed, c.lockedBy = NULL, c.lockedAt = NULL,
+            SET c.status = :failed, c.lockedBy = NULL, c.lockedAt = NULL, c.heartbeatAt = NULL,
                 c.failureCode = 'CLAIM_EXHAUSTED', c.failureMessage = '多次接管仍失败，转人工排查'
             WHERE c.id = :id AND c.status = :running
+              AND c.executionVersion = :version
+              AND c.lockedBy = :worker
+              AND c.heartbeatAt < :heartbeatThreshold
             """)
     int failReclaimExhausted(@Param("id") Long id,
                              @Param("failed") CaseStatus failed,
-                             @Param("running") CaseStatus running);
+                             @Param("running") CaseStatus running,
+                             @Param("version") int version,
+                             @Param("worker") String worker,
+                             @Param("heartbeatThreshold") LocalDateTime heartbeatThreshold);
 }

@@ -35,21 +35,24 @@ public class PendingClaimer {
     @Scheduled(fixedDelayString = "${aml.queue.claim-idle-seconds:60}000")
     public void reclaimStuckCases() {
         LocalDateTime threshold = LocalDateTime.now().minusSeconds(props.getClaimIdleSeconds());
+        // 候选扫描：lockedAt 过期（粗筛）；最终决定以条件 UPDATE 的 worker+version+heartbeat 阈值为准
         List<CaseEntity> stuck = caseRepository.findByStatusAndLockedAtBefore(CaseStatus.RUNNING, threshold);
         for (CaseEntity c : stuck) {
-            // 仅接管"租约过期且心跳过期"的任务；心跳活跃说明是慢任务（长模型调用），不接管
+            // 心跳活跃说明是慢任务（长模型调用），快速跳过；条件 UPDATE 仍会二次校验 heartbeat 阈值
             LocalDateTime heartbeat = c.getHeartbeatAt();
             if (heartbeat != null && heartbeat.isAfter(threshold)) {
                 continue;
             }
             // 防止无限接管：超过最大重试次数直接失败，转人工排查
             if (c.getRetryCount() >= props.getMaxRetry()) {
-                if (workflowCommandService.failReclaimExhausted(c.getId())) {
+                if (workflowCommandService.failReclaimExhausted(c.getId(), c.getExecutionVersion(),
+                        c.getLockedBy(), threshold)) {
                     log.error("工单 {} 多次接管失败，标记 FAILED", c.getId());
                 }
                 continue;
             }
-            if (workflowCommandService.reclaimExpiredCase(c.getId(), c.getExecutionVersion())) {
+            if (workflowCommandService.reclaimExpiredCase(c.getId(), c.getExecutionVersion(),
+                    c.getLockedBy(), threshold)) {
                 log.warn("接管超时工单 caseId={}，重新投递", c.getId());
             }
         }
