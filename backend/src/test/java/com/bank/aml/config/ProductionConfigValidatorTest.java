@@ -63,4 +63,20 @@ class ProductionConfigValidatorTest {
         assertThatThrownBy(() -> v.run(null)).isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("Flyway");
     }
+
+    @Test
+    void rejectsInsecureCookie() {
+        var v = new ProductionConfigValidator(STRONG_SECRET, STRONG_PASSWORD, false, true, "validate",
+                llmProperties("openai-compatible", "test-key"), false, false, "", "");
+        assertThatThrownBy(() -> v.run(null)).isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("Secure Cookie");
+    }
+
+    @Test
+    void rejectsDdlAutoUpdate() {
+        var v = new ProductionConfigValidator(STRONG_SECRET, STRONG_PASSWORD, true, true, "update",
+                llmProperties("openai-compatible", "test-key"), false, false, "", "");
+        assertThatThrownBy(() -> v.run(null)).isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("validate");
+    }
 }
