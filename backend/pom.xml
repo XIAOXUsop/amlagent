@@ -50,6 +50,16 @@
             <scope>runtime</scope>
         </dependency>
 
+        <!-- 数据库迁移：版本化 schema（生产 ddl-auto=validate + Flyway） -->
+        <dependency>
+            <groupId>org.flywaydb</groupId>
+            <artifactId>flyway-core</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.flywaydb</groupId>
+            <artifactId>flyway-mysql</artifactId>
+        </dependency>
+
         <!-- 可观测性：Actuator + Prometheus 指标 -->
         <dependency>
             <groupId>org.springframework.boot</groupId>

@@ -22,6 +22,22 @@ jobs:
       - name: Run unit tests
         run: cd backend && ./mvnw test -Dgroups='!integration'
 
+  # 前端构建：类型检查 + 生产构建，避免提交破坏前端
+  frontend-build:
+    name: Frontend Build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install dependencies
+        run: cd frontend && npm ci
+      - name: Build
+        run: cd frontend && npm run build
+
   # 集成测试：需 Docker 依赖服务与本地 embedding 模型，手动触发避免默认 CI 失败
   integration-test:
     name: Integration Tests (manual)
