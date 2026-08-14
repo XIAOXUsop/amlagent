@@ -22,9 +22,27 @@ jobs:
       - name: Run unit tests
         run: cd backend && ./mvnw test -Dgroups='!integration'
 
-  # 前端构建：类型检查 + 生产构建，避免提交破坏前端
+  # 敏感信息扫描：检查 API Key / 私钥 / 硬编码密钥是否意外提交
+  security-scan:
+    name: Secret Scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Scan for secrets
+        run: |
+          if grep -rInE \
+            --exclude-dir=node_modules --exclude-dir=target --exclude-dir=.git \
+            --exclude='*.lock' --exclude='*.json' \
+            "(sk-[A-Za-z0-9]{20,}|AKIA[0-9A-Z]{16}|BEGIN (RSA|EC|OPENSSH) PRIVATE KEY|api[_-]?key[[:space:]]*[:=][[:space:]]*['\"][A-Za-z0-9]{20,})" \
+            . ; then
+            echo "::error::检测到疑似密钥/私钥泄露"
+            exit 1
+          fi
+          echo "未检测到密钥/私钥泄露"
+
+  # 前端：组件测试 + 类型检查 + 生产构建，避免提交破坏前端
   frontend-build:
-    name: Frontend Build
+    name: Frontend Test & Build
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -35,6 +53,8 @@ jobs:
           cache-dependency-path: frontend/package-lock.json
       - name: Install dependencies
         run: cd frontend && npm ci
+      - name: Run unit tests
+        run: cd frontend && npm test
       - name: Build
         run: cd frontend && npm run build
 
@@ -85,3 +105,69 @@ jobs:
           cache: maven
       - name: Run integration tests
         run: cd backend && ./mvnw test -Dgroups=integration
+        env:
+          AML_RAG_RERANK_ENABLED: 'false'
+
+  # 端到端测试：后端 + 前端 + Playwright（手动触发，验证核心用户流程）
+  e2e-test:
+    name: Playwright E2E (manual)
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch'
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: root123456
+          MYSQL_DATABASE: aml_agent
+          MYSQL_USER: aml
+          MYSQL_PASSWORD: aml123456
+        ports:
+          - 3307:3306
+        options: >-
+          --health-cmd "mysqladmin ping -h localhost -proot123456"
+          --health-interval 10s --health-timeout 5s --health-retries 5
+      redis:
+        image: redis:7
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s --health-timeout 5s --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+          cache: maven
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Start backend
+        run: cd backend && ./mvnw spring-boot:run &
+        env:
+          SPRING_PROFILES_ACTIVE: test
+          MYSQL_USER: aml
+          MYSQL_PASSWORD: aml123456
+          AML_RAG_RERANK_ENABLED: 'false'
+      - name: Wait for backend readiness
+        run: |
+          for i in $(seq 1 60); do
+            if curl -fsS http://localhost:8080/actuator/health >/dev/null 2>&1; then
+              echo "后端已就绪"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "::error::后端未在超时时间内就绪"
+          exit 1
+      - name: Install frontend deps
+        run: cd frontend && npm ci
+      - name: Install Playwright browsers
+        run: cd frontend && npx playwright install chromium --with-deps
+      - name: Run E2E tests
+        run: cd frontend && npx playwright test

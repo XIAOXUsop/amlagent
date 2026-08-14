@@ -23,13 +23,19 @@ public class ProductionConfigValidator implements ApplicationRunner {
     private final String jwtSecret;
     private final String dbPassword;
     private final boolean cookieSecure;
+    private final boolean flywayEnabled;
+    private final String ddlAuto;
 
     public ProductionConfigValidator(@Value("${aml.security.jwt-secret:}") String jwtSecret,
                                      @Value("${spring.datasource.password:}") String dbPassword,
-                                     @Value("${aml.security.cookie-secure:false}") boolean cookieSecure) {
+                                     @Value("${aml.security.cookie-secure:false}") boolean cookieSecure,
+                                     @Value("${spring.flyway.enabled:false}") boolean flywayEnabled,
+                                     @Value("${spring.jpa.hibernate.ddl-auto:}") String ddlAuto) {
         this.jwtSecret = jwtSecret;
         this.dbPassword = dbPassword;
         this.cookieSecure = cookieSecure;
+        this.flywayEnabled = flywayEnabled;
+        this.ddlAuto = ddlAuto;
     }
 
     @Override
@@ -43,6 +49,12 @@ public class ProductionConfigValidator implements ApplicationRunner {
         }
         if (!cookieSecure) {
             violations.add("生产环境必须启用 Secure Cookie（aml.security.cookie-secure=true）");
+        }
+        if (!flywayEnabled) {
+            violations.add("生产环境必须启用 Flyway（spring.flyway.enabled=true）");
+        }
+        if (!"validate".equalsIgnoreCase(ddlAuto)) {
+            violations.add("生产环境必须使用 ddl-auto=validate（当前=" + ddlAuto + "）");
         }
         if (!violations.isEmpty()) {
             String message = "生产环境配置校验失败：" + String.join("；", violations);

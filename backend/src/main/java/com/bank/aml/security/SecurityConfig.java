@@ -59,12 +59,15 @@ public class SecurityConfig {
                         // HttpOnly Cookie 认证下，浏览器会自动携带认证 Cookie，必须启用 CSRF 防护。
                         // 可读的 XSRF-TOKEN Cookie 供前端读取写入 X-XSRF-TOKEN header。
                         .csrfTokenRepository(CookieCsrfTokenRepository.withHttpOnlyFalse())
-                        .ignoringRequestMatchers("/api/auth/login", "/actuator/**",
+                        .ignoringRequestMatchers("/api/auth/login", "/api/auth/csrf", "/actuator/**",
                                 "/swagger-ui/**", "/swagger-ui.html", "/v3/api-docs/**"))
                 .sessionManagement(sm -> sm.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(auth -> auth
-                        .requestMatchers("/api/auth/login", "/api/auth/logout", "/actuator/**",
+                        // Actuator 仅 health/info 公开，其余（含 prometheus）限 ADMIN
+                        .requestMatchers("/api/auth/login", "/api/auth/logout", "/api/auth/csrf",
+                                "/actuator/health", "/actuator/info",
                                 "/swagger-ui/**", "/swagger-ui.html", "/v3/api-docs/**").permitAll()
+                        .requestMatchers("/actuator/**").hasRole("ADMIN")
                         .anyRequest().authenticated())
                 // 未认证返回 401；已认证但权限不足由 @PreAuthorize 抛 AccessDeniedException（全局处理 403）
                 .exceptionHandling(eh -> eh.authenticationEntryPoint(

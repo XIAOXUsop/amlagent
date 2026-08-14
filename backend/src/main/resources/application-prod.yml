@@ -1,0 +1,12 @@
+# 生产环境配置：Hibernate 校验 + Flyway 迁移 + Secure Cookie
+spring:
+  jpa:
+    hibernate:
+      ddl-auto: validate
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+
+aml:
+  security:
+    cookie-secure: true

@@ -10,6 +10,7 @@ import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.security.core.userdetails.UserDetailsService;
 import org.springframework.security.core.userdetails.UsernameNotFoundException;
 import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.security.web.csrf.CsrfToken;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -70,6 +71,12 @@ public class AuthController {
         String role = authentication.getAuthorities().stream()
                 .findFirst().map(a -> a.getAuthority().replace("ROLE_", "")).orElse("ANALYST");
         return Map.of("username", authentication.getName(), "role", role);
+    }
+
+    /** 强制生成 CSRF Token Cookie（登录后调用一次，供前端写请求携带 X-XSRF-TOKEN） */
+    @GetMapping("/csrf")
+    public Map<String, Object> csrf(CsrfToken token) {
+        return Map.of("headerName", token.getHeaderName(), "parameterName", token.getParameterName());
     }
 
     /** 登出：清除认证 Cookie */
