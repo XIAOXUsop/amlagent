@@ -40,6 +40,7 @@ import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
 import java.util.concurrent.TimeUnit;
 
 /**
@@ -72,6 +73,7 @@ public class DueDiligenceService {
     private final StreamingChatModel streamingChatModel;
     private final LegalKeywordResolver legalKeywordResolver;
     private final ObjectMapper objectMapper;
+    private final ExecutorService summaryExecutor;
 
     /** 阶段耗时测量（每工单独立） */
     private final ThreadLocal<LocalDateTime> lastStageAt = new ThreadLocal<>();
@@ -89,7 +91,8 @@ public class DueDiligenceService {
                                @Value("${aml.cost-routing.rule-fallback-enabled:false}") boolean ruleFallbackEnabled,
                                @Value("${aml.cost-routing.summary-enabled:false}") boolean summaryEnabled,
                                StreamingAnalysisAgent streamingAnalysisAgent, StreamingChatModel streamingChatModel,
-                               LegalKeywordResolver legalKeywordResolver, ObjectMapper objectMapper) {
+                               LegalKeywordResolver legalKeywordResolver, ObjectMapper objectMapper,
+                               ExecutorService summaryExecutor) {
         this.caseRepository = caseRepository;
         this.caseLogRepository = caseLogRepository;
         this.caseExecutionRepository = caseExecutionRepository;
@@ -110,6 +113,7 @@ public class DueDiligenceService {
         this.streamingChatModel = streamingChatModel;
         this.legalKeywordResolver = legalKeywordResolver;
         this.objectMapper = objectMapper;
+        this.summaryExecutor = summaryExecutor;
     }
 
     /** 创建预警工单；autoProcess=true 时与工单同事务写入 Outbox，自动触发尽调 */
@@ -212,10 +216,6 @@ public class DueDiligenceService {
 
             // 3. 风险推理
             record(c, WorkflowStage.REASONING, "综合研判交易 / 股权 / 黑名单 / 法规证据，完成风险推理。");
-            // 流式摘要：仅 AGENT_WITH_SUMMARY 路由启用（默认关闭，避免第二次模型调用）
-            if (route == CostRouter.Route.AGENT_WITH_SUMMARY) {
-                streamAnalysis(c, context.toPrompt());
-            }
 
             if (report == null || report.riskLevel() == null || report.riskLevel().isBlank()) {
                 DueDiligenceReport fallback = ruleReporter.generate(snapshot.customer(), c.getAlertRule());
@@ -263,6 +263,11 @@ public class DueDiligenceService {
             record(c, WorkflowStage.REPORTING, "尽调初审报告已生成并归档，来源=" + reportSource
                     + "，最终评级：" + c.getRiskLevel());
             record(c, WorkflowStage.DONE, "尽调完成。评级：" + c.getRiskLevel() + "，状态：" + c.getStatus());
+
+            // 可选流式摘要：最终报告生成后异步启动，输入为脱敏后的最终报告（不含身份字段）
+            if (route == CostRouter.Route.AGENT_WITH_SUMMARY) {
+                streamAnalysis(c, reportSummary(report), lease);
+            }
         } catch (NonRetryableWorkflowException e) {
             metrics.caseFailed();
             throw e;
@@ -361,19 +366,22 @@ public class DueDiligenceService {
     }
 
     /** 流式摘要（仅 AGENT_WITH_SUMMARY 路由启用）：异步生成，不阻塞 Worker 主流程 */
-    private void streamAnalysis(CaseEntity c, String description) {
+    private void streamAnalysis(CaseEntity c, String description, ExecutionLease lease) {
         if (streamingChatModel instanceof DisabledStreamingChatModel) {
             return;
         }
-        // 异步执行，避免阻塞 Worker；摘要失败不影响主工单成功
-        java.util.concurrent.CompletableFuture.runAsync(() -> {
+        // 有界线程池异步执行，避免阻塞 Worker / 占用公共 ForkJoinPool；摘要失败不影响主工单成功
+        summaryExecutor.execute(() -> {
             try {
                 StringBuilder sb = new StringBuilder();
                 CountDownLatch latch = new CountDownLatch(1);
                 streamingAnalysisAgent.streamAnalysis(description)
                         .onPartialResponse(token -> {
                             sb.append(token);
-                            workflowEventService.emitToken(c.getId(), token);
+                            // 租约丢失后停止推送 Token，旧 Worker 不再产生可见副作用
+                            if (lease == null || lease.isValid()) {
+                                workflowEventService.emitToken(c.getId(), token);
+                            }
                         })
                         .onCompleteResponse(r -> latch.countDown())
                         .onError(e -> {
@@ -386,6 +394,22 @@ public class DueDiligenceService {
                 log.warn("流式摘要异常，跳过：{}", e.getMessage());
             }
         });
+    }
+
+    /** 生成脱敏后的最终报告摘要，作为可选流式摘要的输入（不含身份字段，且明确约束不得修改结论） */
+    private String reportSummary(DueDiligenceReport report) {
+        return """
+                以下是已完成的尽调最终报告摘要，请用自然语言简要概括并补充分析建议。
+                你不得修改风险等级、事实或处置动作，只能解释与总结：
+                - 最终风险评级：%s
+                - 风险发现代码：%s
+                - 处置代码：%s
+                - 结论：%s
+                """.formatted(
+                report.riskLevel(),
+                report.findingCodes() == null ? "" : String.join("、", report.findingCodes()),
+                report.actionCodes() == null ? "" : String.join("、", report.actionCodes()),
+                report.conclusion());
     }
 
     private String writeJson(Object o) {
