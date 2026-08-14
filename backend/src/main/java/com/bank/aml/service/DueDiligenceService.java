@@ -10,6 +10,7 @@ import com.bank.aml.common.enums.CaseStatus;
 import com.bank.aml.common.enums.WorkflowStage;
 import com.bank.aml.common.exception.NonRetryableWorkflowException;
 import com.bank.aml.common.exception.RetryableWorkflowException;
+import com.bank.aml.common.exception.WorkflowStateConflictException;
 import com.bank.aml.common.fault.FaultInjector;
 import com.bank.aml.cost.CostRouter;
 import com.bank.aml.security.PromptInjectionGuard;
@@ -23,6 +24,8 @@ import com.bank.aml.datasource.repository.CaseRepository;
 import com.bank.aml.messaging.WorkflowCommandService;
 import com.bank.aml.messaging.ExecutionLease;
 import com.bank.aml.observability.MetricsRecorder;
+import com.bank.aml.observability.ModelPurposeContext;
+import com.bank.aml.tools.ToolExecutionTrace;
 import com.bank.aml.workflow.CaseExecution;
 import com.bank.aml.workflow.CaseExecution.ExecutionStatus;
 import com.bank.aml.workflow.CaseExecutionRepository;
@@ -74,6 +77,7 @@ public class DueDiligenceService {
     private final LegalKeywordResolver legalKeywordResolver;
     private final ObjectMapper objectMapper;
     private final ExecutorService summaryExecutor;
+    private final ModelPurposeContext purposeContext;
 
     /** 阶段耗时测量（每工单独立） */
     private final ThreadLocal<LocalDateTime> lastStageAt = new ThreadLocal<>();
@@ -92,7 +96,7 @@ public class DueDiligenceService {
                                @Value("${aml.cost-routing.summary-enabled:false}") boolean summaryEnabled,
                                StreamingAnalysisAgent streamingAnalysisAgent, StreamingChatModel streamingChatModel,
                                LegalKeywordResolver legalKeywordResolver, ObjectMapper objectMapper,
-                               ExecutorService summaryExecutor) {
+                               ExecutorService summaryExecutor, ModelPurposeContext purposeContext) {
         this.caseRepository = caseRepository;
         this.caseLogRepository = caseLogRepository;
         this.caseExecutionRepository = caseExecutionRepository;
@@ -114,6 +118,7 @@ public class DueDiligenceService {
         this.legalKeywordResolver = legalKeywordResolver;
         this.objectMapper = objectMapper;
         this.summaryExecutor = summaryExecutor;
+        this.purposeContext = purposeContext;
     }
 
     /** 创建预警工单；autoProcess=true 时与工单同事务写入 Outbox，自动触发尽调 */
@@ -143,14 +148,13 @@ public class DueDiligenceService {
         workflowCommandService.enqueueCaseCreated(caseId);
     }
 
-    /** 手动触发：统一写入 Outbox 队列，由 Worker 消费 + 抢占，消除直接异步执行的旁路 */
+    /** 手动触发：仅 PENDING 工单可触发，否则返回 409（不再静默忽略） */
     public void trigger(Long caseId) {
         CaseEntity c = getCase(caseId);
-        if (c.getStatus() == CaseStatus.PENDING || c.getStatus() == CaseStatus.FAILED) {
-            workflowCommandService.triggerManual(caseId, c.getExecutionVersion());
-        } else {
-            log.info("工单 {} 状态为 {}，忽略手动触发（幂等）", caseId, c.getStatus());
+        if (c.getStatus() != CaseStatus.PENDING) {
+            throw new WorkflowStateConflictException(caseId, c.getStatus(), java.util.Set.of(CaseStatus.PENDING));
         }
+        workflowCommandService.triggerManual(caseId, c.getExecutionVersion());
     }
 
     /** 人工重试：重置为 PENDING 并重新写入 Outbox 入队（由 {@link WorkflowCommandService} 原子完成） */
@@ -200,8 +204,11 @@ public class DueDiligenceService {
                 // 零 LLM：简单工单彻底跳过所有模型调用（含流式），由规则引擎兜底
                 record(c, WorkflowStage.COLLECTING, "RULE_ONLY 路由，跳过所有模型调用（零 LLM 成本）");
             } else {
+                // 主 Agent 使用 ObservedChatModel（purpose=main_agent 固定），无需 ThreadLocal
                 try {
-                    report = agentFactory.create(snapshot).investigate(context.toPrompt());
+                    var agentWithTools = agentFactory.createWithTraces(snapshot);
+                    report = agentWithTools.agent().investigate(context.toPrompt());
+                    recordToolTraces(c, agentWithTools.tools().traces());
                 } catch (Exception e) {
                     log.warn("Agent 调用失败，进入规则降级 caseId={}: {}", caseId, e.getMessage());
                     report = null;
@@ -358,6 +365,17 @@ public class DueDiligenceService {
         metrics.recordStageDuration(durationMs);
     }
 
+    /** 记录工具调用轨迹（工具名/成功/耗时，不落参数明文），供报告追溯调用了哪些工具 */
+    private void recordToolTraces(CaseEntity c, List<ToolExecutionTrace> traces) {
+        if (traces == null || traces.isEmpty()) {
+            return;
+        }
+        String summary = traces.stream()
+                .map(t -> t.toolName() + (t.success() ? "✓" : "✗") + "(" + t.durationMs() + "ms)")
+                .collect(java.util.stream.Collectors.joining(", "));
+        record(c, WorkflowStage.COLLECTING, "工具调用轨迹：" + summary);
+    }
+
     private String truncate(String s, int max) {
         if (s == null) {
             return null;
@@ -372,6 +390,7 @@ public class DueDiligenceService {
         }
         // 有界线程池异步执行，避免阻塞 Worker / 占用公共 ForkJoinPool；摘要失败不影响主工单成功
         summaryExecutor.execute(() -> {
+            purposeContext.set("summary");
             try {
                 StringBuilder sb = new StringBuilder();
                 CountDownLatch latch = new CountDownLatch(1);
@@ -392,6 +411,8 @@ public class DueDiligenceService {
                 latch.await(60, TimeUnit.SECONDS);
             } catch (Exception e) {
                 log.warn("流式摘要异常，跳过：{}", e.getMessage());
+            } finally {
+                purposeContext.clear();
             }
         });
     }

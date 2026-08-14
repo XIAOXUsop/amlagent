@@ -66,10 +66,11 @@ public class WorkflowMessageHandler {
             return;
         }
 
+        int expectedVersion = parseVersion(value.get("executionVersion"));
         String worker = workerIdentity.consumerName();
-        // 抢占执行权：仅 PENDING 可抢占（FAILED 只能通过显式管理命令恢复），executionVersion 自增
+        // 抢占执行权：仅 PENDING 可抢占（FAILED 只能通过显式管理命令恢复）；消息版本不匹配则丢弃
         boolean locked = caseRepository.tryLock(caseId, worker, LocalDateTime.now(),
-                CaseStatus.RUNNING, List.of(CaseStatus.PENDING)) == 1;
+                CaseStatus.RUNNING, List.of(CaseStatus.PENDING), expectedVersion) == 1;
         if (!locked) {
             // 已在执行/已完成，幂等丢弃（重复消息不重复处理）
             ack(record);
@@ -147,5 +148,13 @@ public class WorkflowMessageHandler {
 
     private void ack(MapRecord<String, String, String> record) {
         redisTemplate.opsForStream().acknowledge(props.getStream(), props.getGroup(), record.getId());
+    }
+
+    private int parseVersion(String value) {
+        try {
+            return value == null ? 0 : Integer.parseInt(value);
+        } catch (NumberFormatException e) {
+            return 0;
+        }
     }
 }

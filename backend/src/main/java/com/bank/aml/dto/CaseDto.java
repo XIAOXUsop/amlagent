@@ -18,7 +18,10 @@ public record CaseDto(
         String rawRiskLevel,
         String reportJson,
         String summary,
+        String reportSource,
+        String snapshotId,
         int executionVersion,
+        int reviewRevision,
         int retryCount,
         String failureCode,
         String failureMessage,
@@ -29,7 +32,9 @@ public record CaseDto(
         return new CaseDto(
                 e.getId(), e.getCustomerId(), e.getCustomerName(), e.getAlertRule(),
                 e.getStatus(), e.getRiskLevel(), e.getRawRiskLevel(), e.getReportJson(), e.getSummary(),
-                e.getExecutionVersion(), e.getRetryCount(), e.getFailureCode(), e.getFailureMessage(),
+                e.getReportSource(), e.getSnapshotId(),
+                e.getExecutionVersion(), e.getReviewRevision(), e.getRetryCount(),
+                e.getFailureCode(), e.getFailureMessage(),
                 e.getCreatedAt(), e.getUpdatedAt());
     }
 }

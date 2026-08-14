@@ -6,8 +6,10 @@ package com.bank.aml.messaging;
 public enum WorkflowEventType {
     /** 工单创建（首次入队） */
     CASE_CREATED,
-    /** 手动触发 / 人工重试 */
+    /** 手动触发（PENDING 工单） */
     CASE_MANUAL_TRIGGERED,
+    /** 人工重试（FAILED → PENDING） */
+    CASE_MANUAL_RETRIED,
     /** 指数退避到期，自动重投 */
     CASE_RETRY_DUE,
     /** Worker 超时被接管，重新投递 */

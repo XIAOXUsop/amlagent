@@ -1,5 +1,6 @@
 package com.bank.aml.common;
 
+import com.bank.aml.common.exception.WorkflowStateConflictException;
 import jakarta.servlet.http.HttpServletRequest;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -43,6 +44,11 @@ public class GlobalExceptionHandler {
     public ResponseEntity<ApiError> handleAccessDenied(org.springframework.security.access.AccessDeniedException ex,
                                                        HttpServletRequest req) {
         return build(HttpStatus.FORBIDDEN, "FORBIDDEN", "无权限访问该资源", req);
+    }
+
+    @ExceptionHandler(WorkflowStateConflictException.class)
+    public ResponseEntity<ApiError> handleStateConflict(WorkflowStateConflictException ex, HttpServletRequest req) {
+        return build(HttpStatus.CONFLICT, "WORKFLOW_STATE_CONFLICT", ex.getMessage(), req);
     }
 
     @ExceptionHandler(Exception.class)

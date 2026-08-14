@@ -67,6 +67,10 @@ public class CaseEntity {
     @Column(nullable = false)
     private int executionVersion = 0;
 
+    /** 人工复核版本：每次复核决策自增，用于人工决策乐观锁（与 executionVersion 语义分离） */
+    @Column(nullable = false)
+    private int reviewRevision = 0;
+
     /** 当前执行者（Worker 标识） */
     @Column(length = 64)
     private String lockedBy;
@@ -199,6 +203,14 @@ public class CaseEntity {
 
     public void setExecutionVersion(int executionVersion) {
         this.executionVersion = executionVersion;
+    }
+
+    public int getReviewRevision() {
+        return reviewRevision;
+    }
+
+    public void setReviewRevision(int reviewRevision) {
+        this.reviewRevision = reviewRevision;
     }
 
     public String getLockedBy() {

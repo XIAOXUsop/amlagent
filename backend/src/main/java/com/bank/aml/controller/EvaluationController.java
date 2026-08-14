@@ -3,12 +3,16 @@ package com.bank.aml.controller;
 import com.bank.aml.evaluation.AgentEvalDatasetLoader;
 import com.bank.aml.evaluation.AgentEvalReport;
 import com.bank.aml.evaluation.AgentEvalRunner;
+import com.bank.aml.evaluation.EvalFreezeRun;
+import com.bank.aml.evaluation.EvalFreezeRunRepository;
 import com.bank.aml.evaluation.EvalReportEntity;
 import com.bank.aml.evaluation.EvalReportRepository;
 import com.bank.aml.evaluation.RagEvaluator;
 import com.bank.aml.evaluation.RuleRegressionEvaluator;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -16,6 +20,11 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.bind.annotation.RequestParam;
 
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.time.LocalDateTime;
+import java.util.HexFormat;
 import java.util.List;
 
 /**
@@ -26,23 +35,28 @@ import java.util.List;
 @PreAuthorize("hasRole('ADMIN')")
 public class EvaluationController {
 
+    private static final Logger log = LoggerFactory.getLogger(EvaluationController.class);
+
     private final RagEvaluator ragEvaluator;
     private final RuleRegressionEvaluator ruleRegressionEvaluator;
     private final AgentEvalDatasetLoader agentEvalDatasetLoader;
     private final AgentEvalRunner agentEvalRunner;
     private final EvalReportRepository evalReportRepository;
+    private final EvalFreezeRunRepository evalFreezeRunRepository;
     private final ObjectMapper objectMapper;
 
     public EvaluationController(RagEvaluator ragEvaluator, RuleRegressionEvaluator ruleRegressionEvaluator,
                                 AgentEvalDatasetLoader agentEvalDatasetLoader,
                                 AgentEvalRunner agentEvalRunner,
                                 EvalReportRepository evalReportRepository,
+                                EvalFreezeRunRepository evalFreezeRunRepository,
                                 ObjectMapper objectMapper) {
         this.ragEvaluator = ragEvaluator;
         this.ruleRegressionEvaluator = ruleRegressionEvaluator;
         this.agentEvalDatasetLoader = agentEvalDatasetLoader;
         this.agentEvalRunner = agentEvalRunner;
         this.evalReportRepository = evalReportRepository;
+        this.evalFreezeRunRepository = evalFreezeRunRepository;
         this.objectMapper = objectMapper;
     }
 
@@ -87,8 +101,42 @@ public class EvaluationController {
         if (!Boolean.parseBoolean(System.getenv().getOrDefault("RUN_HIDDEN_AGENT_EVAL", "false"))) {
             throw new IllegalStateException("隐藏 TEST 评测需显式设置环境变量 RUN_HIDDEN_AGENT_EVAL=true");
         }
-        AgentEvalReport report = persistIfCompleted(agentEvalRunner.runTest(), "AGENT_TEST");
-        return report.aggregateOnly(); // 盲测：只返回聚合指标，不暴露逐案例 expectedRisk/requiredFindingCodes 金标
+        // 冻结审计：记录 prompt 版本与数据集哈希，运行后任何改动都可被追溯
+        log.info("隐藏 TEST 冻结审计：promptVersion={} datasetHash={}",
+                AgentEvalRunner.PROMPT_VERSION, agentEvalDatasetLoader.datasetHash());
+        // 一次性锁：同一 freezeId 只能正式执行一次，防止反复挑选最好结果
+        String freezeId = computeFreezeId();
+        if (evalFreezeRunRepository.findByFreezeId(freezeId).isPresent()) {
+            throw new IllegalStateException("该 freezeId 已运行过，同一冻结基线不能重复执行 TEST");
+        }
+        EvalFreezeRun run = new EvalFreezeRun();
+        run.setFreezeId(freezeId);
+        run.setStatus("RUNNING");
+        run.setStartedAt(LocalDateTime.now());
+        evalFreezeRunRepository.save(run);
+
+        // 先脱敏为聚合版，再持久化，避免数据库写入逐案例金标
+        AgentEvalReport aggregate = agentEvalRunner.runTest().aggregateOnly();
+        persistIfCompleted(aggregate, "AGENT_TEST");
+
+        run.setStatus(aggregate.runStatus());
+        run.setRunId(aggregate.runId());
+        run.setAggregateJson(writeJson(aggregate));
+        run.setCompletedAt(LocalDateTime.now());
+        evalFreezeRunRepository.save(run);
+        return aggregate; // 盲测：只返回聚合指标，不暴露逐案例 expectedRisk/requiredFindingCodes 金标
+    }
+
+    /** freezeId = sha256(commitSha + promptVersion + datasetHash)，同一基线唯一 */
+    private String computeFreezeId() {
+        String commitSha = System.getenv().getOrDefault("BUILD_GIT_SHA", "unknown");
+        String raw = commitSha + "|" + AgentEvalRunner.PROMPT_VERSION + "|" + agentEvalDatasetLoader.datasetHash();
+        try {
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            return HexFormat.of().formatHex(digest.digest(raw.getBytes(StandardCharsets.UTF_8))).substring(0, 32);
+        } catch (NoSuchAlgorithmException e) {
+            throw new IllegalStateException("SHA-256 不可用", e);
+        }
     }
 
     private AgentEvalReport persistIfCompleted(AgentEvalReport report, String evalType) {
@@ -96,6 +144,7 @@ public class EvaluationController {
             EvalReportEntity entity = new EvalReportEntity();
             entity.setEvalType(evalType);
             entity.setVersionTag(report.datasetVersion() + ":" + report.runtime().configuredModel());
+            // aggregateOnly 已清空 cases，withoutSensitiveDetails 进一步脱敏身份/模型原文
             entity.setMetricsJson(writeJson(report.withoutSensitiveDetails()));
             evalReportRepository.save(entity);
         }

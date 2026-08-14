@@ -1,6 +1,7 @@
 package com.bank.aml.review;
 
 import com.bank.aml.common.enums.CaseStatus;
+import com.bank.aml.common.exception.WorkflowStateConflictException;
 import com.bank.aml.datasource.entity.CaseEntity;
 import com.bank.aml.datasource.repository.CaseRepository;
 import org.springframework.stereotype.Service;
@@ -36,12 +37,13 @@ public class ReviewService {
 
     /**
      * 提交复核决定：
-     * APPROVE → 工单完成；REJECT → 工单失败（可人工重试补充尽调）；ESCALATE → 保持 HOLD。
-     * <p>reviewerRiskLevel / decision 使用闭集校验，非法输入直接拒绝（400），不再静默归一。
+     * APPROVE → 工单完成；REJECT → 工单失败（可人工重试补充尽调）；ESCALATE → 保持 HOLD，revision 自增。
+     * <p>reviewerRiskLevel / decision 使用闭集校验（400）；所有决策均通过 reviewRevision 乐观锁
+     * 条件更新，旧 revision 返回 409，避免并发复核冲突。
      */
     @Transactional
     public ManualReview submit(Long caseId, String reviewerId, String reviewerRiskLevel,
-                               String decision, String comment) {
+                               String decision, String comment, int expectedReviewRevision) {
         if (reviewerRiskLevel != null && !ALLOWED_RISK_LEVELS.contains(reviewerRiskLevel)) {
             throw new IllegalArgumentException("非法风险等级：" + reviewerRiskLevel);
         }
@@ -56,7 +58,7 @@ public class ReviewService {
         CaseEntity c = caseRepository.findById(caseId)
                 .orElseThrow(() -> new IllegalArgumentException("工单不存在：" + caseId));
         if (c.getStatus() != CaseStatus.HOLD) {
-            throw new IllegalStateException("工单当前状态不是 HOLD，无法复核：" + c.getStatus());
+            throw new WorkflowStateConflictException(caseId, c.getStatus(), Set.of(CaseStatus.HOLD));
         }
 
         ManualReview review = new ManualReview();
@@ -67,24 +69,31 @@ public class ReviewService {
         review.setReviewerRiskLevel(reviewerRiskLevel);
         review.setDecision(normalizedDecision);
         review.setComment(comment);
+        review.setReviewRevision(expectedReviewRevision);
+        review.setCaseStatusBefore(c.getStatus().name());
         review.setCompletedAt(LocalDateTime.now());
 
+        int updated;
         switch (normalizedDecision) {
             case "APPROVE" -> {
-                // 条件更新：并发下仅一个复核成功，其余返回 0
-                if (caseRepository.completeReview(caseId, CaseStatus.DONE, CaseStatus.HOLD, null, null) == 0) {
-                    throw new IllegalStateException("工单已被其他复核员处理");
-                }
+                updated = caseRepository.completeReview(caseId, CaseStatus.DONE, CaseStatus.HOLD,
+                        expectedReviewRevision, null, null);
+                review.setCaseStatusAfter(CaseStatus.DONE.name());
             }
             case "REJECT" -> {
-                if (caseRepository.completeReview(caseId, CaseStatus.FAILED, CaseStatus.HOLD,
-                        "REVIEW_REJECTED", "人工复核驳回，需补充尽调：" + (comment == null ? "" : comment)) == 0) {
-                    throw new IllegalStateException("工单已被其他复核员处理");
-                }
+                updated = caseRepository.completeReview(caseId, CaseStatus.FAILED, CaseStatus.HOLD,
+                        expectedReviewRevision, "REVIEW_REJECTED",
+                        "人工复核驳回，需补充尽调：" + (comment == null ? "" : comment));
+                review.setCaseStatusAfter(CaseStatus.FAILED.name());
             }
             default -> {
-                // ESCALATE：保持 HOLD，不改变终态
+                // ESCALATE：保持 HOLD，但 revision 自增（避免被当作无状态备注）
+                updated = caseRepository.escalateReview(caseId, CaseStatus.HOLD, expectedReviewRevision);
+                review.setCaseStatusAfter(CaseStatus.HOLD.name());
             }
+        }
+        if (updated == 0) {
+            throw new WorkflowStateConflictException(caseId, c.getStatus(), Set.of(CaseStatus.HOLD));
         }
         return reviewRepository.save(review);
     }

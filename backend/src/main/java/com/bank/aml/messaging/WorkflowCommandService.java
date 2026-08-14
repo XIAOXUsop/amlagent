@@ -1,12 +1,14 @@
 package com.bank.aml.messaging;
 
 import com.bank.aml.common.enums.CaseStatus;
+import com.bank.aml.common.exception.WorkflowStateConflictException;
 import com.bank.aml.datasource.entity.CaseEntity;
 import com.bank.aml.datasource.repository.CaseRepository;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
+import java.util.Set;
 
 /**
  * 工单入队命令服务：所有"状态迁移 + 入队"在同一事务内完成，入队统一写入 Outbox，
@@ -37,19 +39,17 @@ public class WorkflowCommandService {
         outboxService.record(caseId, WorkflowEventType.CASE_MANUAL_TRIGGERED.name(), executionVersion);
     }
 
-    /** 人工重试：重置为 PENDING 并重新入队，返回更新后的工单 */
+    /** 人工重试：FAILED → PENDING（条件更新）+ 入队，非 FAILED 返回 409 */
     @Transactional
     public CaseEntity retryManual(Long caseId) {
+        if (caseRepository.retryFailed(caseId, CaseStatus.PENDING, CaseStatus.FAILED) == 0) {
+            CaseEntity c = caseRepository.findById(caseId)
+                    .orElseThrow(() -> new IllegalArgumentException("工单不存在：" + caseId));
+            throw new WorkflowStateConflictException(caseId, c.getStatus(), Set.of(CaseStatus.FAILED));
+        }
         CaseEntity c = caseRepository.findById(caseId)
                 .orElseThrow(() -> new IllegalArgumentException("工单不存在：" + caseId));
-        c.setStatus(CaseStatus.PENDING);
-        c.setLockedBy(null);
-        c.setLockedAt(null);
-        c.setHeartbeatAt(null);
-        c.setFailureCode(null);
-        c.setFailureMessage(null);
-        caseRepository.save(c);
-        outboxService.record(caseId, WorkflowEventType.CASE_MANUAL_TRIGGERED.name(), c.getExecutionVersion());
+        outboxService.record(caseId, WorkflowEventType.CASE_MANUAL_RETRIED.name(), c.getExecutionVersion());
         return c;
     }
 
@@ -94,20 +94,16 @@ public class WorkflowCommandService {
         return false;
     }
 
-    /** 死信重放：重置为 PENDING 并重新入队，返回更新后的工单 */
+    /** 死信重放：FAILED → PENDING（条件更新，重置重试次数）+ 入队，非 FAILED 返回 409 */
     @Transactional
     public CaseEntity replayDead(Long caseId) {
+        if (caseRepository.replayDeadLetter(caseId, CaseStatus.PENDING, CaseStatus.FAILED) == 0) {
+            CaseEntity c = caseRepository.findById(caseId)
+                    .orElseThrow(() -> new IllegalArgumentException("工单不存在：" + caseId));
+            throw new WorkflowStateConflictException(caseId, c.getStatus(), Set.of(CaseStatus.FAILED));
+        }
         CaseEntity c = caseRepository.findById(caseId)
                 .orElseThrow(() -> new IllegalArgumentException("工单不存在：" + caseId));
-        c.setStatus(CaseStatus.PENDING);
-        c.setRetryCount(0);
-        c.setNextRetryAt(null);
-        c.setLockedBy(null);
-        c.setLockedAt(null);
-        c.setHeartbeatAt(null);
-        c.setFailureCode(null);
-        c.setFailureMessage(null);
-        caseRepository.save(c);
         outboxService.record(caseId, WorkflowEventType.CASE_DEAD_REPLAYED.name(), c.getExecutionVersion());
         return c;
     }

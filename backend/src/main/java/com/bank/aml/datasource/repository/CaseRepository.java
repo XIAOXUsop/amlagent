@@ -28,8 +28,9 @@ public interface CaseRepository extends JpaRepository<CaseEntity, Long> {
     List<CaseEntity> findByStatusAndNextRetryAtLessThanEqual(CaseStatus status, LocalDateTime now);
 
     /**
-     * 抢占工单执行权（条件更新，幂等）：仅 PENDING/FAILED 可抢占，executionVersion 自增。
-     * 影响行数 = 1 表示抢占成功；= 0 表示已被其他 Worker 执行（重复消息直接忽略）。
+     * 抢占工单执行权（条件更新，幂等）：仅 PENDING 可抢占，executionVersion 自增；
+     * 消息 expectedVersion 必须与当前版本匹配，延迟旧消息更新 0 行被丢弃。
+     * 影响行数 = 1 表示抢占成功；= 0 表示已被其他 Worker 执行或版本不匹配。
      */
     @Modifying
     @Transactional
@@ -37,13 +38,14 @@ public interface CaseRepository extends JpaRepository<CaseEntity, Long> {
             UPDATE CaseEntity c
             SET c.status = :running, c.executionVersion = c.executionVersion + 1,
                 c.lockedBy = :worker, c.lockedAt = :now, c.heartbeatAt = :now
-            WHERE c.id = :id AND c.status IN :eligible
+            WHERE c.id = :id AND c.status IN :eligible AND c.executionVersion = :expectedVersion
             """)
     int tryLock(@Param("id") Long id,
                 @Param("worker") String worker,
                 @Param("now") LocalDateTime now,
                 @Param("running") CaseStatus running,
-                @Param("eligible") List<CaseStatus> eligible);
+                @Param("eligible") List<CaseStatus> eligible,
+                @Param("expectedVersion") int expectedVersion);
 
     /** 刷新心跳（长模型调用期间周期性调用，避免被错误接管）；绑定 worker+executionVersion，陈旧心跳不越权 */
     @Modifying
@@ -169,17 +171,58 @@ public interface CaseRepository extends JpaRepository<CaseEntity, Long> {
                              @Param("worker") String worker,
                              @Param("heartbeatThreshold") LocalDateTime heartbeatThreshold);
 
-    /** 人工复核终态：HOLD → DONE/FAILED（条件更新，并发下仅一个复核成功） */
+    /** 人工复核终态：HOLD → DONE/FAILED，reviewRevision 自增（条件更新 + 乐观锁，旧 revision 返回 0） */
     @Modifying
     @Transactional
     @Query("""
             UPDATE CaseEntity c
-            SET c.status = :status, c.failureCode = :failureCode, c.failureMessage = :failureMessage
-            WHERE c.id = :id AND c.status = :hold
+            SET c.status = :status, c.reviewRevision = c.reviewRevision + 1,
+                c.failureCode = :failureCode, c.failureMessage = :failureMessage
+            WHERE c.id = :id AND c.status = :hold AND c.reviewRevision = :expectedRevision
             """)
     int completeReview(@Param("id") Long id,
                        @Param("status") CaseStatus status,
                        @Param("hold") CaseStatus hold,
+                       @Param("expectedRevision") int expectedRevision,
                        @Param("failureCode") String failureCode,
                        @Param("failureMessage") String failureMessage);
+
+    /** 人工复核升级：HOLD 保持 HOLD，仅 reviewRevision 自增（条件更新 + 乐观锁） */
+    @Modifying
+    @Transactional
+    @Query("""
+            UPDATE CaseEntity c
+            SET c.reviewRevision = c.reviewRevision + 1
+            WHERE c.id = :id AND c.status = :hold AND c.reviewRevision = :expectedRevision
+            """)
+    int escalateReview(@Param("id") Long id,
+                       @Param("hold") CaseStatus hold,
+                       @Param("expectedRevision") int expectedRevision);
+
+    /** 人工重试：FAILED → PENDING，清锁与失败信息（条件更新，非 FAILED 返回 0） */
+    @Modifying
+    @Transactional
+    @Query("""
+            UPDATE CaseEntity c
+            SET c.status = :pending, c.lockedBy = NULL, c.lockedAt = NULL, c.heartbeatAt = NULL,
+                c.failureCode = NULL, c.failureMessage = NULL
+            WHERE c.id = :id AND c.status = :failed
+            """)
+    int retryFailed(@Param("id") Long id,
+                    @Param("pending") CaseStatus pending,
+                    @Param("failed") CaseStatus failed);
+
+    /** 死信重放：FAILED → PENDING，重置重试次数与失败信息（条件更新，非 FAILED 返回 0） */
+    @Modifying
+    @Transactional
+    @Query("""
+            UPDATE CaseEntity c
+            SET c.status = :pending, c.retryCount = 0, c.nextRetryAt = NULL,
+                c.lockedBy = NULL, c.lockedAt = NULL, c.heartbeatAt = NULL,
+                c.failureCode = NULL, c.failureMessage = NULL
+            WHERE c.id = :id AND c.status = :failed
+            """)
+    int replayDeadLetter(@Param("id") Long id,
+                         @Param("pending") CaseStatus pending,
+                         @Param("failed") CaseStatus failed);
 }

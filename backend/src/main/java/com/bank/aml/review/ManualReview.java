@@ -46,6 +46,18 @@ public class ManualReview {
     @Column(columnDefinition = "TEXT")
     private String comment;
 
+    /** 复核版本（乐观锁，配合 caseId 唯一） */
+    @Column(nullable = false)
+    private int reviewRevision = 0;
+
+    /** 复核前工单状态 */
+    @Column(length = 32)
+    private String caseStatusBefore;
+
+    /** 复核后工单状态 */
+    @Column(length = 32)
+    private String caseStatusAfter;
+
     @Column(nullable = false)
     private LocalDateTime createdAt;
 
@@ -114,6 +126,30 @@ public class ManualReview {
 
     public void setComment(String comment) {
         this.comment = comment;
+    }
+
+    public int getReviewRevision() {
+        return reviewRevision;
+    }
+
+    public void setReviewRevision(int reviewRevision) {
+        this.reviewRevision = reviewRevision;
+    }
+
+    public String getCaseStatusBefore() {
+        return caseStatusBefore;
+    }
+
+    public void setCaseStatusBefore(String caseStatusBefore) {
+        this.caseStatusBefore = caseStatusBefore;
+    }
+
+    public String getCaseStatusAfter() {
+        return caseStatusAfter;
+    }
+
+    public void setCaseStatusAfter(String caseStatusAfter) {
+        this.caseStatusAfter = caseStatusAfter;
     }
 
     public LocalDateTime getCreatedAt() {

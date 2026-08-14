@@ -1,12 +1,16 @@
 package com.bank.aml.messaging;
 
 import com.bank.aml.common.enums.CaseStatus;
+import com.bank.aml.common.exception.WorkflowStateConflictException;
+import com.bank.aml.datasource.entity.CaseEntity;
 import com.bank.aml.datasource.repository.CaseRepository;
 import org.junit.jupiter.api.Test;
 
 import java.time.LocalDateTime;
+import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
@@ -79,6 +83,38 @@ class WorkflowCommandServiceTest {
         boolean marked = svc.markDeadLetter(1L, "worker-a", 2, 3, "重试超限");
 
         assertThat(marked).isFalse();
+        verify(outbox, never()).record(anyLong(), anyString(), anyInt());
+    }
+
+    @Test
+    void retryManualThrowsConflictWhenNotFailed() {
+        CaseRepository repo = mock(CaseRepository.class);
+        OutboxService outbox = mock(OutboxService.class);
+        WorkflowCommandService svc = new WorkflowCommandService(repo, outbox);
+
+        when(repo.retryFailed(eq(1L), eq(CaseStatus.PENDING), eq(CaseStatus.FAILED))).thenReturn(0);
+        CaseEntity done = new CaseEntity();
+        done.setStatus(CaseStatus.DONE);
+        when(repo.findById(1L)).thenReturn(Optional.of(done));
+
+        assertThatThrownBy(() -> svc.retryManual(1L))
+                .isInstanceOf(WorkflowStateConflictException.class);
+        verify(outbox, never()).record(anyLong(), anyString(), anyInt());
+    }
+
+    @Test
+    void replayDeadThrowsConflictWhenNotFailed() {
+        CaseRepository repo = mock(CaseRepository.class);
+        OutboxService outbox = mock(OutboxService.class);
+        WorkflowCommandService svc = new WorkflowCommandService(repo, outbox);
+
+        when(repo.replayDeadLetter(eq(1L), eq(CaseStatus.PENDING), eq(CaseStatus.FAILED))).thenReturn(0);
+        CaseEntity done = new CaseEntity();
+        done.setStatus(CaseStatus.DONE);
+        when(repo.findById(1L)).thenReturn(Optional.of(done));
+
+        assertThatThrownBy(() -> svc.replayDead(1L))
+                .isInstanceOf(WorkflowStateConflictException.class);
         verify(outbox, never()).record(anyLong(), anyString(), anyInt());
     }
 }

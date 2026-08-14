@@ -35,11 +35,12 @@ public class ReviewController {
         return reviewService.pending().stream().map(CaseDto::from).toList();
     }
 
-    /** 提交复核决定 */
+    /** 提交复核决定（携带 expectedReviewRevision 做乐观锁，旧 revision 返回 409） */
     @PostMapping("/{caseId}")
     public ManualReview submit(@PathVariable Long caseId, @RequestBody ReviewRequest req) {
         String reviewer = SecurityContextHolder.getContext().getAuthentication().getName();
-        return reviewService.submit(caseId, reviewer, req.reviewerRiskLevel(), req.decision(), req.comment());
+        return reviewService.submit(caseId, reviewer, req.reviewerRiskLevel(), req.decision(),
+                req.comment(), req.expectedReviewRevision());
     }
 
     /** 工单复核记录 */
@@ -54,6 +55,7 @@ public class ReviewController {
         return reviewService.stats();
     }
 
-    public record ReviewRequest(String reviewerRiskLevel, String decision, String comment) {
+    public record ReviewRequest(String reviewerRiskLevel, String decision, String comment,
+                                int expectedReviewRevision) {
     }
 }
