@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import { ref } from 'vue'
-import { ElMessage } from 'element-plus'
 import { login } from '../api/client'
 
 const emit = defineEmits<{ (e: 'logged-in'): void }>()

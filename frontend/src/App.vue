@@ -1,17 +1,13 @@
 <script setup lang="ts">
-import { defineAsyncComponent, onMounted, ref } from 'vue'
+import { onMounted, ref } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { checkAuth, logout as apiLogout } from './api/client'
+import LoginView from './views/LoginView.vue'
 
-const CaseDashboard = defineAsyncComponent(() => import('./views/CaseDashboard.vue'))
-const CaseDetailView = defineAsyncComponent(() => import('./views/CaseDetailView.vue'))
-const ReviewView = defineAsyncComponent(() => import('./views/ReviewView.vue'))
-const EvalDashboard = defineAsyncComponent(() => import('./views/EvalDashboard.vue'))
-const LoginView = defineAsyncComponent(() => import('./views/LoginView.vue'))
-
+const route = useRoute()
+const router = useRouter()
 const loggedIn = ref(false)
 const role = ref('')
-const activeView = ref<'cases' | 'reviews' | 'eval'>('cases')
-const activeCaseId = ref<number | null>(null)
 
 onMounted(async () => {
   try {
@@ -24,7 +20,11 @@ onMounted(async () => {
 })
 
 function openCase(id: number) {
-  activeCaseId.value = id
+  router.push(`/cases/${id}`)
+}
+
+function goCases() {
+  router.push('/cases')
 }
 
 async function logout() {
@@ -35,9 +35,12 @@ async function logout() {
   }
   loggedIn.value = false
   role.value = ''
-  activeView.value = 'cases'
-  activeCaseId.value = null
+  router.push('/cases')
 }
+
+const isCases = () => route.path.startsWith('/cases')
+const isReviews = () => route.path.startsWith('/reviews')
+const isEval = () => route.path.startsWith('/eval')
 </script>
 
 <template>
@@ -53,23 +56,22 @@ async function logout() {
           </div>
         </div>
         <div class="nav">
-          <el-button :type="activeView === 'cases' ? 'primary' : 'default'" size="small" @click="activeView = 'cases'; activeCaseId = null">
+          <el-button :type="isCases() ? 'primary' : 'default'" size="small" @click="goCases">
             工单中心
           </el-button>
-          <el-button v-if="role === 'REVIEWER' || role === 'ADMIN'" :type="activeView === 'reviews' ? 'primary' : 'default'" size="small" @click="activeView = 'reviews'; activeCaseId = null">
+          <el-button v-if="role === 'REVIEWER' || role === 'ADMIN'" :type="isReviews() ? 'primary' : 'default'" size="small" @click="router.push('/reviews')">
             人工复核
           </el-button>
-          <el-button v-if="role === 'ADMIN'" :type="activeView === 'eval' ? 'primary' : 'default'" size="small" @click="activeView = 'eval'; activeCaseId = null">
+          <el-button v-if="role === 'ADMIN'" :type="isEval() ? 'primary' : 'default'" size="small" @click="router.push('/eval')">
             评测中心
           </el-button>
           <el-button size="small" @click="logout">退出</el-button>
         </div>
       </header>
       <main class="content">
-        <CaseDetailView v-if="activeCaseId !== null" :case-id="activeCaseId" @back="activeCaseId = null" />
-        <EvalDashboard v-else-if="activeView === 'eval'" />
-        <ReviewView v-else-if="activeView === 'reviews'" @open-case="openCase" />
-        <CaseDashboard v-else @open-case="openCase" />
+        <router-view v-slot="{ Component }">
+          <component :is="Component" @open-case="openCase" @back="goCases" />
+        </router-view>
       </main>
     </template>
   </div>

@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
-import { ElMessage } from 'element-plus'
 import { createCase, listCases, listCustomers, processCase, type CaseItem, type Customer } from '../api/client'
 
 const emit = defineEmits<{ (e: 'open-case', id: number): void }>()
@@ -124,7 +123,7 @@ function fmtTime(s: string): string {
               size="small"
               type="primary"
               :loading="processingId === row.id"
-              @click="handleProcess(row)"
+              @click="handleProcess(row as CaseItem)"
             >
               处理
             </el-button>

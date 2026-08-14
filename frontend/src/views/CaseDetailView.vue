@@ -11,7 +11,6 @@ import {
   type DueDiligenceReport,
   type WorkflowEvent,
 } from '../api/client'
-import { ElMessage } from 'element-plus'
 
 const props = defineProps<{ caseId: number }>()
 const emit = defineEmits<{ (e: 'back'): void }>()

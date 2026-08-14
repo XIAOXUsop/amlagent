@@ -1,10 +1,9 @@
 import { createApp } from 'vue'
-import ElementPlus from 'element-plus'
-import zhCn from 'element-plus/es/locale/lang/zh-cn'
-import 'element-plus/dist/index.css'
 import './style.css'
 import App from './App.vue'
+import router from './router'
 
+// Element Plus 按需自动导入（unplugin），无需全量注册与全量样式
 const app = createApp(App)
-app.use(ElementPlus, { locale: zhCn })
+app.use(router)
 app.mount('#app')

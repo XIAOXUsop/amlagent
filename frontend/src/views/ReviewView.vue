@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
-import { ElMessage } from 'element-plus'
 import { listPendingReviews, reviewStats, submitReview, type CaseItem } from '../api/client'
 
 const emit = defineEmits<{ (e: 'open-case', id: number): void }>()
@@ -96,7 +95,7 @@ async function doSubmit() {
         <el-table-column label="操作" width="200" fixed="right">
           <template #default="{ row }">
             <el-button size="small" @click="emit('open-case', row.id)">查看详情</el-button>
-            <el-button size="small" type="primary" @click="openReview(row)">复核</el-button>
+            <el-button size="small" type="primary" @click="openReview(row as CaseItem)">复核</el-button>
           </template>
         </el-table-column>
       </el-table>
