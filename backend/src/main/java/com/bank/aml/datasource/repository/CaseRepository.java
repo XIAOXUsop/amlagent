@@ -168,4 +168,18 @@ public interface CaseRepository extends JpaRepository<CaseEntity, Long> {
                              @Param("version") int version,
                              @Param("worker") String worker,
                              @Param("heartbeatThreshold") LocalDateTime heartbeatThreshold);
+
+    /** 人工复核终态：HOLD → DONE/FAILED（条件更新，并发下仅一个复核成功） */
+    @Modifying
+    @Transactional
+    @Query("""
+            UPDATE CaseEntity c
+            SET c.status = :status, c.failureCode = :failureCode, c.failureMessage = :failureMessage
+            WHERE c.id = :id AND c.status = :hold
+            """)
+    int completeReview(@Param("id") Long id,
+                       @Param("status") CaseStatus status,
+                       @Param("hold") CaseStatus hold,
+                       @Param("failureCode") String failureCode,
+                       @Param("failureMessage") String failureMessage);
 }

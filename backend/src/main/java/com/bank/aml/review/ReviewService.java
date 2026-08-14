@@ -55,6 +55,9 @@ public class ReviewService {
 
         CaseEntity c = caseRepository.findById(caseId)
                 .orElseThrow(() -> new IllegalArgumentException("工单不存在：" + caseId));
+        if (c.getStatus() != CaseStatus.HOLD) {
+            throw new IllegalStateException("工单当前状态不是 HOLD，无法复核：" + c.getStatus());
+        }
 
         ManualReview review = new ManualReview();
         review.setCaseId(caseId);
@@ -67,17 +70,22 @@ public class ReviewService {
         review.setCompletedAt(LocalDateTime.now());
 
         switch (normalizedDecision) {
-            case "APPROVE" -> c.setStatus(CaseStatus.DONE);
+            case "APPROVE" -> {
+                // 条件更新：并发下仅一个复核成功，其余返回 0
+                if (caseRepository.completeReview(caseId, CaseStatus.DONE, CaseStatus.HOLD, null, null) == 0) {
+                    throw new IllegalStateException("工单已被其他复核员处理");
+                }
+            }
             case "REJECT" -> {
-                c.setStatus(CaseStatus.FAILED);
-                c.setFailureCode("REVIEW_REJECTED");
-                c.setFailureMessage("人工复核驳回，需补充尽调：" + (comment == null ? "" : comment));
+                if (caseRepository.completeReview(caseId, CaseStatus.FAILED, CaseStatus.HOLD,
+                        "REVIEW_REJECTED", "人工复核驳回，需补充尽调：" + (comment == null ? "" : comment)) == 0) {
+                    throw new IllegalStateException("工单已被其他复核员处理");
+                }
             }
             default -> {
-                // ESCALATE：保持 HOLD，不改变
+                // ESCALATE：保持 HOLD，不改变终态
             }
         }
-        caseRepository.save(c);
         return reviewRepository.save(review);
     }
 
