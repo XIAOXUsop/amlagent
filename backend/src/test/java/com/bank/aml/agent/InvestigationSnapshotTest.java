@@ -9,6 +9,7 @@ import com.bank.aml.domain.ShareholdingRecord;
 import com.bank.aml.domain.TransactionRecord;
 import com.bank.aml.rag.LegalDocumentSearcher;
 import com.bank.aml.risk.RiskFactAssembler;
+import com.bank.aml.service.LegalKeywordResolver;
 import com.bank.aml.tools.SnapshotToolSuite;
 import org.junit.jupiter.api.Test;
 
@@ -45,15 +46,14 @@ class InvestigationSnapshotTest {
     @Test
     void snapshotFreezesFactsWhenDataSourceChanges() {
         CustomerDataPort dataSource = stubDataSource();
-        RiskFactAssembler assembler = new RiskFactAssembler(dataSource);
-        InvestigationSnapshotFactory factory = new InvestigationSnapshotFactory(dataSource, assembler, "v1");
+        InvestigationSnapshotFactory factory = factory(dataSource);
 
-        InvestigationSnapshot snapshot = factory.create(1L, 1, CUSTOMER, "低风险");
+        InvestigationSnapshot snapshot = factory.create(1L, 1, CUSTOMER, "低风险", "常规监测");
 
         // 快照创建后，数据源发生变化
         when(dataSource.transactionsOf("C001")).thenReturn(List.of(TXN_B));
 
-        SnapshotToolSuite tools = new SnapshotToolSuite(snapshot, mock(LegalDocumentSearcher.class));
+        SnapshotToolSuite tools = new SnapshotToolSuite(snapshot);
         String result = tools.transactionProfile("C001");
 
         // 工具仍返回快照旧值（1 笔，而非变化后的 1 笔大额）
@@ -66,11 +66,10 @@ class InvestigationSnapshotTest {
     @Test
     void snapshotToolsDoNotAccessDataSourceAfterFreeze() {
         CustomerDataPort dataSource = stubDataSource();
-        RiskFactAssembler assembler = new RiskFactAssembler(dataSource);
-        InvestigationSnapshotFactory factory = new InvestigationSnapshotFactory(dataSource, assembler, "v1");
-        InvestigationSnapshot snapshot = factory.create(1L, 1, CUSTOMER, "低风险");
+        InvestigationSnapshotFactory factory = factory(dataSource);
+        InvestigationSnapshot snapshot = factory.create(1L, 1, CUSTOMER, "低风险", "常规监测");
 
-        SnapshotToolSuite tools = new SnapshotToolSuite(snapshot, mock(LegalDocumentSearcher.class));
+        SnapshotToolSuite tools = new SnapshotToolSuite(snapshot);
         tools.corporateProfile("C001");
         tools.checkSanctions("张伟", "110101198506123456");
 
@@ -82,11 +81,10 @@ class InvestigationSnapshotTest {
     @Test
     void sameFactsProduceStableDigest() {
         CustomerDataPort dataSource = stubDataSource();
-        RiskFactAssembler assembler = new RiskFactAssembler(dataSource);
-        InvestigationSnapshotFactory factory = new InvestigationSnapshotFactory(dataSource, assembler, "v1");
+        InvestigationSnapshotFactory factory = factory(dataSource);
 
-        InvestigationSnapshot a = factory.create(1L, 1, CUSTOMER, "低风险");
-        InvestigationSnapshot b = factory.create(1L, 1, CUSTOMER, "低风险");
+        InvestigationSnapshot a = factory.create(1L, 1, CUSTOMER, "低风险", "常规监测");
+        InvestigationSnapshot b = factory.create(1L, 1, CUSTOMER, "低风险", "常规监测");
 
         assertThat(a.sourceDigest()).isEqualTo(b.sourceDigest());
         assertThat(a.riskFacts()).isEqualTo(b.riskFacts());
@@ -95,15 +93,19 @@ class InvestigationSnapshotTest {
     @Test
     void differentExecutionVersionProducesDifferentSnapshotId() {
         CustomerDataPort dataSource = stubDataSource();
-        RiskFactAssembler assembler = new RiskFactAssembler(dataSource);
-        InvestigationSnapshotFactory factory = new InvestigationSnapshotFactory(dataSource, assembler, "v1");
+        InvestigationSnapshotFactory factory = factory(dataSource);
 
-        InvestigationSnapshot v1 = factory.create(1L, 1, CUSTOMER, "低风险");
-        InvestigationSnapshot v2 = factory.create(1L, 2, CUSTOMER, "低风险");
+        InvestigationSnapshot v1 = factory.create(1L, 1, CUSTOMER, "低风险", "常规监测");
+        InvestigationSnapshot v2 = factory.create(1L, 2, CUSTOMER, "低风险", "常规监测");
 
         assertThat(v1.snapshotId()).isNotEqualTo(v2.snapshotId());
         assertThat(v1.executionVersion()).isEqualTo(1);
         assertThat(v2.executionVersion()).isEqualTo(2);
+    }
+
+    private InvestigationSnapshotFactory factory(CustomerDataPort dataSource) {
+        return new InvestigationSnapshotFactory(dataSource, new RiskFactAssembler(dataSource),
+                mock(LegalDocumentSearcher.class), new LegalKeywordResolver(), "v1");
     }
 
     private CustomerDataPort stubDataSource() {

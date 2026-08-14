@@ -5,8 +5,10 @@ import com.bank.aml.common.exception.WorkflowStateConflictException;
 import com.bank.aml.datasource.entity.CaseEntity;
 import com.bank.aml.datasource.repository.CaseRepository;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 
 import java.time.LocalDateTime;
+import java.util.Collection;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -117,5 +119,47 @@ class WorkflowCommandServiceTest {
         assertThatThrownBy(() -> svc.replayDead(1L))
                 .isInstanceOf(WorkflowStateConflictException.class);
         verify(outbox, never()).record(anyLong(), anyString(), anyInt());
+    }
+
+    @Test
+    void retryManualResetsAndEnqueuesWhenFailed() {
+        CaseRepository repo = mock(CaseRepository.class);
+        OutboxService outbox = mock(OutboxService.class);
+        WorkflowCommandService svc = new WorkflowCommandService(repo, outbox);
+
+        when(repo.retryFailed(eq(1L), eq(CaseStatus.PENDING), eq(CaseStatus.FAILED))).thenReturn(1);
+        CaseEntity failed = new CaseEntity();
+        failed.setStatus(CaseStatus.FAILED);
+        failed.setExecutionVersion(2);
+        when(repo.findById(1L)).thenReturn(Optional.of(failed));
+
+        CaseEntity result = svc.retryManual(1L);
+
+        assertThat(result).isNotNull();
+        // 人工重试使用 CASE_MANUAL_RETRIED 事件类型
+        verify(outbox).record(1L, WorkflowEventType.CASE_MANUAL_RETRIED.name(), 2);
+    }
+
+    @Test
+    void replayDeadRestrictsToDeadLetterFailureCodes() {
+        CaseRepository repo = mock(CaseRepository.class);
+        OutboxService outbox = mock(OutboxService.class);
+        WorkflowCommandService svc = new WorkflowCommandService(repo, outbox);
+
+        when(repo.replayDeadLetter(eq(1L), eq(CaseStatus.PENDING), eq(CaseStatus.FAILED), anyCollection()))
+                .thenReturn(1);
+        CaseEntity dead = new CaseEntity();
+        dead.setStatus(CaseStatus.FAILED);
+        dead.setFailureCode("RETRY_EXHAUSTED");
+        dead.setExecutionVersion(3);
+        when(repo.findById(1L)).thenReturn(Optional.of(dead));
+
+        svc.replayDead(1L);
+
+        // 验证死信重放只允许 RETRY_EXHAUSTED / CLAIM_EXHAUSTED 两种 failureCode
+        ArgumentCaptor<Collection<String>> captor = ArgumentCaptor.forClass(Collection.class);
+        verify(repo).replayDeadLetter(eq(1L), eq(CaseStatus.PENDING), eq(CaseStatus.FAILED), captor.capture());
+        assertThat(captor.getValue()).containsExactlyInAnyOrder("RETRY_EXHAUSTED", "CLAIM_EXHAUSTED");
+        verify(outbox).record(1L, WorkflowEventType.CASE_DEAD_REPLAYED.name(), 3);
     }
 }

@@ -12,6 +12,8 @@ import com.bank.aml.common.exception.NonRetryableWorkflowException;
 import com.bank.aml.common.exception.RetryableWorkflowException;
 import com.bank.aml.common.exception.WorkflowStateConflictException;
 import com.bank.aml.common.fault.FaultInjector;
+import com.bank.aml.config.LlmProperties;
+import com.bank.aml.config.LlmProviderProperties;
 import com.bank.aml.cost.CostRouter;
 import com.bank.aml.security.PromptInjectionGuard;
 import com.bank.aml.datasource.entity.CaseEntity;
@@ -81,6 +83,7 @@ public class DueDiligenceService {
     private final ExecutorService summaryExecutor;
     private final ModelPurposeContext purposeContext;
     private final ToolExecutionTraceRepository toolTraceRepository;
+    private final LlmProperties llmProperties;
 
     /** 阶段耗时测量（每工单独立） */
     private final ThreadLocal<LocalDateTime> lastStageAt = new ThreadLocal<>();
@@ -100,7 +103,7 @@ public class DueDiligenceService {
                                StreamingAnalysisAgent streamingAnalysisAgent, StreamingChatModel streamingChatModel,
                                LegalKeywordResolver legalKeywordResolver, ObjectMapper objectMapper,
                                ExecutorService summaryExecutor, ModelPurposeContext purposeContext,
-                               ToolExecutionTraceRepository toolTraceRepository) {
+                               ToolExecutionTraceRepository toolTraceRepository, LlmProperties llmProperties) {
         this.caseRepository = caseRepository;
         this.caseLogRepository = caseLogRepository;
         this.caseExecutionRepository = caseExecutionRepository;
@@ -124,6 +127,7 @@ public class DueDiligenceService {
         this.summaryExecutor = summaryExecutor;
         this.purposeContext = purposeContext;
         this.toolTraceRepository = toolTraceRepository;
+        this.llmProperties = llmProperties;
     }
 
     /** 创建预警工单；autoProcess=true 时与工单同事务写入 Outbox，自动触发尽调 */
@@ -195,7 +199,7 @@ public class DueDiligenceService {
 
             CustomerProfile customer = dataSource.findCustomer(c.getCustomerId())
                     .orElseThrow(() -> new NonRetryableWorkflowException("客户不存在：" + c.getCustomerId()));
-            InvestigationSnapshot snapshot = snapshotFactory.create(c.getId(), executionVersion, customer, null);
+            InvestigationSnapshot snapshot = snapshotFactory.create(c.getId(), executionVersion, customer, null, c.getAlertRule());
             record(c, WorkflowStage.COLLECTING, "尽调快照已冻结 snapshotId=" + snapshot.snapshotId()
                     + " sourceDigest=" + snapshot.sourceDigest());
 
@@ -277,8 +281,13 @@ public class DueDiligenceService {
             c.setSummary(report.conclusion());
             c.setReportSource(reportSource);
             c.setSnapshotId(snapshot.snapshotId());
+            // 记录实际模型提供商/模型名/是否降级，避免只保存 reportSource=AGENT 无法追溯真实模型
+            LlmProviderProperties activeModel = llmProperties.active();
+            c.setModelProvider(llmProperties.getActiveProvider());
+            c.setModelName(activeModel.getModelName());
+            c.setModelFallback(activeModel.typeEnum() == LlmProperties.ProviderType.MOCK || !activeModel.hasApiKey());
             record(c, WorkflowStage.REPORTING, "尽调初审报告已生成并归档，来源=" + reportSource
-                    + "，最终评级：" + c.getRiskLevel());
+                    + "，模型=" + c.getModelProvider() + "/" + c.getModelName() + "，最终评级：" + c.getRiskLevel());
             record(c, WorkflowStage.DONE, "尽调完成。评级：" + c.getRiskLevel() + "，状态：" + c.getStatus());
 
             // 可选流式摘要：最终报告生成后异步启动，输入为脱敏后的最终报告（不含身份字段）
@@ -301,7 +310,8 @@ public class DueDiligenceService {
         // 终态原子落库：绑定 worker+executionVersion，被接管后的陈旧写入不生效（0 行更新被丢弃）
         int updated = caseRepository.finishCase(c.getId(), worker, executionVersion,
                 c.getStatus(), c.getRiskLevel(), c.getRawRiskLevel(), c.getReportJson(), c.getSummary(),
-                c.getReportSource(), c.getSnapshotId());
+                c.getReportSource(), c.getSnapshotId(),
+                c.getModelProvider(), c.getModelName(), c.isModelFallback());
         if (updated == 0) {
             log.warn("工单 {} 终态落库被丢弃（已被接管，worker/version 不匹配）", caseId);
         }
@@ -393,6 +403,9 @@ public class DueDiligenceService {
             entity.setSuccess(t.success());
             entity.setArgumentValid(t.argumentValid());
             entity.setDurationMs(t.durationMs());
+            entity.setResultDigest(t.resultDigest());
+            entity.setEvidenceIdsJson(t.evidenceIds() == null || t.evidenceIds().isEmpty()
+                    ? null : writeJson(t.evidenceIds()));
             entity.setErrorCode(t.errorCode());
             toolTraceRepository.save(entity);
         }

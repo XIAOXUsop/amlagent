@@ -4,6 +4,7 @@ import com.bank.aml.agent.AgentAssistant;
 import com.bank.aml.agent.RiskSummary;
 import com.bank.aml.config.LlmProperties;
 import jakarta.validation.constraints.NotBlank;
+import org.springframework.context.annotation.Profile;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -17,11 +18,12 @@ import java.util.Map;
 
 /**
  * Agent 基础验证接口：LLM 连通性、对话、结构化输出。
- * <p>仅限 ADMIN（会触发真实模型调用，避免任意登录用户滥用成本）。
+ * <p>仅限 ADMIN（会触发真实模型调用），且生产环境不注册（调试用途，避免成本滥用面）。
  */
 @RestController
 @RequestMapping("/api/agent")
 @PreAuthorize("hasRole('ADMIN')")
+@Profile("!prod")
 public class AgentController {
 
     private final AgentAssistant assistant;

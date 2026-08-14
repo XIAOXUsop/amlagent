@@ -49,19 +49,30 @@ public class MetricsRecorder {
         guardrailCorrectionTotal.increment();
     }
 
-    /** 模型请求数（按 purpose 区分 main_agent / summary） */
-    public void llmRequest(String purpose) {
-        registry.counter("aml_llm_request_total", "purpose", purpose).increment();
+    /** 模型请求数（按 provider/model/purpose 标签区分） */
+    public void llmRequest(ModelInvocationTags tags) {
+        registry.counter("aml_llm_request_total", "provider", tags.provider(),
+                "model", tags.model(), "purpose", tags.purpose()).increment();
     }
 
-    /** 模型 Token 数（按 purpose 区分 main_agent / summary） */
-    public void llmTokens(String purpose, long tokens) {
-        registry.counter("aml_llm_token_total", "purpose", purpose).increment(tokens);
+    /** 模型 Token 数（按 provider/model/purpose 与 input/output 类型区分） */
+    public void llmTokens(ModelInvocationTags tags, long inputTokens, long outputTokens) {
+        registry.counter("aml_llm_token_total", "provider", tags.provider(),
+                "model", tags.model(), "purpose", tags.purpose(), "type", "input").increment(inputTokens);
+        registry.counter("aml_llm_token_total", "provider", tags.provider(),
+                "model", tags.model(), "purpose", tags.purpose(), "type", "output").increment(outputTokens);
     }
 
-    /** 模型调用错误（按 purpose 区分） */
-    public void llmError(String purpose) {
-        registry.counter("aml_llm_error_total", "purpose", purpose).increment();
+    /** 模型调用错误（按 provider/model/purpose 标签区分） */
+    public void llmError(ModelInvocationTags tags) {
+        registry.counter("aml_llm_error_total", "provider", tags.provider(),
+                "model", tags.model(), "purpose", tags.purpose()).increment();
+    }
+
+    /** 模型调用延迟（按 provider/model/purpose 标签区分，Timer 提供 P50/P95） */
+    public void llmDuration(ModelInvocationTags tags, long durationMs) {
+        registry.timer("aml_llm_duration_seconds", "provider", tags.provider(),
+                "model", tags.model(), "purpose", tags.purpose()).record(Duration.ofMillis(durationMs));
     }
 
     public void ragCacheHit() {

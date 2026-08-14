@@ -1,10 +1,6 @@
 package com.bank.aml.config;
 
-import com.bank.aml.observability.ChatModelTokenListener;
-import com.bank.aml.observability.MetricsRecorder;
-import com.bank.aml.observability.ModelPurposeContext;
 import dev.langchain4j.model.openai.OpenAiChatRequestParameters;
-import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.Test;
 
 import java.util.Map;
@@ -25,8 +21,7 @@ class ChatModelConfigTest {
         properties.setActiveProvider("deepseek");
         properties.setProviders(Map.of("deepseek", provider));
 
-        var listener = new ChatModelTokenListener(new MetricsRecorder(new SimpleMeterRegistry()), new ModelPurposeContext());
-        var model = new ChatModelConfig().chatModel(properties, listener);
+        var model = new ChatModelConfig().chatModel(properties);
         var parameters = (OpenAiChatRequestParameters) model.defaultRequestParameters();
 
         assertThat(parameters.customParameters())

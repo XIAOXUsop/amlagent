@@ -20,6 +20,9 @@ public record CaseDto(
         String summary,
         String reportSource,
         String snapshotId,
+        String modelProvider,
+        String modelName,
+        boolean modelFallback,
         int executionVersion,
         int reviewRevision,
         int retryCount,
@@ -33,6 +36,7 @@ public record CaseDto(
                 e.getId(), e.getCustomerId(), e.getCustomerName(), e.getAlertRule(),
                 e.getStatus(), e.getRiskLevel(), e.getRawRiskLevel(), e.getReportJson(), e.getSummary(),
                 e.getReportSource(), e.getSnapshotId(),
+                e.getModelProvider(), e.getModelName(), e.isModelFallback(),
                 e.getExecutionVersion(), e.getReviewRevision(), e.getRetryCount(),
                 e.getFailureCode(), e.getFailureMessage(),
                 e.getCreatedAt(), e.getUpdatedAt());

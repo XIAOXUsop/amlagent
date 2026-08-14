@@ -31,7 +31,8 @@ public final class ObservedStreamingChatModel implements StreamingChatModel {
 
     @Override
     public void chat(ChatRequest request, StreamingChatResponseHandler handler) {
-        metrics.llmRequest(tags.purpose());
+        long start = System.nanoTime();
+        metrics.llmRequest(tags);
         delegate.chat(request, new StreamingChatResponseHandler() {
             @Override
             public void onPartialResponse(String partialResponse) {
@@ -41,18 +42,26 @@ public final class ObservedStreamingChatModel implements StreamingChatModel {
             @Override
             public void onCompleteResponse(ChatResponse response) {
                 var usage = response.tokenUsage();
-                if (usage != null && usage.totalTokenCount() != null) {
-                    metrics.llmTokens(tags.purpose(), usage.totalTokenCount());
+                if (usage != null) {
+                    long input = usage.inputTokenCount() == null ? 0 : usage.inputTokenCount();
+                    long output = usage.outputTokenCount() == null ? 0 : usage.outputTokenCount();
+                    metrics.llmTokens(tags, input, output);
                 }
+                metrics.llmDuration(tags, elapsedMs(start));
                 handler.onCompleteResponse(response);
             }
 
             @Override
             public void onError(Throwable error) {
-                metrics.llmError(tags.purpose());
+                metrics.llmError(tags);
                 handler.onError(error);
             }
         });
+    }
+
+    private long elapsedMs(long startNanos) {
+        long elapsed = Math.max(0L, System.nanoTime() - startNanos);
+        return elapsed == 0L ? 0L : Math.max(1L, elapsed / 1_000_000L);
     }
 
     @Override

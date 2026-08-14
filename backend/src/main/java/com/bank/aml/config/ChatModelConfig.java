@@ -1,6 +1,5 @@
 package com.bank.aml.config;
 
-import com.bank.aml.observability.ChatModelTokenListener;
 import com.bank.aml.observability.MetricsRecorder;
 import com.bank.aml.observability.ModelInvocationTags;
 import com.bank.aml.observability.ObservedChatModel;
@@ -31,7 +30,7 @@ public class ChatModelConfig {
     private static final Logger log = LoggerFactory.getLogger(ChatModelConfig.class);
 
     @Bean
-    public ChatModel chatModel(LlmProperties props, ChatModelTokenListener tokenListener) {
+    public ChatModel chatModel(LlmProperties props) {
         LlmProviderProperties active = props.active();
         String providerName = props.getActiveProvider();
 

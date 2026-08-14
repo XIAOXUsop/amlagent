@@ -62,6 +62,18 @@ public class CaseEntity {
     @Column(length = 64)
     private String snapshotId;
 
+    /** 实际模型提供商（如 deepseek/openai/mock） */
+    @Column(length = 64)
+    private String modelProvider;
+
+    /** 实际模型名 */
+    @Column(length = 64)
+    private String modelName;
+
+    /** 是否降级到 Mock/fallback */
+    @Column(nullable = false)
+    private boolean modelFallback = false;
+
     // ---- 可靠执行控制（P1）----
     /** 执行版本：每次抢占自增，用于幂等 */
     @Column(nullable = false)
@@ -195,6 +207,30 @@ public class CaseEntity {
 
     public void setSnapshotId(String snapshotId) {
         this.snapshotId = snapshotId;
+    }
+
+    public String getModelProvider() {
+        return modelProvider;
+    }
+
+    public void setModelProvider(String modelProvider) {
+        this.modelProvider = modelProvider;
+    }
+
+    public String getModelName() {
+        return modelName;
+    }
+
+    public void setModelName(String modelName) {
+        this.modelName = modelName;
+    }
+
+    public boolean isModelFallback() {
+        return modelFallback;
+    }
+
+    public void setModelFallback(boolean modelFallback) {
+        this.modelFallback = modelFallback;
     }
 
     public int getExecutionVersion() {

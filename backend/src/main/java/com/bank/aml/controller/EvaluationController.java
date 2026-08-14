@@ -1,18 +1,24 @@
 package com.bank.aml.controller;
 
+import com.bank.aml.config.LlmProperties;
+import com.bank.aml.config.LlmProviderProperties;
 import com.bank.aml.evaluation.AgentEvalDatasetLoader;
 import com.bank.aml.evaluation.AgentEvalReport;
 import com.bank.aml.evaluation.AgentEvalRunner;
+import com.bank.aml.evaluation.EvalFreezeManifest;
 import com.bank.aml.evaluation.EvalFreezeRun;
 import com.bank.aml.evaluation.EvalFreezeRunRepository;
 import com.bank.aml.evaluation.EvalReportEntity;
 import com.bank.aml.evaluation.EvalReportRepository;
 import com.bank.aml.evaluation.RagEvaluator;
 import com.bank.aml.evaluation.RuleRegressionEvaluator;
+import com.bank.aml.risk.RiskRule;
+import com.bank.aml.risk.RiskRuleRepository;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -24,6 +30,7 @@ import org.springframework.web.bind.annotation.RequestParam;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.time.Instant;
 import java.time.LocalDateTime;
 import java.util.HexFormat;
 import java.util.List;
@@ -45,19 +52,28 @@ public class EvaluationController {
     private final EvalReportRepository evalReportRepository;
     private final EvalFreezeRunRepository evalFreezeRunRepository;
     private final ObjectMapper objectMapper;
+    private final RiskRuleRepository riskRuleRepository;
+    private final LlmProperties llmProperties;
+    private final String legalIndexVersion;
 
     public EvaluationController(RagEvaluator ragEvaluator, RuleRegressionEvaluator ruleRegressionEvaluator,
                                 AgentEvalDatasetLoader agentEvalDatasetLoader,
                                 AgentEvalRunner agentEvalRunner,
                                 EvalReportRepository evalReportRepository,
                                 EvalFreezeRunRepository evalFreezeRunRepository,
-                                ObjectMapper objectMapper) {
+                                ObjectMapper objectMapper,
+                                RiskRuleRepository riskRuleRepository,
+                                LlmProperties llmProperties,
+                                @Value("${aml.rag.legal-index-version:v1}") String legalIndexVersion) {
         this.ragEvaluator = ragEvaluator;
         this.ruleRegressionEvaluator = ruleRegressionEvaluator;
         this.agentEvalDatasetLoader = agentEvalDatasetLoader;
         this.agentEvalRunner = agentEvalRunner;
         this.evalReportRepository = evalReportRepository;
         this.evalFreezeRunRepository = evalFreezeRunRepository;
+        this.riskRuleRepository = riskRuleRepository;
+        this.llmProperties = llmProperties;
+        this.legalIndexVersion = legalIndexVersion;
         this.objectMapper = objectMapper;
     }
 
@@ -106,10 +122,11 @@ public class EvaluationController {
         if (commitSha == null || commitSha.isBlank()) {
             throw new IllegalStateException("隐藏 TEST 评测需通过环境变量 BUILD_GIT_SHA 注入当前 commit SHA");
         }
-        log.info("隐藏 TEST 冻结审计：commitSha={} promptVersion={} datasetHash={}",
-                commitSha, AgentEvalRunner.PROMPT_VERSION, agentEvalDatasetLoader.datasetHash());
-        // 一次性锁：freezeId 唯一，用唯一键冲突（而非先查后插）避免并发竞态
-        String freezeId = computeFreezeId(commitSha);
+        EvalFreezeManifest manifest = buildManifest(commitSha);
+        log.info("隐藏 TEST 冻结清单：freezeId={} provider={} model={} temperature={} legalIndex={} ruleSetHash={}",
+                manifest.freezeId(), manifest.provider(), manifest.model(), manifest.temperature(),
+                manifest.legalIndexVersion(), manifest.ruleSetHash());
+        String freezeId = manifest.freezeId();
         EvalFreezeRun run = new EvalFreezeRun();
         run.setFreezeId(freezeId);
         run.setStatus("RUNNING");
@@ -140,12 +157,38 @@ public class EvaluationController {
         }
     }
 
-    /** freezeId = sha256(commitSha + promptVersion + datasetHash)，同一基线唯一 */
-    private String computeFreezeId(String commitSha) {
-        String raw = commitSha + "|" + AgentEvalRunner.PROMPT_VERSION + "|" + agentEvalDatasetLoader.datasetHash();
+    /** 构建冻结清单，freezeId = sha256(commit + dataset + prompt + rules + model + temperature + legalIndex) */
+    private EvalFreezeManifest buildManifest(String commitSha) {
+        String datasetHash = agentEvalDatasetLoader.datasetHash();
+        String ruleSetHash = computeRuleSetHash();
+        LlmProviderProperties active = llmProperties.active();
+        String provider = llmProperties.getActiveProvider();
+        String model = active.getModelName();
+        Double temperature = active.getTemperature();
+        String raw = commitSha + "|" + datasetHash + "|" + AgentEvalRunner.PROMPT_VERSION
+                + "|" + ruleSetHash + "|" + model + "|" + temperature + "|" + legalIndexVersion;
+        String freezeId = sha256(raw).substring(0, 32);
+        var summary = agentEvalDatasetLoader.summary();
+        return new EvalFreezeManifest(freezeId, commitSha, summary.datasetId(), summary.version(),
+                datasetHash, AgentEvalRunner.PROMPT_VERSION, ruleSetHash, legalIndexVersion,
+                provider, model, temperature, Instant.now());
+    }
+
+    private String computeRuleSetHash() {
+        List<RiskRule> rules = riskRuleRepository.findAll();
+        StringBuilder sb = new StringBuilder();
+        for (RiskRule r : rules) {
+            sb.append(r.getRuleCode()).append('|').append(r.getVersion()).append('|')
+                    .append(r.getConditionExpression()).append('|').append(r.getTargetRiskLevel())
+                    .append('|').append(r.getAction()).append('\n');
+        }
+        return sha256(sb.toString());
+    }
+
+    private String sha256(String raw) {
         try {
             MessageDigest digest = MessageDigest.getInstance("SHA-256");
-            return HexFormat.of().formatHex(digest.digest(raw.getBytes(StandardCharsets.UTF_8))).substring(0, 32);
+            return HexFormat.of().formatHex(digest.digest(raw.getBytes(StandardCharsets.UTF_8)));
         } catch (NoSuchAlgorithmException e) {
             throw new IllegalStateException("SHA-256 不可用", e);
         }

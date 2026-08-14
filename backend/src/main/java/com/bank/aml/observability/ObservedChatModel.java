@@ -29,18 +29,27 @@ public final class ObservedChatModel implements ChatModel {
 
     @Override
     public ChatResponse chat(ChatRequest request) {
-        metrics.llmRequest(tags.purpose());
+        long start = System.nanoTime();
+        metrics.llmRequest(tags);
         try {
             ChatResponse response = delegate.chat(request);
             var usage = response.tokenUsage();
-            if (usage != null && usage.totalTokenCount() != null) {
-                metrics.llmTokens(tags.purpose(), usage.totalTokenCount());
+            if (usage != null) {
+                long input = usage.inputTokenCount() == null ? 0 : usage.inputTokenCount();
+                long output = usage.outputTokenCount() == null ? 0 : usage.outputTokenCount();
+                metrics.llmTokens(tags, input, output);
             }
+            metrics.llmDuration(tags, elapsedMs(start));
             return response;
         } catch (Exception e) {
-            metrics.llmError(tags.purpose());
+            metrics.llmError(tags);
             throw e;
         }
+    }
+
+    private long elapsedMs(long startNanos) {
+        long elapsed = Math.max(0L, System.nanoTime() - startNanos);
+        return elapsed == 0L ? 0L : Math.max(1L, elapsed / 1_000_000L);
     }
 
     @Override

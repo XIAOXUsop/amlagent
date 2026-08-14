@@ -104,6 +104,7 @@ public interface CaseRepository extends JpaRepository<CaseEntity, Long> {
             SET c.status = :status, c.riskLevel = :riskLevel, c.rawRiskLevel = :rawRiskLevel,
                 c.reportJson = :reportJson, c.summary = :summary,
                 c.reportSource = :reportSource, c.snapshotId = :snapshotId,
+                c.modelProvider = :modelProvider, c.modelName = :modelName, c.modelFallback = :modelFallback,
                 c.failureCode = NULL, c.failureMessage = NULL,
                 c.lockedBy = NULL, c.lockedAt = NULL
             WHERE c.id = :id AND c.lockedBy = :worker AND c.executionVersion = :version
@@ -117,7 +118,10 @@ public interface CaseRepository extends JpaRepository<CaseEntity, Long> {
                    @Param("reportJson") String reportJson,
                    @Param("summary") String summary,
                    @Param("reportSource") String reportSource,
-                   @Param("snapshotId") String snapshotId);
+                   @Param("snapshotId") String snapshotId,
+                   @Param("modelProvider") String modelProvider,
+                   @Param("modelName") String modelName,
+                   @Param("modelFallback") boolean modelFallback);
 
     /** 重试到期后重新置为 PENDING（由 RetryScheduler 调用） */
     @Modifying
