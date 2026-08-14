@@ -1,18 +1,6 @@
 import axios from 'axios'
 
-const TOKEN_KEY = 'aml_token'
-
-export function getToken(): string | null {
-  return localStorage.getItem(TOKEN_KEY)
-}
-
-export function setToken(token: string): void {
-  localStorage.setItem(TOKEN_KEY, token)
-}
-
-export function clearToken(): void {
-  localStorage.removeItem(TOKEN_KEY)
-}
+// 认证使用 HttpOnly Cookie，不向 localStorage 写入长期 JWT
 
 export interface Customer {
   id: string
@@ -90,19 +78,11 @@ export interface ManualReview {
 
 export const api = axios.create({ baseURL: '/api', timeout: 120000 })
 
-api.interceptors.request.use((config) => {
-  const token = getToken()
-  if (token) {
-    config.headers.Authorization = `Bearer ${token}`
-  }
-  return config
-})
-
+// 认证走 HttpOnly Cookie（浏览器自动携带），不再手动附加 Authorization 头
 api.interceptors.response.use(
   (r) => r,
   (err) => {
     if (err.response?.status === 401) {
-      clearToken()
       window.location.href = '/'
     }
     return Promise.reject(err)
@@ -110,8 +90,17 @@ api.interceptors.response.use(
 )
 
 // ---------- 认证 ----------
-export async function login(username: string, password: string): Promise<{ token: string; username: string; role: string }> {
+export async function login(username: string, password: string): Promise<{ username: string; role: string }> {
   return (await api.post('/auth/login', { username, password })).data
+}
+
+/** 刷新后恢复登录态（未认证由后端返回 401） */
+export async function checkAuth(): Promise<{ username: string; role: string }> {
+  return (await api.get('/auth/me')).data
+}
+
+export async function logout(): Promise<void> {
+  await api.post('/auth/logout')
 }
 
 // ---------- 工单 ----------
@@ -231,6 +220,7 @@ export interface AgentEvalDatasetSummary {
   splitCounts: Record<string, number>
   scenarioCounts: Record<string, number>
   riskLevelCounts: Record<string, number>
+  datasetHash: string
 }
 
 export async function getAgentEvalStatus(): Promise<{
@@ -246,6 +236,11 @@ export async function getAgentEvalStatus(): Promise<{
 /** 仅运行 DEV 分片；后端会拒绝 Mock/fallback，并保持 TEST 标准答案冻结。 */
 export async function runAgentDevEval(): Promise<Record<string, unknown>> {
   return (await api.post('/eval/agent/dev')).data
+}
+
+/** 运行冻结的隐藏 TEST 分片（最终评测，标准答案冻结，仅 ADMIN）。 */
+export async function runAgentTestEval(): Promise<Record<string, unknown>> {
+  return (await api.post('/eval/agent/test')).data
 }
 
 export async function getAgentEvalDatasetSummary(): Promise<AgentEvalDatasetSummary> {

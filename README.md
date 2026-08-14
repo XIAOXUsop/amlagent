@@ -30,10 +30,11 @@ Prometheus/Grafana 监控与自动化测试。
 | RAG 法规检索评测（35 条） | Recall@5 **94.3%**、Top3 命中率 **94.3%**、MRR **94.3** | 从法规库自动生成的同源问题集；混合召回 + bge-reranker 精排 |
 | 检索耗时 | P95 **20ms**（rerank 前召回） | 本地环境实测 |
 | 独立 Agent 案例集 | 15 条（DEV 9 / TEST 6） | AI 辅助人工整理的合成案例，待领域专家复核 |
-| DeepSeek 首轮真实 Agent DEV 基线 | 原始风险准确率 **44.4%**；Guardrails 后 **77.8%**；最终高风险召回率 **100%** | 9 条冻结合成 DEV：7 条有效、2 条工具契约失败；2026-08-12 本地实测 |
-| 首轮工具与证据覆盖 | 必需工具召回率 **94.4%**；法规 evidenceId 召回率 **77.8%** | 失败集中在隐藏法规关键词导致的无效重试，已据此完成 v3 工具契约修复，待复跑 |
+| DeepSeek 真实 Agent DEV（v2 → v5） | 原始风险准确率 **44.4% → 100%**；Guardrails 后 **77.8% → 100%**；高风险召回率 **40% → 100%**；无效输出 **2/9 → 0/9** | 9 条冻结合成 DEV（`PENDING_DOMAIN_REVIEW`）；2026-08-12/13 本地实测 |
+| v5 工具与证据覆盖 | 必需工具召回率 **100%**；法规 evidenceId 召回率 **100%**；端到端任务通过率 **66.7%**；strictPass **0**（5 次重复调用） | 详见 `DeepSeek真实Agent评测报告-二轮对比.md` |
+| 首轮工具与证据覆盖（v2） | 必需工具召回率 **94.4%**；法规 evidenceId 召回率 **77.8%** | 失败集中在隐藏法规关键词导致的无效重试，已通过 v5 工具契约修复 |
 
-> 规则回归结果只用于验证 Guardrails 和风险规则，不代表大模型准确率。Agent 数字来自 DeepSeek 对 9 条合成 DEV 的单次基线，数据集标签仍待领域专家复核，因此不等同生产准确率。当前 RAG 指标来自同源自动生成问题集，后续将使用独立人工问题集复测。
+> 规则回归结果只用于验证 Guardrails 和风险规则，不代表大模型准确率。Agent 数字来自 DeepSeek 对 9 条合成 DEV 的迭代基线，v5 指标为调优集结果（可能过拟合），需以冻结的隐藏 TEST 分片验证泛化能力；数据集标签仍待领域专家复核（`PENDING_DOMAIN_REVIEW`），因此不等同生产准确率。当前 RAG 指标来自同源自动生成问题集，后续将使用独立人工问题集复测。
 
 运行真实 Agent DEV 评测前，请在启动后端的同一终端设置模型密钥，例如 PowerShell：
 
@@ -51,6 +52,21 @@ $env:RUN_LIVE_AGENT_EVAL = "true"
 脱敏后的 JSON 报告写入 `backend/target/agent-eval/`；不保存 API Key、客户姓名、证件号、原始工具参数或模型长文本。
 
 未配置密钥时，`POST /api/eval/agent/dev` 会返回 `INVALID_MODEL_FALLBACK`，且所有质量指标分母为 0。
+
+### 实验可复现性
+
+真实 Agent 评测结果由以下版本要素锁定，可通过 `GET /api/eval/agent/dataset` 查看数据集 SHA-256：
+
+| 要素 | 值 |
+|---|---|
+| 代码基线 | `master / 18a2bbc`（本地分支超前 origin/master 若干提交） |
+| Prompt 版本 | `aml-dd-agent-v5-manual-review-consistency` |
+| 模型 | `deepseek-v4-flash`（多提供商可切换） |
+| 数据集 | `agent-cases-v1.json`（15 条：DEV 9 / TEST 6，`PENDING_DOMAIN_REVIEW`） |
+| 数据集哈希 | 由 `AgentEvalDatasetLoader` 启动时计算（SHA-256，TEST 冻结审计） |
+| 护栏规则 | `risk_rule` 表 + `RiskRuleSeeder`（确定性 DSL） |
+
+> v5 的 100% 指标来自反复调优的 9 条 DEV，仅证明当前迭代在 DEV 上有效；需以冻结的隐藏 TEST 分片验证泛化能力，不宣称真实银行生产准确率。
 
 ## 技术栈
 
@@ -165,7 +181,7 @@ docker-compose.yml        MySQL + PostgreSQL(pgvector) + Redis
 
 ## API 概览
 
-> 除登录与监控端点外，其余接口需携带 `Authorization: Bearer <token>`；SSE 用 `?token=`。
+> 除登录与监控端点外，其余接口需认证。认证使用 HttpOnly Cookie（登录后自动携带），也支持 `Authorization: Bearer <token>`；SSE 通过 Cookie 认证，JWT 不进入 URL/localStorage。
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
@@ -183,21 +199,23 @@ docker-compose.yml        MySQL + PostgreSQL(pgvector) + Redis
 | POST | /api/eval/rag | RAG 检索评测（Recall@5/Top3/MRR/P95，ADMIN） |
 | GET | /api/eval/agent/status | 真实 Agent 评测就绪状态及数据集概览（ADMIN） |
 | POST | /api/eval/agent/dev | 运行真实模型 DEV 评测；Mock/fallback 直接标记无效（ADMIN） |
-| GET | /api/eval/agent/dataset | 独立 Agent 案例集元信息，不返回 TEST 标准答案（ADMIN） |
-| GET | /api/eval/reports?evalType=RULE_REGRESSION\|AGENT_DEV | 按类型查询历史评测报告（ADMIN） |
+| POST | /api/eval/agent/test | 运行冻结的隐藏 TEST 分片（最终评测，标准答案冻结，ADMIN） |
+| GET | /api/eval/agent/dataset | 独立 Agent 案例集元信息（含 datasetHash），不返回 TEST 标准答案（ADMIN） |
+| GET | /api/eval/reports?evalType=RULE_REGRESSION\|AGENT_DEV\|AGENT_TEST | 按类型查询历史评测报告（ADMIN） |
 | GET | /api/reviews/pending | 待复核队列（REVIEWER/ADMIN） |
 | POST | /api/reviews/{id} | 提交复核决定（APPROVE/REJECT/ESCALATE，REVIEWER/ADMIN） |
 | GET | /api/reviews/{id} | 工单复核记录 |
 | GET | /api/reviews/stats | 复核反馈统计（一致率等） |
-| GET | /api/queues/dead | 死信队列查看 |
+| GET | /api/queues/dead | 死信队列查看（ADMIN） |
+| POST | /api/queues/dead/{caseId}/replay | 死信重放（ADMIN） |
 | GET | /actuator/prometheus | Prometheus 指标（放行） |
 | GET | /swagger-ui.html | OpenAPI 文档（放行） |
-| GET | /api/cases/customers | 演示客户 |
+| GET | /api/cases/customers | 演示客户（脱敏，不含证件号） |
 | GET | /api/agent/ping | LLM 连通性验证 |
 
 ## 关键设计
 
-- **可靠异步任务**：Transactional Outbox（工单与事件同事务）→ Redis Streams 消费组 → 条件更新抢占实现业务幂等（`executionVersion`）→ 指数退避重试 → 死信队列 → Pending 超时接管（服务重启任务不丢失）。
+- **可靠异步任务**：Transactional Outbox（工单与事件同事务，`caseId:eventType:executionVersion` 幂等键防重复发布）→ Redis Streams 消费组 → 条件更新抢占（`executionVersion`）→ 版本化租约 + Worker 心跳（心跳/完成/失败均绑定 worker+version，防旧 Worker 污染新执行版本）→ 指数退避重试（RETRY_WAIT）→ 死信队列 → Pending 超时接管（服务重启任务不丢失）。重试、接管、死信重放统一走 Outbox，消除数据库提交与 Redis 投递之间的双写丢失窗口。
 - **Guardrails 配置化**：`risk_rule` 表驱动（DSL 条件表达式 + 优先级 + 生效时间），决策可解释（ruleCode / version / evidence / 动作），一级制裁命中零漏报并强制转人工。
 - **RAG 证据追溯**：法规片段带唯一 `evidenceId`，向量 + 关键词 + RRF 混合召回，报告引用可回溯到具体条款原文。
 - **召回 + 精排两步走**：混合召回 top-20 候选，本地 bge-reranker（Cross-Encoder）精排 top-3，Recall@5 由 82.9% 提升至 94.3%。
@@ -206,6 +224,8 @@ docker-compose.yml        MySQL + PostgreSQL(pgvector) + Redis
 - **真实 Agent DEV 评测**：每例动态创建独立 AiServices 与冻结工具夹具，校验客户 ID / 姓名 / 证件号及法规查询主题并记录并发调用轨迹；同时保留原始模型契约通过率与 Guardrails 后端到端任务通过率，报告风险准确率、高风险召回、人工升级、结构化代码覆盖、法规 evidenceId 引用、工具精度、禁错检测、P50/P95 与 Token。模型异常进入严格分母，Mock 或 fallback 不计质量指标；持久化副本对风险、代码、工具名使用闭集白名单并移除模型原文、身份和查询参数。
 - **DeepSeek 工具调用兼容**：V4 默认 thinking 模式要求多轮回传 `reasoning_content`；当前基线显式使用非思考模式，保证 LangChain4j 多轮工具调用稳定且温度设置有效。
 - **多数据源隔离**：MySQL 业务库（@Primary，JPA）与 PostgreSQL 向量库（pgDataSource，仅 RAG）通过显式 DataSource 分离，避免自动配置冲突。
+- **Port/Adapter 数据解耦**：领域模型（`CustomerProfile`/`TransactionRecord`/`ShareholdingRecord`/`SanctionRecord`）与数据源分离，`CustomerDataPort` 接口隔离 Mock 与真实数据源；工具/Service/Guardrails 依赖 Port 而非 Mock 实现，生产核心包不再引用 `datasource.mock` 内部类型。
+- **统一尽调快照**：`InvestigationSnapshot` 在 Agent 推理前一次性冻结风险事实（含 `snapshotId`/`asOfTime`/来源版本），Agent 推理与 Guardrails 校验共享同一份数据，避免数据源在两者之间变化导致的不一致。
 - **Mock 可插拔数据层**：`MockDataSource` 内置交易/股权/黑名单演示数据；接入真实系统时替换实现即可，工具签名不变。
 - **Mock 模型 agentic 循环**：无 API Key 时 Mock 模型模拟多轮工具调用，保证链路离线可演示。
 - **本地 embedding**：DeepSeek 无官方 embedding API，默认用 all-MiniLM-L6-v2 离线向量化，可在配置中切换中文 embedding 服务。
@@ -271,7 +291,7 @@ python benchmark/fault_demo.py
 |---|---|
 | `backend/src/main/java/` | 全部后端源码 |
 | `backend/src/main/resources/application.yml` | 主配置（API Key 为占位符，无敏感信息） |
-| `backend/src/main/resources/application-prod/` `application-test.yml` | 测试配置（无密钥） |
+| `backend/src/test/resources/application-test.yml` | 集成测试配置（无密钥） |
 | `backend/data/legal/` | 法规文档 |
 | `backend/pom.xml` `mvnw` `mvnw.cmd` `.mvn/` | 构建与 Maven Wrapper |
 | `backend/src/test/` | 测试代码 |

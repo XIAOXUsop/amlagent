@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import { ElMessage } from 'element-plus'
-import { login, setToken } from '../api/client'
+import { login } from '../api/client'
 
 const emit = defineEmits<{ (e: 'logged-in'): void }>()
 
@@ -17,7 +17,6 @@ async function doLogin() {
   loading.value = true
   try {
     const r = await login(username.value, password.value)
-    setToken(r.token)
     ElMessage.success(`欢迎，${r.username}（${r.role}）`)
     emit('logged-in')
   } catch {

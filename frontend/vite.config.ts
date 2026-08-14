@@ -14,4 +14,15 @@ export default defineConfig({
       },
     },
   },
+  build: {
+    rollupOptions: {
+      output: {
+        // 大依赖拆独立 chunk，降低首屏主包并利用浏览器长期缓存
+        manualChunks(id: string) {
+          if (id.includes('node_modules/element-plus')) return 'element-plus'
+          if (id.includes('node_modules/vue') || id.includes('node_modules/axios')) return 'vue-vendor'
+        },
+      },
+    },
+  },
 })

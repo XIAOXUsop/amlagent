@@ -1,23 +1,40 @@
 <script setup lang="ts">
-import { defineAsyncComponent, ref } from 'vue'
-import { clearToken, getToken } from './api/client'
+import { defineAsyncComponent, onMounted, ref } from 'vue'
+import { checkAuth, logout as apiLogout } from './api/client'
 
 const CaseDashboard = defineAsyncComponent(() => import('./views/CaseDashboard.vue'))
 const CaseDetailView = defineAsyncComponent(() => import('./views/CaseDetailView.vue'))
 const ReviewView = defineAsyncComponent(() => import('./views/ReviewView.vue'))
+const EvalDashboard = defineAsyncComponent(() => import('./views/EvalDashboard.vue'))
 const LoginView = defineAsyncComponent(() => import('./views/LoginView.vue'))
 
-const loggedIn = ref(getToken() !== null)
-const activeView = ref<'cases' | 'reviews'>('cases')
+const loggedIn = ref(false)
+const role = ref('')
+const activeView = ref<'cases' | 'reviews' | 'eval'>('cases')
 const activeCaseId = ref<number | null>(null)
+
+onMounted(async () => {
+  try {
+    const me = await checkAuth()
+    role.value = me.role
+    loggedIn.value = true
+  } catch {
+    loggedIn.value = false
+  }
+})
 
 function openCase(id: number) {
   activeCaseId.value = id
 }
 
-function logout() {
-  clearToken()
+async function logout() {
+  try {
+    await apiLogout()
+  } catch {
+    /* 忽略登出接口异常，本地直接清态 */
+  }
   loggedIn.value = false
+  role.value = ''
   activeView.value = 'cases'
   activeCaseId.value = null
 }
@@ -39,14 +56,18 @@ function logout() {
           <el-button :type="activeView === 'cases' ? 'primary' : 'default'" size="small" @click="activeView = 'cases'; activeCaseId = null">
             工单中心
           </el-button>
-          <el-button :type="activeView === 'reviews' ? 'primary' : 'default'" size="small" @click="activeView = 'reviews'; activeCaseId = null">
+          <el-button v-if="role === 'REVIEWER' || role === 'ADMIN'" :type="activeView === 'reviews' ? 'primary' : 'default'" size="small" @click="activeView = 'reviews'; activeCaseId = null">
             人工复核
+          </el-button>
+          <el-button v-if="role === 'ADMIN'" :type="activeView === 'eval' ? 'primary' : 'default'" size="small" @click="activeView = 'eval'; activeCaseId = null">
+            评测中心
           </el-button>
           <el-button size="small" @click="logout">退出</el-button>
         </div>
       </header>
       <main class="content">
         <CaseDetailView v-if="activeCaseId !== null" :case-id="activeCaseId" @back="activeCaseId = null" />
+        <EvalDashboard v-else-if="activeView === 'eval'" />
         <ReviewView v-else-if="activeView === 'reviews'" @open-case="openCase" />
         <CaseDashboard v-else @open-case="openCase" />
       </main>

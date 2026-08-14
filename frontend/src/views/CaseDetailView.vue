@@ -205,8 +205,9 @@ function legalBody(text: string): string {
     </div>
 
     <div v-if="streamingText" class="card">
-      <h3 class="card-title">AI 风险分析（实时流式）</h3>
+      <h3 class="card-title">可选 AI 分析摘要</h3>
       <div class="streaming-text">{{ streamingText }}<span class="cursor">▌</span></div>
+      <div class="streaming-hint">此为独立生成的分析摘要，非主 Agent 内部推理过程。</div>
     </div>
 
     <div v-if="report" class="card">
@@ -434,6 +435,12 @@ function legalBody(text: string): string {
   font-size: 14px;
   white-space: pre-wrap;
   word-break: break-all;
+}
+
+.streaming-hint {
+  margin-top: 10px;
+  color: #909399;
+  font-size: 12px;
 }
 
 .cursor {
