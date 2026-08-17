@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { createCase, listCases, listCustomers, processCase, type CaseItem, type Customer } from '../api/client'
+import { Plus, Refresh, Search } from '@element-plus/icons-vue'
 
 const emit = defineEmits<{ (e: 'open-case', id: number): void }>()
 
@@ -14,19 +15,31 @@ const page = ref(0)
 const total = ref(0)
 const pageSize = 10
 
-const statusMeta: Record<string, { text: string; type: 'info' | 'warning' | 'success' | 'danger' }> = {
-  PENDING: { text: '待处理', type: 'info' },
-  RUNNING: { text: '执行中', type: 'warning' },
-  DONE: { text: '已完成', type: 'success' },
-  HOLD: { text: '转人工', type: 'danger' },
-  FAILED: { text: '失败', type: 'danger' },
+const statusMeta: Record<string, { text: string; cls: string; dot: string }> = {
+  PENDING: { text: '待处理', cls: 'st-pending', dot: '#64748b' },
+  RUNNING: { text: '执行中', cls: 'st-running', dot: '#e0a23a' },
+  DONE: { text: '已完成', cls: 'st-done', dot: '#2fa37f' },
+  HOLD: { text: '转人工', cls: 'st-hold', dot: '#c43d4b' },
+  FAILED: { text: '失败', cls: 'st-failed', dot: '#c43d4b' },
 }
 
-const riskMeta: Record<string, { text: string; type: 'success' | 'warning' | 'danger' }> = {
-  低风险: { text: '低风险', type: 'success' },
-  中风险: { text: '中风险', type: 'warning' },
-  高风险: { text: '高风险', type: 'danger' },
+const riskMeta: Record<string, { text: string; cls: string }> = {
+  低风险: { text: '低风险', cls: 'rk-low' },
+  中风险: { text: '中风险', cls: 'rk-mid' },
+  高风险: { text: '高风险', cls: 'rk-high' },
 }
+
+// 态势概览（基于当前页数据；总数来自分页 total）
+const overview = computed(() => {
+  const c = cases.value
+  return {
+    total: total.value,
+    pending: c.filter((x) => x.status === 'PENDING').length,
+    running: c.filter((x) => x.status === 'RUNNING').length,
+    hold: c.filter((x) => x.status === 'HOLD').length,
+    done: c.filter((x) => x.status === 'DONE').length,
+  }
+})
 
 onMounted(async () => {
   await refresh()
@@ -68,7 +81,7 @@ async function handleProcess(row: CaseItem) {
   try {
     await processCase(row.id)
     emit('open-case', row.id)
-  } catch (e: unknown) {
+  } catch {
     ElMessage.error('触发尽调失败')
   } finally {
     processingId.value = null
@@ -78,46 +91,101 @@ async function handleProcess(row: CaseItem) {
 function fmtTime(s: string): string {
   return s ? s.replace('T', ' ').slice(0, 19) : '-'
 }
+
+function srcTag(row: CaseItem) {
+  if (!row.reportSource) return null
+  return row.reportSource === 'AGENT' ? 'AGENT' : '规则降级'
+}
 </script>
 
 <template>
-  <div>
-    <div class="card">
-      <h3 class="card-title">新建预警工单</h3>
-      <div class="create-bar">
-        <el-select v-model="selectedCustomer" placeholder="选择客户" style="width: 200px">
-          <el-option v-for="c in customers" :key="c.id" :label="`${c.name}（${c.id}）`" :value="c.id" />
-        </el-select>
-        <el-input v-model="alertRule" placeholder="预警规则描述" style="flex: 1" />
-        <el-button type="primary" :loading="loading" @click="handleCreate">创建并尽调</el-button>
+  <div class="dashboard">
+    <!-- 态势概览 -->
+    <div class="overview card">
+      <div class="ov-total">
+        <span class="ov-label">工单总数</span>
+        <b class="mono-num">{{ overview.total }}</b>
+        <span class="ov-sub">含历史工单</span>
+      </div>
+      <div class="ov-grid">
+        <div class="ov-cell">
+          <i class="dot" style="background: #64748b"></i>
+          <div><b class="mono-num">{{ overview.pending }}</b><span>待处理</span></div>
+        </div>
+        <div class="ov-cell">
+          <i class="dot pulse" style="background: #e0a23a"></i>
+          <div><b class="mono-num">{{ overview.running }}</b><span>执行中</span></div>
+        </div>
+        <div class="ov-cell">
+          <i class="dot" style="background: #c43d4b"></i>
+          <div><b class="mono-num">{{ overview.hold }}</b><span>转人工</span></div>
+        </div>
+        <div class="ov-cell">
+          <i class="dot" style="background: #2fa37f"></i>
+          <div><b class="mono-num">{{ overview.done }}</b><span>已完成</span></div>
+        </div>
       </div>
     </div>
 
+    <!-- 新建预警工单 -->
+    <div class="card">
+      <h3 class="card-title">新建预警工单</h3>
+      <div class="create-bar">
+        <el-select v-model="selectedCustomer" placeholder="选择客户" style="width: 220px">
+          <el-option v-for="c in customers" :key="c.id" :label="`${c.name}（${c.id}）`" :value="c.id" />
+        </el-select>
+        <el-input v-model="alertRule" placeholder="预警规则描述" style="flex: 1" />
+        <el-button type="primary" :loading="loading" @click="handleCreate">
+          <el-icon><Plus /></el-icon>
+          <span>创建并尽调</span>
+        </el-button>
+      </div>
+    </div>
+
+    <!-- 工单列表 -->
     <div class="card">
       <h3 class="card-title">预警工单列表</h3>
       <el-table :data="cases" stripe style="width: 100%">
-        <el-table-column prop="id" label="工单号" width="80" />
-        <el-table-column prop="customerName" label="客户" width="110">
-          <template #default="{ row }">{{ row.customerName }}（{{ row.customerId }}）</template>
+        <el-table-column label="工单号" width="88">
+          <template #default="{ row }">
+            <span class="mono-num case-id">#{{ row.id }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="客户" width="130">
+          <template #default="{ row }">{{ row.customerName }}<span class="cid">{{ row.customerId }}</span></template>
         </el-table-column>
         <el-table-column prop="alertRule" label="预警规则" min-width="200" show-overflow-tooltip />
-        <el-table-column label="状态" width="100">
+        <el-table-column label="状态" width="96">
           <template #default="{ row }">
-            <el-tag :type="statusMeta[row.status]?.type ?? 'info'">{{ statusMeta[row.status]?.text ?? row.status }}</el-tag>
+            <span class="st" :class="statusMeta[row.status]?.cls">
+              <i class="dot" :style="{ background: statusMeta[row.status]?.dot }"></i>
+              {{ statusMeta[row.status]?.text ?? row.status }}
+            </span>
           </template>
         </el-table-column>
-        <el-table-column label="风险评级" width="110">
+        <el-table-column label="风险评级" width="96">
           <template #default="{ row }">
-            <el-tag v-if="row.riskLevel" :type="riskMeta[row.riskLevel]?.type ?? 'info'">{{ row.riskLevel }}</el-tag>
-            <span v-else>-</span>
+            <span v-if="row.riskLevel" class="rk" :class="riskMeta[row.riskLevel]?.cls">{{ row.riskLevel }}</span>
+            <span v-else class="rk-none">—</span>
           </template>
         </el-table-column>
-        <el-table-column label="创建时间" width="170">
-          <template #default="{ row }">{{ fmtTime(row.createdAt) }}</template>
-        </el-table-column>
-        <el-table-column label="操作" width="180" fixed="right">
+        <el-table-column label="来源" width="92">
           <template #default="{ row }">
-            <el-button size="small" @click="emit('open-case', row.id)">查看</el-button>
+            <span v-if="srcTag(row as CaseItem)" class="src">{{ srcTag(row as CaseItem) }}</span>
+            <span v-else class="rk-none">—</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="创建时间" width="168">
+          <template #default="{ row }">
+            <span class="mono-num time">{{ fmtTime(row.createdAt) }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="操作" width="170" fixed="right">
+          <template #default="{ row }">
+            <el-button size="small" @click="emit('open-case', row.id)">
+              <el-icon><Search /></el-icon>
+              <span>查看</span>
+            </el-button>
             <el-button
               v-if="row.status === 'PENDING' || row.status === 'FAILED'"
               size="small"
@@ -125,12 +193,13 @@ function fmtTime(s: string): string {
               :loading="processingId === row.id"
               @click="handleProcess(row as CaseItem)"
             >
-              处理
+              <el-icon v-if="processingId !== row.id"><Refresh /></el-icon>
+              <span>{{ processingId === row.id ? '处理中' : '处理' }}</span>
             </el-button>
           </template>
         </el-table-column>
       </el-table>
-      <div style="display: flex; justify-content: flex-end; margin-top: 12px">
+      <div class="pager">
         <el-pagination
           layout="total, prev, pager, next"
           :total="total"
@@ -143,8 +212,214 @@ function fmtTime(s: string): string {
 </template>
 
 <style scoped>
+.dashboard {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+/* 态势概览 */
+.overview {
+  display: flex;
+  align-items: stretch;
+  gap: 28px;
+}
+
+.ov-total {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  padding-right: 28px;
+  border-right: 1px solid var(--line);
+  min-width: 150px;
+}
+
+.ov-label {
+  font-size: 12px;
+  color: var(--text-dim);
+  letter-spacing: 0.05em;
+}
+
+.ov-total b {
+  font-size: 38px;
+  font-weight: 650;
+  color: var(--gold);
+  line-height: 1.1;
+  margin: 4px 0;
+}
+
+.ov-sub {
+  font-size: 11px;
+  color: var(--text-faint);
+}
+
+.ov-grid {
+  flex: 1;
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 14px;
+}
+
+.ov-cell {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px;
+  background: rgba(11, 18, 32, 0.42);
+  border: 1px solid var(--line-faint);
+  border-radius: 8px;
+}
+
+.ov-cell .dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.ov-cell .dot.pulse {
+  animation: pulse 1.6s ease-in-out infinite;
+}
+
+.ov-cell div {
+  display: flex;
+  flex-direction: column;
+}
+
+.ov-cell b {
+  font-size: 22px;
+  font-weight: 650;
+  color: var(--text);
+}
+
+.ov-cell span {
+  font-size: 11px;
+  color: var(--text-faint);
+  letter-spacing: 0.04em;
+}
+
+@keyframes pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(224, 162, 58, 0.35); }
+  50% { box-shadow: 0 0 0 6px rgba(224, 162, 58, 0); }
+}
+
+/* 新建 */
 .create-bar {
   display: flex;
   gap: 12px;
+}
+
+/* 表格 */
+.case-id {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.cid {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-faint);
+  margin-left: 6px;
+}
+
+.st {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 550;
+  padding: 3px 10px;
+  border-radius: 4px;
+  border: 1px solid var(--line-faint);
+}
+
+.st .dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+}
+
+.st-running {
+  color: #e0a23a;
+  border-color: rgba(224, 162, 58, 0.3);
+  background: rgba(224, 162, 58, 0.08);
+}
+.st-hold {
+  color: #c43d4b;
+  border-color: rgba(196, 61, 75, 0.3);
+  background: rgba(196, 61, 75, 0.08);
+}
+.st-done {
+  color: #2fa37f;
+  border-color: rgba(47, 163, 127, 0.3);
+  background: rgba(47, 163, 127, 0.08);
+}
+.st-pending,
+.st-failed {
+  color: var(--text-dim);
+}
+
+.rk {
+  font-size: 12px;
+  font-weight: 600;
+  padding: 3px 10px;
+  border-radius: 4px;
+}
+.rk-high {
+  color: #c43d4b;
+  background: rgba(196, 61, 75, 0.12);
+  border: 1px solid rgba(196, 61, 75, 0.32);
+}
+.rk-mid {
+  color: #e0a23a;
+  background: rgba(224, 162, 58, 0.12);
+  border: 1px solid rgba(224, 162, 58, 0.32);
+}
+.rk-low {
+  color: #2fa37f;
+  background: rgba(47, 163, 127, 0.12);
+  border: 1px solid rgba(47, 163, 127, 0.32);
+}
+.rk-none {
+  color: var(--text-faint);
+}
+
+.src {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--gold);
+  background: rgba(201, 169, 97, 0.1);
+  border: 1px solid var(--line);
+  padding: 2px 8px;
+  border-radius: 3px;
+}
+
+.time {
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.pager {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 14px;
+}
+
+@media (max-width: 860px) {
+  .overview {
+    flex-direction: column;
+    gap: 16px;
+  }
+  .ov-total {
+    border-right: none;
+    border-bottom: 1px solid var(--line);
+    padding: 0 0 14px;
+  }
+  .ov-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  .create-bar {
+    flex-direction: column;
+  }
 }
 </style>

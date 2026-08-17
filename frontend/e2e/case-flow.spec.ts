@@ -6,7 +6,7 @@ test.describe('工单核心流程', () => {
     await page.fill('input[placeholder="用户名"]', 'admin')
     await page.fill('input[placeholder="密码"]', 'admin123')
     await page.getByRole('button', { name: /登\s*录/ }).click()
-    await expect(page.locator('.topbar h1')).toContainText('智能反洗钱尽调 Agent')
+    await expect(page.locator('.brand h1')).toContainText('AML')
 
     // 等待客户下拉与默认预警规则就绪后创建
     await expect(page.locator('.card-title', { hasText: '新建预警工单' })).toBeVisible()

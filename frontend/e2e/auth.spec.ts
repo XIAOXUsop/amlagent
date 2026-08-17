@@ -5,7 +5,7 @@ async function login(page: import('@playwright/test').Page, username: string, pa
   await page.fill('input[placeholder="用户名"]', username)
   await page.fill('input[placeholder="密码"]', password)
   await page.getByRole('button', { name: /登\s*录/ }).click()
-  await expect(page.locator('.topbar h1')).toContainText('智能反洗钱尽调 Agent')
+  await expect(page.locator('.brand h1')).toContainText('AML')
 }
 
 test.describe('认证与导航', () => {

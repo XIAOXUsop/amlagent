@@ -11,6 +11,7 @@ import {
   type DueDiligenceReport,
   type WorkflowEvent,
 } from '../api/client'
+import { Back, RefreshRight, VideoPlay } from '@element-plus/icons-vue'
 
 const props = defineProps<{ caseId: number }>()
 const emit = defineEmits<{ (e: 'back'): void }>()
@@ -41,26 +42,23 @@ const statusMeta: Record<string, { text: string; type: 'info' | 'warning' | 'suc
   FAILED: { text: '失败', type: 'danger' },
 }
 
-const riskMeta: Record<string, { text: string; type: 'success' | 'warning' | 'danger' }> = {
-  低风险: { text: '低风险', type: 'success' },
-  中风险: { text: '中风险', type: 'warning' },
-  高风险: { text: '高风险', type: 'danger' },
+const riskMeta: Record<string, { text: string; cls: string }> = {
+  低风险: { text: '低风险', cls: 'rk-low' },
+  中风险: { text: '中风险', cls: 'rk-mid' },
+  高风险: { text: '高风险', cls: 'rk-high' },
 }
 
 function handleEvent(ev: WorkflowEvent) {
   logs.value.push({ stage: ev.stage, content: ev.content, at: new Date().toLocaleTimeString() })
   currentKey.value = ev.stage
-  // REASONING 无独立事件：收到 REPORTING 时视为推理完成
   if (ev.stage === 'REPORTING') {
     doneKeys.value.add('REASONING')
   }
   if (ev.stage === 'DONE') {
-    // 兜底：全部点亮
     workflowStages.forEach((s) => doneKeys.value.add(s.key))
     doneKeys.value.add('REASONING')
   }
   doneKeys.value.add(ev.stage)
-  // 终态后拉取最终报告
   if (['DONE', 'HOLD', 'FAILED'].includes(ev.stage)) {
     setTimeout(refresh, 800)
   }
@@ -134,21 +132,39 @@ function legalBody(text: string): string {
   const idx = text.indexOf('】')
   return idx >= 0 ? text.slice(idx + 1) : text
 }
+
+function snapPrefix(id: string | null): string {
+  return id && id.length > 12 ? id.slice(0, 12) + '…' : (id ?? '—')
+}
 </script>
 
 <template>
-  <div v-if="caseItem">
-    <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px">
-      <el-button @click="emit('back')">返回列表</el-button>
-      <div style="display: flex; gap: 10px; align-items: center">
-        <el-button v-if="canProcess" size="small" type="primary" @click="handleProcess">处理</el-button>
-        <el-button v-if="canRetry" size="small" type="warning" @click="handleRetry">人工重试</el-button>
-        <el-tag :type="statusMeta[caseItem.status]?.type ?? 'info'" size="large">
+  <div v-if="caseItem" class="detail">
+    <div class="detail-bar">
+      <el-button size="small" @click="emit('back')">
+        <el-icon><Back /></el-icon>
+        <span>返回列表</span>
+      </el-button>
+      <div class="bar-right">
+        <el-button v-if="canProcess" size="small" type="primary" @click="handleProcess">
+          <el-icon><VideoPlay /></el-icon>
+          <span>处理</span>
+        </el-button>
+        <el-button v-if="canRetry" size="small" type="warning" @click="handleRetry">
+          <el-icon><RefreshRight /></el-icon>
+          <span>人工重试</span>
+        </el-button>
+        <el-tag
+          :type="statusMeta[caseItem.status]?.type ?? 'info'"
+          size="large"
+          effect="dark"
+          round
+        >
           {{ statusMeta[caseItem.status]?.text ?? caseItem.status }}
         </el-tag>
-        <el-tag v-if="report?.riskLevel" :type="riskMeta[report.riskLevel]?.type ?? 'info'" size="large">
+        <span v-if="report?.riskLevel" class="rk" :class="riskMeta[report.riskLevel]?.cls">
           {{ report.riskLevel }}
-        </el-tag>
+        </span>
       </div>
     </div>
 
@@ -157,19 +173,29 @@ function legalBody(text: string): string {
       <el-descriptions :column="3" border size="small">
         <el-descriptions-item label="预警规则">{{ caseItem.alertRule }}</el-descriptions-item>
         <el-descriptions-item label="模型原始评级">
-          <el-tag v-if="caseItem.rawRiskLevel" :type="riskMeta[caseItem.rawRiskLevel]?.type ?? 'info'" size="small">{{ caseItem.rawRiskLevel }}</el-tag>
-          <span v-else>-</span>
+          <span v-if="caseItem.rawRiskLevel" class="rk" :class="riskMeta[caseItem.rawRiskLevel]?.cls">{{ caseItem.rawRiskLevel }}</span>
+          <span v-else>—</span>
         </el-descriptions-item>
         <el-descriptions-item label="最终评级">
-          <el-tag v-if="caseItem.riskLevel" :type="riskMeta[caseItem.riskLevel]?.type ?? 'info'" size="small">{{ caseItem.riskLevel }}</el-tag>
-          <span v-else>-</span>
+          <span v-if="caseItem.riskLevel" class="rk" :class="riskMeta[caseItem.riskLevel]?.cls">{{ caseItem.riskLevel }}</span>
+          <span v-else>—</span>
         </el-descriptions-item>
-        <el-descriptions-item label="执行版本">{{ caseItem.executionVersion }}</el-descriptions-item>
-        <el-descriptions-item label="重试次数">{{ caseItem.retryCount }}</el-descriptions-item>
-        <el-descriptions-item v-if="caseItem.failureMessage" label="失败原因" :span="2">
+        <el-descriptions-item label="执行版本"><span class="mono-num">v{{ caseItem.executionVersion }}</span></el-descriptions-item>
+        <el-descriptions-item label="复核版本"><span class="mono-num">v{{ caseItem.reviewRevision }}</span></el-descriptions-item>
+        <el-descriptions-item label="快照 ID"><span class="mono-num snap">{{ snapPrefix(caseItem.snapshotId) }}</span></el-descriptions-item>
+        <el-descriptions-item v-if="caseItem.failureMessage" label="失败原因" :span="3">
           {{ caseItem.failureMessage }}
         </el-descriptions-item>
-        <el-descriptions-item label="创建时间">{{ caseItem.createdAt.replace('T', ' ').slice(0, 19) }}</el-descriptions-item>
+        <el-descriptions-item label="创建时间">
+          <span class="mono-num time">{{ caseItem.createdAt.replace('T', ' ').slice(0, 19) }}</span>
+        </el-descriptions-item>
+        <el-descriptions-item label="模型">
+          <span class="mono-num">{{ caseItem.modelName || '—' }}</span>
+        </el-descriptions-item>
+        <el-descriptions-item label="来源">
+          <span v-if="caseItem.reportSource" class="src">{{ caseItem.reportSource === 'AGENT' ? 'Agent 生成' : '规则降级' }}</span>
+          <span v-else>—</span>
+        </el-descriptions-item>
       </el-descriptions>
     </div>
 
@@ -193,11 +219,11 @@ function legalBody(text: string): string {
       </div>
       <el-collapse v-model="logOpen" class="log-list">
         <el-collapse-item title="阶段日志（实时）" name="log">
-          <div v-if="logs.length === 0" style="color: #909399; font-size: 13px">暂无日志</div>
+          <div v-if="logs.length === 0" class="log-empty">暂无日志</div>
           <div v-for="(l, i) in logs" :key="i" class="log-line">
             <el-tag size="small" effect="plain">{{ l.stage }}</el-tag>
             <span class="log-time">{{ l.at }}</span>
-            <span class="log-content" style="white-space: pre-wrap">{{ l.content }}</span>
+            <span class="log-content">{{ l.content }}</span>
           </div>
         </el-collapse-item>
       </el-collapse>
@@ -205,8 +231,8 @@ function legalBody(text: string): string {
 
     <div v-if="streamingText" class="card">
       <h3 class="card-title">可选 AI 分析摘要</h3>
-      <div class="streaming-text">{{ streamingText }}<span class="cursor">▌</span></div>
-      <div class="streaming-hint">此为独立生成的分析摘要，非主 Agent 内部推理过程。</div>
+      <div class="streaming-text">{{ streamingText }}<span class="cursor">▍</span></div>
+      <p class="hint">此为独立生成的分析摘要，非主 Agent 内部推理过程。</p>
     </div>
 
     <div v-if="report" class="card">
@@ -214,31 +240,36 @@ function legalBody(text: string): string {
       <div class="report">
         <div v-if="caseItem?.reportSource || caseItem?.snapshotId" class="report-row">
           <div class="report-label">执行溯源</div>
-          <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap">
-            <el-tag v-if="caseItem?.reportSource" size="small" :type="caseItem.reportSource === 'AGENT' ? 'success' : 'warning'">
-              {{ caseItem.reportSource === 'AGENT' ? 'Agent 生成' : '规则降级' }}
-            </el-tag>
-            <span v-if="caseItem?.snapshotId" style="font-size: 12px; color: #909399">快照 {{ caseItem.snapshotId }}</span>
+          <div class="trace-line">
+            <span class="src" :class="caseItem?.reportSource === 'AGENT' ? 'src-agent' : 'src-rule'">
+              {{ caseItem?.reportSource === 'AGENT' ? 'Agent 生成' : '规则降级' }}
+            </span>
+            <span v-if="caseItem?.snapshotId" class="mono-num trace-id">快照 {{ snapPrefix(caseItem.snapshotId) }}</span>
           </div>
         </div>
 
         <div class="report-row">
           <div class="report-label">风险评级</div>
-          <el-tag :type="riskMeta[report.riskLevel]?.type ?? 'info'" size="large">{{ report.riskLevel }}</el-tag>
-          <el-tag v-if="report.manualReviewRequired" type="danger" size="small" style="margin-left: 8px">需人工复核</el-tag>
+          <span class="rk" :class="riskMeta[report.riskLevel]?.cls">{{ report.riskLevel }}</span>
+          <span v-if="report.manualReviewRequired" class="need-review">需人工复核</span>
         </div>
 
         <div v-if="report.findingCodes?.length" class="report-row">
           <div class="report-label">风险发现代码</div>
-          <div style="display: flex; flex-wrap: wrap; gap: 6px">
-            <el-tag v-for="c in report.findingCodes" :key="c" size="small" type="warning">{{ c }}</el-tag>
+          <div class="code-chips">
+            <span v-for="c in report.findingCodes" :key="c" class="code-chip warn">{{ c }}</span>
           </div>
         </div>
 
         <div v-if="report.actionCodes?.length" class="report-row">
           <div class="report-label">处置代码</div>
-          <div style="display: flex; flex-wrap: wrap; gap: 6px">
-            <el-tag v-for="c in report.actionCodes" :key="c" size="small" :type="c === 'MANUAL_REVIEW' ? 'danger' : 'info'">{{ c }}</el-tag>
+          <div class="code-chips">
+            <span
+              v-for="c in report.actionCodes"
+              :key="c"
+              class="code-chip"
+              :class="c === 'MANUAL_REVIEW' ? 'danger' : 'info'"
+            >{{ c }}</span>
           </div>
         </div>
 
@@ -261,7 +292,7 @@ function legalBody(text: string): string {
 
         <div v-if="report.sanctions.length" class="report-row">
           <div class="report-label">黑名单命中</div>
-          <ul class="risk-list">
+          <ul class="risk-list sanction">
             <li v-for="(s, i) in report.sanctions" :key="i">{{ s }}</li>
           </ul>
         </div>
@@ -270,20 +301,20 @@ function legalBody(text: string): string {
           <div class="report-label">法规依据（RAG）</div>
           <el-collapse>
             <el-collapse-item v-for="(b, i) in report.legalBasis" :key="i" :title="legalTitle(b)">
-              <div style="line-height: 1.8">{{ legalBody(b) }}</div>
+              <div class="legal-body">{{ legalBody(b) }}</div>
             </el-collapse-item>
           </el-collapse>
         </div>
 
         <div class="report-row">
           <div class="report-label">结论与建议</div>
-          <div style="line-height: 1.8">{{ report.conclusion }}</div>
+          <div class="conclusion">{{ report.conclusion }}</div>
         </div>
 
         <div v-if="report.evidenceChain.length" class="report-row">
           <div class="report-label">证据链</div>
-          <div style="display: flex; flex-wrap: wrap; gap: 8px">
-            <el-tag v-for="(e, i) in report.evidenceChain" :key="i" type="info" effect="plain">{{ e }}</el-tag>
+          <div class="evidence">
+            <span v-for="(e, i) in report.evidenceChain" :key="i" class="ev-chip">{{ e }}</span>
           </div>
         </div>
       </div>
@@ -292,11 +323,57 @@ function legalBody(text: string): string {
 </template>
 
 <style scoped>
+.detail {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.detail-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 2px;
+}
+
+.bar-right {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
+.rk {
+  font-size: 12px;
+  font-weight: 600;
+  padding: 4px 12px;
+  border-radius: 20px;
+  display: inline-block;
+}
+.rk-high { color: #c43d4b; background: rgba(196, 61, 75, 0.14); border: 1px solid rgba(196, 61, 75, 0.35); }
+.rk-mid { color: #e0a23a; background: rgba(224, 162, 58, 0.14); border: 1px solid rgba(224, 162, 58, 0.35); }
+.rk-low { color: #2fa37f; background: rgba(47, 163, 127, 0.14); border: 1px solid rgba(47, 163, 127, 0.35); }
+
+.snap, .time, .mono { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+.snap { color: var(--gold); }
+.time { color: var(--text-dim); font-size: 12px; }
+
+.src {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  padding: 2px 9px;
+  border-radius: 3px;
+  border: 1px solid var(--line);
+}
+.src-agent { color: var(--gold); background: rgba(201, 169, 97, 0.1); }
+.src-rule { color: var(--risk-mid); background: rgba(224, 162, 58, 0.1); }
+
+/* 工作流 */
 .flow {
   display: flex;
   gap: 0;
   margin-bottom: 14px;
-  padding: 6px 0;
+  padding: 8px 0;
   overflow-x: auto;
 }
 
@@ -311,12 +388,12 @@ function legalBody(text: string): string {
 .node-circle {
   width: 34px;
   height: 34px;
-  margin: 0 auto 6px;
+  margin: 0 auto 8px;
   border-radius: 50%;
-  border: 2px solid #c0c4cc;
-  background: #fff;
-  color: #909399;
-  font-size: 14px;
+  border: 2px solid #2b3a57;
+  background: var(--bg-panel);
+  color: var(--text-faint);
+  font-size: 13px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -326,28 +403,33 @@ function legalBody(text: string): string {
 }
 
 .flow-node.active .node-circle {
-  border-color: #409eff;
-  color: #409eff;
-  box-shadow: 0 0 0 4px rgba(64, 158, 255, 0.15);
-  animation: pulse 1.2s infinite;
+  border-color: var(--gold);
+  color: var(--gold);
+  box-shadow: 0 0 0 4px rgba(201, 169, 97, 0.15), 0 0 16px rgba(201, 169, 97, 0.25);
+  animation: nodepulse 1.4s ease-in-out infinite;
 }
 
 .flow-node.done .node-circle {
-  border-color: #67c23a;
-  background: #67c23a;
-  color: #fff;
+  border-color: var(--risk-low);
+  background: rgba(47, 163, 127, 0.16);
+  color: var(--risk-low);
+}
+
+@keyframes nodepulse {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.08); }
 }
 
 .node-label {
   font-size: 13px;
   font-weight: 600;
-  color: #303133;
+  color: var(--text);
 }
 
 .node-desc {
   font-size: 11px;
-  color: #909399;
-  margin-top: 2px;
+  color: var(--text-faint);
+  margin-top: 3px;
   line-height: 1.4;
 }
 
@@ -357,108 +439,126 @@ function legalBody(text: string): string {
   left: 50%;
   width: 100%;
   height: 2px;
-  background: #dcdfe6;
+  background: #24314a;
   z-index: 1;
 }
+.node-link.done { background: rgba(47, 163, 127, 0.5); }
 
-.node-link.done {
-  background: #67c23a;
-}
-
-@keyframes pulse {
-  0% {
-    box-shadow: 0 0 0 0 rgba(64, 158, 255, 0.3);
-  }
-  70% {
-    box-shadow: 0 0 0 6px rgba(64, 158, 255, 0);
-  }
-  100% {
-    box-shadow: 0 0 0 0 rgba(64, 158, 255, 0);
-  }
-}
-
+/* 日志 */
+.log-empty { color: var(--text-faint); font-size: 13px; }
 .log-line {
   display: flex;
   align-items: flex-start;
-  gap: 8px;
-  padding: 6px 0;
-  border-bottom: 1px dashed #f0f0f0;
+  gap: 10px;
+  padding: 7px 0;
+  border-bottom: 1px dashed var(--line-faint);
   font-size: 13px;
 }
-
 .log-time {
-  color: #909399;
-  min-width: 76px;
+  color: var(--text-faint);
+  min-width: 78px;
+  font-family: var(--font-mono);
+  font-size: 12px;
 }
-
 .log-content {
-  color: #606266;
-  line-height: 1.6;
+  color: var(--text-dim);
+  line-height: 1.7;
 }
 
+/* 报告 */
 .report-row {
   display: flex;
-  gap: 14px;
-  padding: 10px 0;
-  border-bottom: 1px solid #f0f2f5;
+  gap: 16px;
+  padding: 11px 0;
+  border-bottom: 1px solid var(--line-faint);
 }
-
-.report-row:last-child {
-  border-bottom: none;
-}
-
+.report-row:last-child { border-bottom: none; }
 .report-label {
   width: 110px;
   flex-shrink: 0;
   font-weight: 600;
-  color: #1f4e79;
+  color: var(--gold);
   font-size: 13px;
   padding-top: 2px;
+  letter-spacing: 0.02em;
 }
+.need-review {
+  font-size: 12px;
+  color: #c43d4b;
+  font-weight: 600;
+  background: rgba(196, 61, 75, 0.12);
+  border: 1px solid rgba(196, 61, 75, 0.3);
+  border-radius: 20px;
+  padding: 2px 12px;
+}
+.trace-line { display: flex; gap: 10px; align-items: center; }
+.trace-id { font-size: 12px; color: var(--text-dim); }
+
+.code-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.code-chip {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  padding: 2px 9px;
+  border-radius: 3px;
+  border: 1px solid var(--line);
+  color: var(--text-dim);
+  background: rgba(11, 18, 32, 0.4);
+}
+.code-chip.warn { color: var(--risk-mid); border-color: rgba(224, 162, 58, 0.3); }
+.code-chip.danger { color: var(--risk-high); border-color: rgba(196, 61, 75, 0.3); }
+.code-chip.info { color: var(--risk-info); border-color: rgba(74, 158, 255, 0.3); }
 
 .risk-list {
   margin: 0;
   padding-left: 18px;
-  color: #303133;
+  color: var(--text);
   line-height: 1.9;
 }
+.risk-list.sanction li { color: var(--risk-high); }
 
 .mono {
   margin: 0;
   white-space: pre-wrap;
   word-break: break-all;
-  background: #f7f8fa;
-  border: 1px solid #ebeef5;
+  background: rgba(11, 18, 32, 0.5);
+  border: 1px solid var(--line-faint);
   border-radius: 6px;
   padding: 10px 12px;
-  font-family: Consolas, Menlo, monospace;
   font-size: 12px;
   line-height: 1.7;
-  color: #303133;
+  color: var(--text-dim);
   flex: 1;
+}
+
+.legal-body { line-height: 1.8; color: var(--text-dim); }
+.conclusion { line-height: 1.8; color: var(--text); }
+
+.evidence { display: flex; flex-wrap: wrap; gap: 8px; }
+.ev-chip {
+  font-size: 12px;
+  color: var(--text-dim);
+  background: rgba(11, 18, 32, 0.5);
+  border: 1px solid var(--line);
+  padding: 3px 10px;
+  border-radius: 4px;
 }
 
 .streaming-text {
   line-height: 1.9;
-  color: #303133;
+  color: var(--text);
   font-size: 14px;
   white-space: pre-wrap;
   word-break: break-all;
 }
-
-.streaming-hint {
-  margin-top: 10px;
-  color: #909399;
-  font-size: 12px;
-}
-
 .cursor {
-  color: #409eff;
+  color: var(--gold);
   animation: blink 1s step-end infinite;
 }
+@keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0; } }
 
-@keyframes blink {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0; }
+@media (max-width: 860px) {
+  .detail-bar { flex-wrap: wrap; }
+  .report-row { flex-direction: column; gap: 6px; }
+  .report-label { width: auto; }
 }
 </style>

@@ -23,6 +23,9 @@ export interface CaseItem {
   summary: string | null
   reportSource: string | null
   snapshotId: string | null
+  modelProvider: string | null
+  modelName: string | null
+  modelFallback: boolean
   executionVersion: number
   reviewRevision: number
   retryCount: number

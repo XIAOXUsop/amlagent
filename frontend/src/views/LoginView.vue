@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import { login, type AuthenticatedUser } from '../api/client'
+import { Lock, Odometer, User } from '@element-plus/icons-vue'
 
 const emit = defineEmits<{ (e: 'logged-in', user: AuthenticatedUser): void }>()
 
@@ -27,78 +28,160 @@ async function doLogin() {
 </script>
 
 <template>
-  <div class="login-wrap">
+  <div class="login-stage">
     <div class="login-card">
-      <div class="login-logo">AML</div>
-      <h2>智能反洗钱尽调 Agent 平台</h2>
-      <p class="login-sub">商业银行反洗钱 · 高风险客户尽调</p>
+      <div class="login-brand">
+        <div class="login-mark">
+          <el-icon :size="30"><Odometer /></el-icon>
+        </div>
+        <h1>AML <em>尽调中心</em></h1>
+        <p class="login-sub">商业银行反洗钱 · 高风险客户尽调 Agent</p>
+      </div>
+
       <el-form @submit.prevent="doLogin">
         <el-form-item>
-          <el-input v-model="username" placeholder="用户名" size="large" />
+          <el-input
+            v-model="username"
+            placeholder="用户名"
+            size="large"
+            :prefix-icon="User"
+          />
         </el-form-item>
         <el-form-item>
-          <el-input v-model="password" type="password" placeholder="密码" size="large" show-password @keyup.enter="doLogin" />
+          <el-input
+            v-model="password"
+            type="password"
+            placeholder="密码"
+            size="large"
+            show-password
+            :prefix-icon="Lock"
+            @keyup.enter="doLogin"
+          />
         </el-form-item>
-        <el-button type="primary" size="large" style="width: 100%" :loading="loading" @click="doLogin">
+        <el-button
+          type="primary"
+          size="large"
+          style="width: 100%"
+          :loading="loading"
+          @click="doLogin"
+        >
           登 录
         </el-button>
       </el-form>
+
       <div class="login-hint">
-        演示账号：admin / admin123（管理员）、reviewer / reviewer123（复核员）、analyst / analyst123（分析员）
+        <span class="hint-line">演示账号</span>
+        <code>admin / admin123</code> · <code>reviewer / reviewer123</code> · <code>analyst / analyst123</code>
+      </div>
+
+      <div class="login-foot">
+        <i class="sys-dot"></i>
+        认证 · CSRF 防护 · 审计链路在线
       </div>
     </div>
   </div>
 </template>
 
 <style scoped>
-.login-wrap {
+.login-stage {
   height: 100%;
   display: flex;
   align-items: center;
   justify-content: center;
-  background: linear-gradient(135deg, #16324a, #1f4e79);
+  padding: 20px;
+  background:
+    radial-gradient(900px 500px at 50% -10%, rgba(201, 169, 97, 0.10), transparent 60%),
+    linear-gradient(180deg, #0d1526, #0b1220);
 }
 
 .login-card {
-  width: 380px;
-  background: #fff;
-  border-radius: 12px;
-  padding: 36px 32px;
-  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.3);
+  width: 400px;
+  max-width: 100%;
+  background: linear-gradient(180deg, rgba(22, 33, 58, 0.96), rgba(17, 26, 44, 0.96));
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 34px 34px 26px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+}
+
+.login-brand {
   text-align: center;
+  margin-bottom: 26px;
 }
 
-.login-logo {
-  width: 56px;
-  height: 56px;
-  margin: 0 auto 12px;
-  border-radius: 12px;
-  background: linear-gradient(135deg, #1f4e79, #409eff);
-  color: #fff;
+.login-mark {
+  width: 64px;
+  height: 64px;
+  margin: 0 auto 14px;
+  border-radius: 14px;
+  display: grid;
+  place-items: center;
+  background: linear-gradient(145deg, #d6bc7d, #a98f49);
+  box-shadow: 0 8px 24px rgba(201, 169, 97, 0.32);
+  color: var(--text-inverse);
+}
+
+.login-card h1 {
+  margin: 0;
+  font-size: 22px;
   font-weight: 700;
-  font-size: 16px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  letter-spacing: 0.02em;
+  color: var(--text);
 }
 
-.login-card h2 {
-  margin: 0 0 4px;
-  font-size: 18px;
-  color: #303133;
+.login-card h1 em {
+  font-style: normal;
+  color: var(--gold);
 }
 
 .login-sub {
-  margin: 0 0 24px;
+  margin: 6px 0 0;
   font-size: 12px;
-  color: #909399;
+  color: var(--text-faint);
+  letter-spacing: 0.05em;
 }
 
 .login-hint {
-  margin-top: 16px;
+  margin-top: 18px;
+  padding: 12px 14px;
+  border: 1px dashed var(--line);
+  border-radius: 8px;
+  background: rgba(11, 18, 32, 0.4);
   font-size: 12px;
-  color: #909399;
-  line-height: 1.7;
-  text-align: left;
+  color: var(--text-dim);
+  line-height: 2;
+}
+
+.hint-line {
+  display: block;
+  font-size: 11px;
+  color: var(--gold);
+  letter-spacing: 0.06em;
+  margin-bottom: 2px;
+}
+
+.login-hint code {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text);
+}
+
+.login-foot {
+  margin-top: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--text-faint);
+  letter-spacing: 0.03em;
+}
+
+.sys-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--risk-low);
+  box-shadow: 0 0 0 3px rgba(47, 163, 127, 0.16);
 }
 </style>
