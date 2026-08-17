@@ -134,7 +134,7 @@ function legalBody(text: string): string {
 }
 
 function snapPrefix(id: string | null): string {
-  return id && id.length > 12 ? id.slice(0, 12) + '…' : (id ?? '—')
+  return id && id.length > 12 ? id.slice(0, 12) + '…' : (id ?? '-')
 }
 </script>
 
@@ -174,11 +174,11 @@ function snapPrefix(id: string | null): string {
         <el-descriptions-item label="预警规则">{{ caseItem.alertRule }}</el-descriptions-item>
         <el-descriptions-item label="模型原始评级">
           <span v-if="caseItem.rawRiskLevel" class="rk" :class="riskMeta[caseItem.rawRiskLevel]?.cls">{{ caseItem.rawRiskLevel }}</span>
-          <span v-else>—</span>
+          <span v-else>-</span>
         </el-descriptions-item>
         <el-descriptions-item label="最终评级">
           <span v-if="caseItem.riskLevel" class="rk" :class="riskMeta[caseItem.riskLevel]?.cls">{{ caseItem.riskLevel }}</span>
-          <span v-else>—</span>
+          <span v-else>-</span>
         </el-descriptions-item>
         <el-descriptions-item label="执行版本"><span class="mono-num">v{{ caseItem.executionVersion }}</span></el-descriptions-item>
         <el-descriptions-item label="复核版本"><span class="mono-num">v{{ caseItem.reviewRevision }}</span></el-descriptions-item>
@@ -190,11 +190,11 @@ function snapPrefix(id: string | null): string {
           <span class="mono-num time">{{ caseItem.createdAt.replace('T', ' ').slice(0, 19) }}</span>
         </el-descriptions-item>
         <el-descriptions-item label="模型">
-          <span class="mono-num">{{ caseItem.modelName || '—' }}</span>
+          <span class="mono-num">{{ caseItem.modelName || '-' }}</span>
         </el-descriptions-item>
         <el-descriptions-item label="来源">
           <span v-if="caseItem.reportSource" class="src">{{ caseItem.reportSource === 'AGENT' ? 'Agent 生成' : '规则降级' }}</span>
-          <span v-else>—</span>
+          <span v-else>-</span>
         </el-descriptions-item>
       </el-descriptions>
     </div>
@@ -347,7 +347,7 @@ function snapPrefix(id: string | null): string {
   font-size: 12px;
   font-weight: 600;
   padding: 4px 12px;
-  border-radius: 20px;
+  border-radius: 999px;
   display: inline-block;
 }
 .rk-high { color: #c43d4b; background: rgba(196, 61, 75, 0.14); border: 1px solid rgba(196, 61, 75, 0.35); }
@@ -362,7 +362,7 @@ function snapPrefix(id: string | null): string {
   font-family: var(--font-mono);
   font-size: 11px;
   padding: 2px 9px;
-  border-radius: 3px;
+  border-radius: 6px;
   border: 1px solid var(--line);
 }
 .src-agent { color: var(--gold); background: rgba(201, 169, 97, 0.1); }
@@ -488,7 +488,7 @@ function snapPrefix(id: string | null): string {
   font-weight: 600;
   background: rgba(196, 61, 75, 0.12);
   border: 1px solid rgba(196, 61, 75, 0.3);
-  border-radius: 20px;
+  border-radius: 999px;
   padding: 2px 12px;
 }
 .trace-line { display: flex; gap: 10px; align-items: center; }
@@ -499,7 +499,7 @@ function snapPrefix(id: string | null): string {
   font-family: var(--font-mono);
   font-size: 11px;
   padding: 2px 9px;
-  border-radius: 3px;
+  border-radius: 6px;
   border: 1px solid var(--line);
   color: var(--text-dim);
   background: rgba(11, 18, 32, 0.4);
@@ -540,7 +540,7 @@ function snapPrefix(id: string | null): string {
   background: rgba(11, 18, 32, 0.5);
   border: 1px solid var(--line);
   padding: 3px 10px;
-  border-radius: 4px;
+  border-radius: 6px;
 }
 
 .streaming-text {

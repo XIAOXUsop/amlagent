@@ -99,7 +99,7 @@ async function doLogin() {
   max-width: 100%;
   background: linear-gradient(180deg, rgba(22, 33, 58, 0.96), rgba(17, 26, 44, 0.96));
   border: 1px solid var(--line);
-  border-radius: 14px;
+  border-radius: 12px;
   padding: 34px 34px 26px;
   box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
 }
@@ -113,7 +113,7 @@ async function doLogin() {
   width: 64px;
   height: 64px;
   margin: 0 auto 14px;
-  border-radius: 14px;
+  border-radius: 12px;
   display: grid;
   place-items: center;
   background: linear-gradient(145deg, #d6bc7d, #a98f49);

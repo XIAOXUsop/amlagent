@@ -166,13 +166,13 @@ function srcTag(row: CaseItem) {
         <el-table-column label="风险评级" width="96">
           <template #default="{ row }">
             <span v-if="row.riskLevel" class="rk" :class="riskMeta[row.riskLevel]?.cls">{{ row.riskLevel }}</span>
-            <span v-else class="rk-none">—</span>
+            <span v-else class="rk-none">-</span>
           </template>
         </el-table-column>
         <el-table-column label="来源" width="92">
           <template #default="{ row }">
             <span v-if="srcTag(row as CaseItem)" class="src">{{ srcTag(row as CaseItem) }}</span>
-            <span v-else class="rk-none">—</span>
+            <span v-else class="rk-none">-</span>
           </template>
         </el-table-column>
         <el-table-column label="创建时间" width="168">
@@ -198,6 +198,12 @@ function srcTag(row: CaseItem) {
             </el-button>
           </template>
         </el-table-column>
+        <template #empty>
+          <div class="table-empty">
+            <span class="empty-rule">暂无工单</span>
+            <p>在左侧选择客户并创建预警工单开始尽调</p>
+          </div>
+        </template>
       </el-table>
       <div class="pager">
         <el-pagination
@@ -329,7 +335,7 @@ function srcTag(row: CaseItem) {
   font-size: 12px;
   font-weight: 550;
   padding: 3px 10px;
-  border-radius: 4px;
+  border-radius: 6px;
   border: 1px solid var(--line-faint);
 }
 
@@ -363,7 +369,7 @@ function srcTag(row: CaseItem) {
   font-size: 12px;
   font-weight: 600;
   padding: 3px 10px;
-  border-radius: 4px;
+  border-radius: 6px;
 }
 .rk-high {
   color: #c43d4b;
@@ -391,7 +397,7 @@ function srcTag(row: CaseItem) {
   background: rgba(201, 169, 97, 0.1);
   border: 1px solid var(--line);
   padding: 2px 8px;
-  border-radius: 3px;
+  border-radius: 6px;
 }
 
 .time {
@@ -403,6 +409,23 @@ function srcTag(row: CaseItem) {
   display: flex;
   justify-content: flex-end;
   margin-top: 14px;
+}
+
+.table-empty {
+  padding: 26px 0;
+  text-align: center;
+}
+.empty-rule {
+  display: inline-block;
+  font-size: 13px;
+  color: var(--text-dim);
+  border-bottom: 1px solid var(--line);
+  padding-bottom: 4px;
+}
+.table-empty p {
+  margin: 10px 0 0;
+  font-size: 12px;
+  color: var(--text-faint);
 }
 
 @media (max-width: 860px) {

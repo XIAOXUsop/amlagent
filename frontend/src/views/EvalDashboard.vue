@@ -35,7 +35,7 @@ async function runDev() {
 }
 
 function rate(v: any): string {
-  if (!v || v.value == null) return '—'
+  if (!v || v.value == null) return '-'
   return `${(v.value * 100).toFixed(1)}%`
 }
 
@@ -160,7 +160,7 @@ const baseline = [
   background: rgba(11, 18, 32, 0.5);
   border: 1px solid var(--line-faint);
   padding: 4px 8px;
-  border-radius: 4px;
+  border-radius: 6px;
 }
 
 .load-txt { color: var(--text-faint); font-size: 13px; }
@@ -213,7 +213,7 @@ const baseline = [
   color: var(--gold);
   background: rgba(11, 18, 32, 0.5);
   padding: 2px 6px;
-  border-radius: 3px;
+  border-radius: 6px;
 }
 
 @media (max-width: 900px) {

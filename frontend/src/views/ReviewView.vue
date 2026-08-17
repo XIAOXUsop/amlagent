@@ -241,7 +241,7 @@ async function doSubmit() {
 .case-id { color: var(--text); font-weight: 600; }
 .cid { font-family: var(--font-mono); font-size: 11px; color: var(--text-faint); margin-left: 6px; }
 
-.rk { font-size: 12px; font-weight: 600; padding: 3px 10px; border-radius: 4px; }
+.rk { font-size: 12px; font-weight: 600; padding: 3px 10px; border-radius: 6px; }
 .rk-high { color: #c43d4b; background: rgba(196, 61, 75, 0.12); border: 1px solid rgba(196, 61, 75, 0.32); }
 .rk-mid { color: #e0a23a; background: rgba(224, 162, 58, 0.12); border: 1px solid rgba(224, 162, 58, 0.32); }
 .rk-low { color: #2fa37f; background: rgba(47, 163, 127, 0.12); border: 1px solid rgba(47, 163, 127, 0.32); }
@@ -253,7 +253,7 @@ async function doSubmit() {
   background: rgba(196, 61, 75, 0.1);
   border: 1px solid rgba(196, 61, 75, 0.3);
   padding: 3px 10px;
-  border-radius: 4px;
+  border-radius: 6px;
 }
 
 .empty-mark {

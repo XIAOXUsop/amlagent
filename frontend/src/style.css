@@ -61,8 +61,8 @@
   --el-text-color-primary: #e8ecf4;
   --el-text-color-regular: #c7d0dc;
   --el-text-color-secondary: #94a3b8;
-  --el-text-color-placeholder: #64748b;
-  --el-text-color-disabled: #4a5568;
+  --el-text-color-placeholder: #7c8ca5;
+  --el-text-color-disabled: #56677f;
 
   --el-border-color: rgba(201, 169, 97, 0.28);
   --el-border-color-light: rgba(201, 169, 97, 0.20);
@@ -83,8 +83,8 @@
   --el-box-shadow-light: 0 4px 16px rgba(0, 0, 0, 0.32);
 
   --el-border-radius-base: 6px;
-  --el-border-radius-small: 4px;
-  --el-border-radius-round: 20px;
+  --el-border-radius-small: 6px;
+  --el-border-radius-round: 999px;
 }
 
 * {
@@ -179,7 +179,7 @@ code,
   width: 40px;
   height: 40px;
   flex-shrink: 0;
-  border-radius: 9px;
+  border-radius: 8px;
   display: grid;
   place-items: center;
   background: linear-gradient(145deg, #d6bc7d, #a98f49);
@@ -334,7 +334,7 @@ code,
 }
 
 .el-tag {
-  border-radius: 4px;
+  border-radius: 6px;
   font-weight: 600;
   --el-tag-border-color: var(--line);
   --el-tag-bg-color: rgba(201, 169, 97, 0.10);
@@ -415,7 +415,7 @@ code,
   --el-alert-bg-color: rgba(224, 162, 58, 0.12);
   --el-alert-border-color: rgba(224, 162, 58, 0.3);
   --el-alert-text-color: var(--text);
-  border-radius: 8px;
+  border-radius: 10px;
 }
 
 .el-empty__description p {
@@ -457,4 +457,16 @@ code,
 .el-popper.is-light,
 .el-dropdown__popper.el-popper {
   border-color: var(--line);
+}
+
+/* ---- 减弱动效：尊重系统级动画偏好 ---- */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }

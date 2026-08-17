@@ -153,7 +153,7 @@ const roleLabel = computed(() => {
   color: var(--gold);
   background: rgba(201, 169, 97, 0.14);
   border: 1px solid var(--line);
-  border-radius: 4px;
+  border-radius: 6px;
   padding: 2px 8px;
   letter-spacing: 0.04em;
 }
