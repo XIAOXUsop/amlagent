@@ -45,6 +45,7 @@ async function doLogin() {
             placeholder="用户名"
             size="large"
             :prefix-icon="User"
+            @input="username = username.replace(/\s+/g, '')"
           />
         </el-form-item>
         <el-form-item>
@@ -55,6 +56,7 @@ async function doLogin() {
             size="large"
             show-password
             :prefix-icon="Lock"
+            @input="password = password.replace(/\s+/g, '')"
             @keyup.enter="doLogin"
           />
         </el-form-item>
