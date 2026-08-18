@@ -105,6 +105,7 @@ public class ChatModelConfig {
                 .apiKey(active.getApiKey())
                 .modelName(active.getModelName())
                 .temperature(active.getTemperature())
+                // 流式模型设置超时防止挂起（当前 LangChain4j 流式 builder 不支持 maxRetries）
                 .timeout(active.timeout());
         if (active.getBaseUrl() != null && !active.getBaseUrl().isBlank()) {
             b.baseUrl(active.getBaseUrl());

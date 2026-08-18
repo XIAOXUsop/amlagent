@@ -7,6 +7,11 @@ spring:
     password: ${MYSQL_PASSWORD:aml123456}
     hikari:
       maximum-pool-size: 10
+      minimum-idle: 5
+      connection-timeout: 3000
+      validation-timeout: 3000
+      idle-timeout: 600000
+      max-lifetime: 1800000
   jpa:
     hibernate:
       ddl-auto: update
@@ -14,6 +19,11 @@ spring:
     properties:
       hibernate:
         dialect: org.hibernate.dialect.MySQLDialect
+        jdbc:
+          batch_size: 20
+          batch_versioned_data: true
+        order_inserts: true
+        order_updates: true
   flyway:
     # 开发默认禁用（用 ddl-auto=update）；生产环境设 FLYWAY_ENABLED=true 并 ddl-auto=validate
     enabled: ${FLYWAY_ENABLED:false}
@@ -23,9 +33,23 @@ spring:
       host: localhost
       port: 6379
       timeout: 3s
+      lettuce:
+        pool:
+          max-active: 32
+          max-idle: 16
+          min-idle: 4
+          max-wait: 3s
 
 server:
   port: 8080
+  forward-headers-strategy: framework
+  tomcat:
+    threads:
+      max: 200
+      min-spare: 20
+    max-connections: 10000
+    accept-count: 200
+    connection-timeout: 10s
 
 management:
   endpoints:
@@ -50,6 +74,11 @@ aml:
     # JWT 签名密钥（生产环境应改为环境变量注入）
     jwt-secret: ${AML_JWT_SECRET:aml-agent-jwt-secret-2026-change-me-0123456789abcdef}
     jwt-validity-hours: 24
+    # 登录失败速率限制（按 IP+用户名；窗口内失败超限锁定一段时间，缓解暴力破解）
+    login:
+      max-attempts: 5
+      window-seconds: 60
+      lock-seconds: 300
 
   # 可靠任务队列（Redis Streams）
   queue:
@@ -116,3 +145,11 @@ aml:
   cost-routing:
     rule-fallback-enabled: false
     summary-enabled: false   # 流式摘要默认关闭（避免第二次模型调用）
+
+
+# OpenAPI 文档元信息
+springdoc:
+  info:
+    title: AML Agent 尽调平台 API
+    description: 商业银行反洗钱尽调 Agent 平台接口文档
+    version: 0.1.0

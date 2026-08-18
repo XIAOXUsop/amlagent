@@ -4,16 +4,12 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-import org.springframework.context.annotation.Profile;
 import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
 import org.springframework.security.config.http.SessionCreationPolicy;
-import org.springframework.security.core.userdetails.User;
-import org.springframework.security.core.userdetails.UserDetailsService;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
-import org.springframework.security.provisioning.InMemoryUserDetailsManager;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
 import org.springframework.security.web.csrf.CookieCsrfTokenRepository;
@@ -34,28 +30,10 @@ public class SecurityConfig {
         return new BCryptPasswordEncoder();
     }
 
-    /** 内置演示用户：ANALYST / REVIEWER / ADMIN（仅非 prod 环境注册） */
-    @Bean
-    @Profile("!prod")
-    public UserDetailsService demoUserDetailsService(PasswordEncoder encoder) {
-        return new InMemoryUserDetailsManager(
-                User.withUsername("analyst").password(encoder.encode("analyst123")).roles("ANALYST").build(),
-                User.withUsername("reviewer").password(encoder.encode("reviewer123")).roles("REVIEWER").build(),
-                User.withUsername("admin").password(encoder.encode("admin123")).roles("ADMIN").build());
-    }
-
-    /** 生产环境用户：仅从环境变量初始化管理员，不内置演示账号 */
-    @Bean
-    @Profile("prod")
-    public UserDetailsService prodUserDetailsService(PasswordEncoder encoder) {
-        String adminUser = System.getenv().getOrDefault("AML_ADMIN_USER", "admin");
-        String adminPassword = System.getenv().getOrDefault("AML_ADMIN_PASSWORD", "");
-        if (adminPassword.isBlank()) {
-            throw new IllegalStateException("prod 环境必须通过环境变量 AML_ADMIN_PASSWORD 设置管理员密码");
-        }
-        return new InMemoryUserDetailsManager(
-                User.withUsername(adminUser).password(encoder.encode(adminPassword)).roles("ADMIN").build());
-    }
+    /**
+     * 认证用户源已迁移至数据库（{@link DbUserDetailsService} + {@code sys_user} 表）。
+     * 演示账号由 {@link UserSeeder} 在非 prod 启动时写入；生产环境由 {@link ProdAdminSeeder} 从环境变量初始化。
+     */
 
     @Bean
     public SecurityFilterChain filterChain(HttpSecurity http, JwtAuthenticationFilter jwtFilter) throws Exception {
