@@ -17,11 +17,11 @@ public class QueueProperties {
     /** 消费者组 */
     private String group = "aml-workers";
 
-    /** 当前 Worker 标识 */
-    private String consumer = "worker-1";
-
     /** 单工单最大重试次数（超过进死信） */
     private int maxRetry = 3;
+
+    /** Stream 最大长度（近似裁剪 MAXLEN ~，防止已 ACK 消息长期驻留导致 Redis 内存无限增长） */
+    private long streamMaxLen = 10000;
 
     /** Pending 消息接管阈值（秒） */
     private long claimIdleSeconds = 60;
@@ -69,20 +69,20 @@ public class QueueProperties {
         this.group = group;
     }
 
-    public String getConsumer() {
-        return consumer;
-    }
-
-    public void setConsumer(String consumer) {
-        this.consumer = consumer;
-    }
-
     public int getMaxRetry() {
         return maxRetry;
     }
 
     public void setMaxRetry(int maxRetry) {
         this.maxRetry = maxRetry;
+    }
+
+    public long getStreamMaxLen() {
+        return streamMaxLen;
+    }
+
+    public void setStreamMaxLen(long streamMaxLen) {
+        this.streamMaxLen = streamMaxLen;
     }
 
     public long getClaimIdleSeconds() {

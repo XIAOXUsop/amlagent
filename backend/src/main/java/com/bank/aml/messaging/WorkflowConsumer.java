@@ -224,11 +224,6 @@ public class WorkflowConsumer implements ApplicationRunner, DisposableBean {
         return lastProbeFailed.get();
     }
 
-    /** 容器当前是否运行 */
-    public boolean isRunning() {
-        return running.get();
-    }
-
     @Override
     public void destroy() {
         stopContainer();

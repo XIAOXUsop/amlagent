@@ -1,7 +1,6 @@
 package com.bank.aml.messaging;
 
 import com.bank.aml.common.enums.CaseStatus;
-import com.bank.aml.common.exception.ManualReviewRequiredException;
 import com.bank.aml.common.exception.NonRetryableWorkflowException;
 import com.bank.aml.common.exception.RetryableWorkflowException;
 import com.bank.aml.datasource.entity.CaseEntity;
@@ -117,9 +116,6 @@ public class WorkflowMessageHandler {
         }, 30, 30, TimeUnit.SECONDS);
         try {
             dueDiligenceService.process(caseId, worker, executionVersion, lease);
-            ack(record);
-        } catch (ManualReviewRequiredException e) {
-            // 正常业务：工单需转人工复核，视为已成功处理（ack 计数推进由 ack() 统一处理）
             ack(record);
         } catch (NonRetryableWorkflowException e) {
             markFailed(caseId, worker, executionVersion, "NON_RETRYABLE", e.getMessage());

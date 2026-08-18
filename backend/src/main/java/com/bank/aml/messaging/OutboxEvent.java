@@ -20,7 +20,14 @@ import java.time.LocalDateTime;
 public class OutboxEvent {
 
     public enum OutboxStatus {
-        PENDING, PUBLISHED, DEAD
+        /** 待发布：由发布器抢占后进入 PUBLISHING */
+        PENDING,
+        /** 发布中：已被某发布器原子抢占（publishedAt = 抢占时间），XADD 成功后置 PUBLISHED；崩溃残留由陈旧 Claim 回收 */
+        PUBLISHING,
+        /** 已投递到 Redis Streams */
+        PUBLISHED,
+        /** 发布重试超限 */
+        DEAD
     }
 
     @Id
