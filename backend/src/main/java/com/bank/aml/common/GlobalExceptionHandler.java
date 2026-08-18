@@ -2,6 +2,7 @@ package com.bank.aml.common;
 
 import com.bank.aml.common.exception.NonRetryableWorkflowException;
 import com.bank.aml.common.exception.RetryableWorkflowException;
+import com.bank.aml.common.exception.TooManyRequestsException;
 import com.bank.aml.common.exception.WorkflowStateConflictException;
 import jakarta.servlet.http.HttpServletRequest;
 import org.slf4j.Logger;
@@ -13,10 +14,10 @@ import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 
-import java.util.UUID;
-
 /**
  * 全局异常处理：统一返回 {@link ApiError} 结构，携带 traceId 便于链路追踪。
+ * <p>traceId 由 {@link TraceIdFilter} 统一生成并写入请求属性与 MDC，本类只读取不重新生成，
+ * 保证响应体 traceId 与日志 MDC、响应头 X-Request-Id 三方一致。
  */
 @RestControllerAdvice
 public class GlobalExceptionHandler {
@@ -53,6 +54,12 @@ public class GlobalExceptionHandler {
         return build(HttpStatus.CONFLICT, "WORKFLOW_STATE_CONFLICT", ex.getMessage(), req);
     }
 
+    /** 登录/鉴权速率限制：429，客户端应停止重试并等待解锁 */
+    @ExceptionHandler(TooManyRequestsException.class)
+    public ResponseEntity<ApiError> handleRateLimited(TooManyRequestsException ex, HttpServletRequest req) {
+        return build(HttpStatus.TOO_MANY_REQUESTS, "RATE_LIMITED", ex.getMessage(), req);
+    }
+
     /**
      * 不可重试工作流异常：多为客户输入/参数级业务错误（如"客户不存在"）。
      * 映射为 400，并透出可理解的中文 message，避免被当成"服务器内部错误"(500)。
@@ -68,7 +75,7 @@ public class GlobalExceptionHandler {
      */
     @ExceptionHandler(RetryableWorkflowException.class)
     public ResponseEntity<ApiError> handleRetryable(RetryableWorkflowException ex, HttpServletRequest req) {
-        log.warn("同步请求透出可重试工作流异常 traceId={}", req.getAttribute("traceId"), ex);
+        log.warn("同步请求透出可重试工作流异常", ex);
         return build(HttpStatus.BAD_GATEWAY, "UPSTREAM_RETRYABLE", ex.getMessage(), req);
     }
 
@@ -83,13 +90,13 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler(Exception.class)
     public ResponseEntity<ApiError> handleUnknown(Exception ex, HttpServletRequest req) {
-        log.error("未处理异常 traceId={}", req.getAttribute("traceId"), ex);
+        log.error("未处理异常", ex);
         return build(HttpStatus.INTERNAL_SERVER_ERROR, "INTERNAL_ERROR", "服务器内部错误", req);
     }
 
     private ResponseEntity<ApiError> build(HttpStatus status, String code, String message, HttpServletRequest req) {
-        String traceId = UUID.randomUUID().toString();
-        req.setAttribute("traceId", traceId);
+        Object attr = req.getAttribute(TraceIdFilter.REQUEST_ATTR_TRACE_ID);
+        String traceId = attr instanceof String s && !s.isBlank() ? s : "unknown";
         return ResponseEntity.status(status).body(ApiError.of(code, message, traceId));
     }
 }
