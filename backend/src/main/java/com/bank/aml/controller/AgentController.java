@@ -3,6 +3,7 @@ package com.bank.aml.controller;
 import com.bank.aml.agent.AgentAssistant;
 import com.bank.aml.agent.RiskSummary;
 import com.bank.aml.config.LlmProperties;
+import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import org.springframework.context.annotation.Profile;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -10,7 +11,6 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.LinkedHashMap;
@@ -51,14 +51,14 @@ public class AgentController {
 
     /** 普通对话 */
     @PostMapping("/chat")
-    public Map<String, String> chat(@RequestBody ChatRequest req) {
+    public Map<String, String> chat(@Valid @RequestBody ChatRequest req) {
         String reply = assistant.chat(req.message());
         return Map.of("reply", reply);
     }
 
     /** 结构化输出验证：风险评级摘要 */
     @PostMapping("/assess")
-    public RiskSummary assess(@RequestBody ChatRequest req) {
+    public RiskSummary assess(@Valid @RequestBody ChatRequest req) {
         return assistant.assess(req.message());
     }
 

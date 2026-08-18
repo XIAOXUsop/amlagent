@@ -6,6 +6,7 @@ import io.micrometer.core.instrument.Timer;
 import org.springframework.stereotype.Component;
 
 import java.time.Duration;
+import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * 业务指标埋点（Prometheus 格式，经 /actuator/prometheus 暴露）。
@@ -20,6 +21,9 @@ public class MetricsRecorder {
     private final Counter guardrailCorrectionTotal;
     private final Counter ragCacheHitTotal;
     private final Counter ragCacheMissTotal;
+    private final Counter llmFallbackTotal;
+    /** 可变的消费 lag 值：Micrometer Gauge 通过强引用持有本对象实时读取，避免每次传新值被注册表冻结 */
+    private final AtomicLong queueLagHolder;
 
     public MetricsRecorder(MeterRegistry registry) {
         this.registry = registry;
@@ -29,6 +33,10 @@ public class MetricsRecorder {
         this.guardrailCorrectionTotal = registry.counter("aml_guardrail_correction_total");
         this.ragCacheHitTotal = registry.counter("aml_rag_cache_hit_total");
         this.ragCacheMissTotal = registry.counter("aml_rag_cache_miss_total");
+        this.llmFallbackTotal = registry.counter("aml_case_llm_fallback_total");
+        this.queueLagHolder = new AtomicLong(0);
+        // Gauge 持有引用而非值：后续 queueLag() 只更新 AtomicLong，指标始终读取最新值
+        registry.gauge("aml_queue_lag", queueLagHolder, AtomicLong::doubleValue);
     }
 
     public void caseCreated() {
@@ -99,6 +107,11 @@ public class MetricsRecorder {
 
     /** 记录当前消费 lag（未消费消息数，Gauge 便于告警阈值判断） */
     public void queueLag(long lag) {
-        registry.gauge("aml_queue_lag", lag);
+        queueLagHolder.set(lag);
+    }
+
+    /** Agent 调用失败后由规则引擎降级出报告的次数（区分正常成功与降级成功，供运维感知 LLM 故障） */
+    public void caseLlmFallback() {
+        llmFallbackTotal.increment();
     }
 }

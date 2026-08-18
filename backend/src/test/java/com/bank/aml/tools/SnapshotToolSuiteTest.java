@@ -34,6 +34,7 @@ class SnapshotToolSuiteTest {
         InvestigationSnapshot snapshot = new InvestigationSnapshot(
                 "case-1-v1", 1L, 1, Instant.parse("2026-06-30T00:00:00Z"),
                 CUSTOMER, List.of(TXN), List.of(SHAREHOLDING), List.of(SANCTION), List.of(),
+                List.of("大额交易", "客户尽职调查"),
                 mock(RiskContext.class), "v1", "digest");
         return new SnapshotToolSuite(snapshot);
     }
@@ -82,5 +83,24 @@ class SnapshotToolSuiteTest {
         assertThat(traces.get(0).success()).isTrue();
         assertThat(traces.get(1).argumentValid()).isFalse();
         assertThat(traces.get(1).errorCode()).isEqualTo("ARGUMENT_VALIDATION_FAILED");
+    }
+
+    @Test
+    void searchLegalRejectsQueryNotMatchingFrozenKeywords() {
+        SnapshotToolSuite tools = suite();
+
+        assertThatThrownBy(() -> tools.searchLegal("与工单无关的任意查询"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("不匹配");
+        assertThat(tools.traces().get(0).argumentValid()).isFalse();
+    }
+
+    @Test
+    void searchLegalAcceptsQueryContainingFrozenKeyword() {
+        SnapshotToolSuite tools = suite();
+
+        String result = tools.searchLegal("请检索大额交易相关的反洗钱监管法规");
+        assertThat(result).contains("未检索到相关法规条文"); // 快照无法规证据时返回空态文本，但校验已通过
+        assertThat(tools.traces().get(0).success()).isTrue();
     }
 }

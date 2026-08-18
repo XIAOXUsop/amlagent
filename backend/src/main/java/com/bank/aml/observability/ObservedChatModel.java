@@ -42,6 +42,8 @@ public final class ObservedChatModel implements ChatModel {
             metrics.llmDuration(tags, elapsedMs(start));
             return response;
         } catch (Exception e) {
+            // 错误路径同样记录耗时，否则失败调用的延迟会从 P50/P95 中缺失
+            metrics.llmDuration(tags, elapsedMs(start));
             metrics.llmError(tags);
             throw e;
         }

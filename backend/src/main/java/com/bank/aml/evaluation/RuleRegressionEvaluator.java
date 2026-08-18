@@ -1,5 +1,6 @@
 package com.bank.aml.evaluation;
 
+import com.bank.aml.common.enums.RiskLevel;
 import com.bank.aml.evaluation.RuleRegressionCaseGenerator.RuleRegressionCase;
 import com.bank.aml.risk.RiskContext;
 import com.bank.aml.risk.RiskRuleEngine;
@@ -135,11 +136,7 @@ public class RuleRegressionEvaluator {
     }
 
     private int levelCode(String level) {
-        return switch (level) {
-            case "高风险" -> 3;
-            case "中风险" -> 2;
-            default -> 1;
-        };
+        return RiskLevel.fromLabel(level).code();
     }
 
     private long percentile(List<Long> values, double percentile) {

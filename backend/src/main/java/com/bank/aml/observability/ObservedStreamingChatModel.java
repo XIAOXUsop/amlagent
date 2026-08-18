@@ -53,6 +53,7 @@ public final class ObservedStreamingChatModel implements StreamingChatModel {
 
             @Override
             public void onError(Throwable error) {
+                metrics.llmDuration(tags, elapsedMs(start));
                 metrics.llmError(tags);
                 handler.onError(error);
             }

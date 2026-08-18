@@ -1,5 +1,6 @@
 package com.bank.aml.risk;
 
+import com.bank.aml.common.enums.RiskLevel;
 import com.bank.aml.datasource.CustomerDataPort;
 import com.bank.aml.domain.CustomerProfile;
 import com.bank.aml.domain.SanctionRecord;
@@ -60,9 +61,10 @@ public class RiskFactAssembler {
         int patternSeverity = assessPatternSeverity(txns);
         int uboRiskSeverity = assessUboRisk(shareholdings);
 
-        String modelLevel = modelRiskLevel == null ? "低风险" : modelRiskLevel;
+        String modelLevel = modelRiskLevel == null ? RiskLevel.LOW.label() : modelRiskLevel;
         return new RiskContext(maxSeverity, sanctionHit, crossRatio, nightRatio, large,
-                dataComplete, riskExplained, patternSeverity, uboRiskSeverity, modelLevel, levelCode(modelLevel));
+                dataComplete, riskExplained, patternSeverity, uboRiskSeverity, modelLevel,
+                RiskLevel.fromLabel(modelLevel).code());
     }
 
     /** 检索制裁名单（按姓名 + 证件号），返回命中条目 */
@@ -101,13 +103,5 @@ public class RiskFactAssembler {
     private boolean isNight(LocalDateTime date) {
         int hour = date.getHour();
         return hour >= 22 || hour < 6;
-    }
-
-    private int levelCode(String level) {
-        return switch (level) {
-            case "高风险" -> 3;
-            case "中风险" -> 2;
-            default -> 1;
-        };
     }
 }

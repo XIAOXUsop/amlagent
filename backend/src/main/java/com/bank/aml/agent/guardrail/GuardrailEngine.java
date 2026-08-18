@@ -1,6 +1,7 @@
 package com.bank.aml.agent.guardrail;
 
 import com.bank.aml.agent.DueDiligenceReport;
+import com.bank.aml.common.enums.RiskLevel;
 import com.bank.aml.domain.CustomerProfile;
 import com.bank.aml.domain.InvestigationSnapshot;
 import com.bank.aml.domain.SanctionRecord;
@@ -53,15 +54,14 @@ public class GuardrailEngine {
     ) {
     }
 
-    /** 生产链路入口：从客户数据源组装风险事实后执行护栏决策 */
+    /** 生产链路入口：从客户数据源组装风险事实后执行护栏决策（用于非快照路径/测试） */
     public GuardrailResult apply(CustomerProfile customer, DueDiligenceReport report) {
-        String modelLevel = report.riskLevel() == null ? "低风险" : report.riskLevel();
+        String modelLevel = report.riskLevel() == null ? RiskLevel.LOW.label() : report.riskLevel();
         RiskContext ctx = riskFactAssembler.assemble(customer, modelLevel);
         return applyRules(ctx, report, riskFactAssembler.searchSanctions(customer));
     }
 
-    /**
-     * 快照入口：从已冻结的尽调快照提取风险事实执行护栏决策，不二次读取数据源。
+    /** 快照入口：从已冻结的尽调快照提取风险事实执行护栏决策，不二次读取数据源。
      * <p>Agent 推理与 Guardrails 校验因此共享同一份数据事实，避免数据源在两者之间变化导致的不一致。
      */
     public GuardrailResult apply(InvestigationSnapshot snapshot, DueDiligenceReport report) {
@@ -70,7 +70,7 @@ public class GuardrailEngine {
         RiskContext effectiveContext = new RiskContext(
                 facts.maxSeverity(), facts.sanctionHit(), facts.crossRatio(), facts.nightRatio(),
                 facts.largeCount(), facts.transactionDataComplete(), facts.transactionRiskExplained(),
-                facts.transactionPatternSeverity(), facts.uboRiskSeverity(), modelLevel, levelCode(modelLevel));
+                facts.transactionPatternSeverity(), facts.uboRiskSeverity(), modelLevel, RiskLevel.fromLabel(modelLevel).code());
         return applyRules(effectiveContext, report, snapshot.sanctionHits());
     }
 
@@ -91,7 +91,7 @@ public class GuardrailEngine {
                 context.transactionPatternSeverity(),
                 context.uboRiskSeverity(),
                 modelLevel,
-                levelCode(modelLevel));
+                RiskLevel.fromLabel(modelLevel).code());
         return applyRules(effectiveContext, report, List.of());
     }
 
@@ -106,7 +106,8 @@ public class GuardrailEngine {
         boolean mustEscalate = Boolean.TRUE.equals(report.manualReviewRequired());
         List<String> corrections = new ArrayList<>();
         for (TriggeredRule rule : triggered) {
-            if (levelCode(rule.targetRiskLevel()) > levelCode(finalRisk)) {
+            // 只升不降：规则目标等级更高才上调，避免确定性规则降低模型已经研判的等级
+            if (RiskLevel.fromLabel(rule.targetRiskLevel()).code() > RiskLevel.fromLabel(finalRisk).code()) {
                 corrections.add("Guardrails【" + rule.ruleCode() + " v" + rule.ruleVersion() + "】："
                         + rule.evidence() + "，评级由【" + finalRisk + "】上调为【" + rule.targetRiskLevel() + "】");
                 finalRisk = rule.targetRiskLevel();
@@ -130,13 +131,5 @@ public class GuardrailEngine {
         GuardrailDecision decision = new GuardrailDecision(modelLevel, finalRisk, triggered,
                 requiredAction, List.copyOf(actionCodes));
         return new GuardrailResult(finalRisk, corrections, mustEscalate, sanctionHits, decision);
-    }
-
-    private int levelCode(String level) {
-        return switch (level) {
-            case "高风险" -> 3;
-            case "中风险" -> 2;
-            default -> 1;
-        };
     }
 }

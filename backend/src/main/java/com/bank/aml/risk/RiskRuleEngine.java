@@ -33,6 +33,10 @@ public class RiskRuleEngine {
     );
 
     private final RiskRuleRepository repository;
+    /** 启用规则缓存：规则表低频变更，避免每次 Guardrails 评估都查库；TTL 后自动刷新 */
+    private static final long RULE_CACHE_TTL_MS = 60_000L;
+    private volatile List<RiskRule> cachedRules = List.of();
+    private volatile long cachedAt = 0L;
 
     public RiskRuleEngine(RiskRuleRepository repository) {
         this.repository = repository;
@@ -46,20 +50,34 @@ public class RiskRuleEngine {
     public List<TriggeredRule> evaluate(RiskContext ctx) {
         LocalDateTime now = LocalDateTime.now();
         List<TriggeredRule> triggered = new ArrayList<>();
-        for (RiskRule r : repository.findByEnabledTrueOrderByPriorityAsc()) {
+        for (RiskRule r : activeRules()) {
             if (r.getEffectiveFrom() != null && now.isBefore(r.getEffectiveFrom())) {
                 continue;
             }
             if (r.getEffectiveTo() != null && now.isAfter(r.getEffectiveTo())) {
                 continue;
             }
-            validateExpression(r.getConditionExpression());
             if (evaluate(r.getConditionExpression(), ctx)) {
                 triggered.add(new TriggeredRule(r.getRuleCode(), r.getVersion(),
                         r.getTargetRiskLevel(), r.getAction(), evidenceText(ctx, r)));
             }
         }
         return triggered;
+    }
+
+    /** 带 TTL 的启用规则缓存；并发下允许短暂读到旧快照（规则低频变更，可接受） */
+    private List<RiskRule> activeRules() {
+        long now = System.currentTimeMillis();
+        if (now - cachedAt > RULE_CACHE_TTL_MS) {
+            cachedRules = repository.findByEnabledTrueOrderByPriorityAsc();
+            cachedAt = now;
+        }
+        return cachedRules;
+    }
+
+    /** 供规则种子器在启动时主动失效缓存，避免首轮 Guardrails 评估读到空快照 */
+    public void invalidateCache() {
+        cachedAt = 0L;
     }
 
     /** 表达式评估：|| 优先级低于 && */

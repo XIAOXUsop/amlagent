@@ -23,6 +23,8 @@ public record InvestigationSnapshot(
         List<ShareholdingRecord> shareholdings,
         List<SanctionRecord> sanctionHits,
         List<LegalDoc> legalEvidence,
+        /** 由预警规则解析出的法规查询关键词（与 legalEvidence 同源冻结，供工具校验查询覆盖） */
+        List<String> legalKeywords,
         RiskContext riskFacts,
         String legalIndexVersion,
         String sourceDigest
@@ -33,5 +35,6 @@ public record InvestigationSnapshot(
         shareholdings = shareholdings == null ? List.of() : List.copyOf(shareholdings);
         sanctionHits = sanctionHits == null ? List.of() : List.copyOf(sanctionHits);
         legalEvidence = legalEvidence == null ? List.of() : List.copyOf(legalEvidence);
+        legalKeywords = legalKeywords == null ? List.of() : List.copyOf(legalKeywords);
     }
 }

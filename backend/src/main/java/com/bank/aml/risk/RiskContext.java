@@ -27,13 +27,4 @@ public record RiskContext(
         /** 模型评级分值（高风险3 / 中风险2 / 低风险1） */
         int modelLevelCode
 ) {
-    /**
-     * 兼容仅提供聚合交易指标的生产调用方。默认认为数据完整、风险尚未被业务材料解释，
-     * 且没有额外的交易模式或 UBO 结构化信号。
-     */
-    public RiskContext(int maxSeverity, boolean sanctionHit, double crossRatio, double nightRatio,
-                       long largeCount, String modelRiskLevel, int modelLevelCode) {
-        this(maxSeverity, sanctionHit, crossRatio, nightRatio, largeCount,
-                true, false, 0, 0, modelRiskLevel, modelLevelCode);
-    }
 }

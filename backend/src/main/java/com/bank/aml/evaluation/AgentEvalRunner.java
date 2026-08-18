@@ -3,6 +3,7 @@ package com.bank.aml.evaluation;
 import com.bank.aml.agent.DueDiligenceAgent;
 import com.bank.aml.agent.DueDiligenceReport;
 import com.bank.aml.agent.guardrail.GuardrailEngine;
+import com.bank.aml.common.enums.RiskLevel;
 import com.bank.aml.config.LlmProperties;
 import com.bank.aml.config.LlmProviderProperties;
 import com.bank.aml.config.MockChatModel;
@@ -319,11 +320,7 @@ public class AgentEvalRunner {
     }
 
     private int riskCode(String risk) {
-        return switch (risk) {
-            case "高风险" -> 3;
-            case "中风险" -> 2;
-            default -> 1;
-        };
+        return RiskLevel.fromLabel(risk).code();
     }
 
     private long elapsedMs(long startedNanos) {

@@ -21,10 +21,6 @@ public class DueDiligenceAgentFactory {
         this.chatModel = chatModel;
     }
 
-    public DueDiligenceAgent create(InvestigationSnapshot snapshot) {
-        return createWithTraces(snapshot).agent();
-    }
-
     /** 创建 Agent 并返回工具套件，供工作流读取工具调用轨迹 */
     public AgentWithTools createWithTraces(InvestigationSnapshot snapshot) {
         SnapshotToolSuite tools = new SnapshotToolSuite(snapshot);

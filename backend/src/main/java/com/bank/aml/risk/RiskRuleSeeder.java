@@ -57,6 +57,8 @@ public class RiskRuleSeeder implements ApplicationRunner {
         // 对人工新增或修改的启用规则同样做启动校验，避免无效 DSL 静默运行。
         repository.findByEnabledTrueOrderByPriorityAsc()
                 .forEach(rule -> ruleEngine.validateExpression(rule.getConditionExpression()));
+        // 种子完成后立即刷新规则缓存，避免首个 Guardrails 评估读到空快照
+        ruleEngine.invalidateCache();
     }
 
     private void seedOrUpgrade(String code, int version, String name, int priority, String expr,

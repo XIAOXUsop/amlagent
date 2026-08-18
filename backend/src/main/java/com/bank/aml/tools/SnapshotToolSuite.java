@@ -58,9 +58,7 @@ public class SnapshotToolSuite {
     public String searchLegal(@P("法规查询关键词，如'大额交易报告'或'客户尽职调查'") String query) {
         long start = System.nanoTime();
         try {
-            if (query == null || query.isBlank()) {
-                throw new IllegalArgumentException("法规查询关键词不能为空");
-            }
+            requireLegalQuery(query);
             // 从冻结快照读取预检索的法规证据，不再实时访问可变 RAG 索引
             List<LegalDoc> docs = snapshot.legalEvidence();
             String result = LegalSearchTool.format(docs);
@@ -101,6 +99,23 @@ public class SnapshotToolSuite {
     private void requireCustomer(String customerId) {
         if (customerId == null || !customerId.equals(snapshot.customer().id())) {
             throw new IllegalArgumentException("客户编号与当前工单快照不匹配");
+        }
+    }
+
+    /**
+     * 法规查询校验：query 必须命中快照冻结的任一法规关键词（不区分大小写），
+     * 与评测工具契约一致，防止模型乱写查询词导致报告引用与工单主题无关的法规。
+     */
+    private void requireLegalQuery(String query) {
+        if (query == null || query.isBlank()) {
+            throw new IllegalArgumentException("法规查询关键词不能为空");
+        }
+        String normalized = normalize(query);
+        boolean matched = snapshot.legalKeywords().stream()
+                .filter(k -> k != null && !k.isBlank())
+                .anyMatch(k -> normalized.contains(normalize(k)));
+        if (!matched) {
+            throw new IllegalArgumentException("法规查询关键词与当前工单预警规则不匹配");
         }
     }
 

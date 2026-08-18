@@ -51,19 +51,19 @@ public class InvestigationSnapshotFactory {
         List<ShareholdingRecord> shareholdings = dataSource.shareholdingsOf(customer.id());
         List<SanctionRecord> sanctionHits = riskFactAssembler.searchSanctions(customer);
         // 法规证据在快照创建时预检索并冻结，Agent 工具不再实时访问可变 RAG 索引
-        List<LegalDoc> legalEvidence = preloadLegalEvidence(alertRule);
+        List<String> legalKeywords = legalKeywordResolver.resolve(alertRule);
+        List<LegalDoc> legalEvidence = preloadLegalEvidence(legalKeywords);
         RiskContext riskFacts = riskFactAssembler.assembleFrom(transactions, shareholdings, sanctionHits, modelRiskLevel);
         String sourceDigest = digest(customer, transactions, shareholdings, sanctionHits);
         return new InvestigationSnapshot(
                 "case-" + caseId + "-v" + executionVersion,
                 caseId, executionVersion, dataSource.asOfTime(),
                 customer, transactions, shareholdings, sanctionHits, legalEvidence,
-                riskFacts, legalIndexVersion, sourceDigest);
+                legalKeywords, riskFacts, legalIndexVersion, sourceDigest);
     }
 
     /** 按预警规则解析的法规关键词预检索法规证据，去重后冻结进快照 */
-    private List<LegalDoc> preloadLegalEvidence(String alertRule) {
-        List<String> keywords = legalKeywordResolver.resolve(alertRule);
+    private List<LegalDoc> preloadLegalEvidence(List<String> keywords) {
         List<LegalDoc> evidence = new ArrayList<>();
         for (String keyword : keywords) {
             evidence.addAll(legalSearcher.search(keyword, 3));
