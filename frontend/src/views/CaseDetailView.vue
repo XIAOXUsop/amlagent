@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import {
+  fmtDateTime,
   getCase,
   listLogs,
   parseReport,
@@ -18,6 +19,8 @@ const emit = defineEmits<{ (e: 'back'): void }>()
 
 const caseItem = ref<CaseItem | null>(null)
 const report = ref<DueDiligenceReport | null>(null)
+const loadError = ref(false)
+const detailLoading = ref(true)
 const logs = ref<{ stage: string; content: string; at: string }[]>([])
 const doneKeys = ref<Set<string>>(new Set())
 const currentKey = ref('')
@@ -69,8 +72,12 @@ async function refresh() {
     const c = await getCase(props.caseId)
     caseItem.value = c
     report.value = parseReport(c)
+    loadError.value = false
   } catch {
-    /* ignore */
+    // 不静默吞错：标记错误，让页面展示"加载失败"态而非空白
+    loadError.value = true
+  } finally {
+    detailLoading.value = false
   }
 }
 
@@ -81,15 +88,20 @@ async function connect() {
   currentKey.value = ''
   streamingText.value = ''
   await refresh()
-  const history = await listLogs(props.caseId)
-  history.forEach((l) => {
-    if (['DONE', 'HOLD', 'FAILED'].includes(l.stage)) {
-      workflowStages.forEach((s) => doneKeys.value.add(s.key))
-    }
-    doneKeys.value.add(l.stage)
-    logs.value.push({ stage: l.stage, content: l.content, at: '' })
-    currentKey.value = l.stage
-  })
+  try {
+    const history = await listLogs(props.caseId)
+    history.forEach((l) => {
+      if (['DONE', 'HOLD', 'FAILED'].includes(l.stage)) {
+        workflowStages.forEach((s) => doneKeys.value.add(s.key))
+      }
+      doneKeys.value.add(l.stage)
+      logs.value.push({ stage: l.stage, content: l.content, at: '' })
+      currentKey.value = l.stage
+    })
+  } catch {
+    // 历史日志拉取失败不影响订阅实时进度
+    if (!logs.value.length) logs.value.push({ stage: 'PLANNING', content: '历史日志加载失败，正在订阅实时进度…', at: '' })
+  }
   unsubscribe = subscribeCase(props.caseId, handleEvent, (token) => {
     streamingText.value += token
   })
@@ -101,16 +113,31 @@ onUnmounted(() => {
   unsubscribe?.()
 })
 
-async function handleRetry() {
-  await retryCase(props.caseId)
-  ElMessage.success('已重新入队，正在执行')
+async function retryLoad() {
+  loadError.value = false
+  // detailLoading 可能已为 false，重置以显示加载态
+  caseItem.value = null
   await connect()
 }
 
+async function handleRetry() {
+  try {
+    await retryCase(props.caseId)
+    ElMessage.success('已重新入队，正在执行')
+    await connect()
+  } catch {
+    ElMessage.error('人工重试失败，可能该工单不可重试，请刷新后重试')
+  }
+}
+
 async function handleProcess() {
-  await processCase(props.caseId)
-  ElMessage.success('已触发尽调')
-  await connect()
+  try {
+    await processCase(props.caseId)
+    ElMessage.success('已触发尽调')
+    await connect()
+  } catch {
+    ElMessage.error('触发尽调失败，可能该工单非待处理状态，请刷新后重试')
+  }
 }
 
 const canRetry = computed(() => caseItem.value && ['HOLD', 'FAILED'].includes(caseItem.value.status))
@@ -139,7 +166,16 @@ function snapPrefix(id: string | null): string {
 </script>
 
 <template>
-  <div v-if="caseItem" class="detail">
+  <div v-if="detailLoading" class="detail-loading">
+    <el-icon class="is-loading load-icon"><RefreshRight /></el-icon>
+    <span>正在加载工单…</span>
+  </div>
+  <div v-else-if="loadError" class="detail-error">
+    <div class="err-mark">!</div>
+    <p class="err-msg">工单加载失败，可能是工单不存在或网络异常。</p>
+    <el-button type="primary" @click="retryLoad">重新加载</el-button>
+  </div>
+  <div v-else-if="caseItem" class="detail">
     <div class="detail-bar">
       <el-button size="small" @click="emit('back')">
         <el-icon><Back /></el-icon>
@@ -187,7 +223,7 @@ function snapPrefix(id: string | null): string {
           {{ caseItem.failureMessage }}
         </el-descriptions-item>
         <el-descriptions-item label="创建时间">
-          <span class="mono-num time">{{ caseItem.createdAt.replace('T', ' ').slice(0, 19) }}</span>
+          <span class="mono-num time">{{ fmtDateTime(caseItem.createdAt) }}</span>
         </el-descriptions-item>
         <el-descriptions-item label="模型">
           <span class="mono-num">{{ caseItem.modelName || '-' }}</span>
@@ -327,6 +363,45 @@ function snapPrefix(id: string | null): string {
   display: flex;
   flex-direction: column;
   gap: 18px;
+}
+
+/* 加载态 / 错误态 */
+.detail-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 80px 0;
+  color: var(--text-dim);
+  font-size: 14px;
+}
+.load-icon {
+  font-size: 22px;
+  color: var(--gold);
+}
+.detail-error {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  padding: 80px 0;
+}
+.err-mark {
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font-size: 26px;
+  color: var(--risk-high);
+  border: 2px solid rgba(196, 61, 75, 0.4);
+  background: rgba(196, 61, 75, 0.08);
+}
+.err-msg {
+  margin: 0;
+  color: var(--text-dim);
+  font-size: 14px;
 }
 
 .detail-bar {

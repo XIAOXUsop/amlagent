@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { createCase, listCases, listCustomers, processCase, type CaseItem, type Customer } from '../api/client'
+import { createCase, fmtDateTime, listCases, listCustomers, processCase, type CaseItem, type Customer } from '../api/client'
 import { Plus, Refresh, Search } from '@element-plus/icons-vue'
 
 const emit = defineEmits<{ (e: 'open-case', id: number): void }>()
@@ -10,6 +10,7 @@ const customers = ref<Customer[]>([])
 const selectedCustomer = ref<string>('')
 const alertRule = ref('大额频繁跨国转账、夜间集中交易')
 const loading = ref(false)
+const listLoading = ref(false)
 const processingId = ref<number | null>(null)
 const page = ref(0)
 const total = ref(0)
@@ -50,9 +51,16 @@ onMounted(async () => {
 })
 
 async function refresh() {
-  const p = await listCases(page.value, pageSize)
-  cases.value = p.content
-  total.value = p.totalElements
+  listLoading.value = true
+  try {
+    const p = await listCases(page.value, pageSize)
+    cases.value = p.content
+    total.value = p.totalElements
+  } catch {
+    ElMessage.error('工单列表加载失败，请稍后重试')
+  } finally {
+    listLoading.value = false
+  }
 }
 
 function onPageChange(p: number) {
@@ -65,12 +73,18 @@ async function handleCreate() {
     ElMessage.warning('请选择客户')
     return
   }
+  if (!alertRule.value.trim()) {
+    ElMessage.warning('请填写预警规则描述')
+    return
+  }
   loading.value = true
   try {
     const c = await createCase(selectedCustomer.value, alertRule.value.trim())
     ElMessage.success(`工单 #${c.id} 创建成功`)
     await refresh()
     emit('open-case', c.id)
+  } catch {
+    ElMessage.error('创建工单失败，请检查客户与预警规则后重试')
   } finally {
     loading.value = false
   }
@@ -89,7 +103,7 @@ async function handleProcess(row: CaseItem) {
 }
 
 function fmtTime(s: string): string {
-  return s ? s.replace('T', ' ').slice(0, 19) : '-'
+  return fmtDateTime(s)
 }
 
 function srcTag(row: CaseItem) {
@@ -145,7 +159,7 @@ function srcTag(row: CaseItem) {
     <!-- 工单列表 -->
     <div class="card">
       <h3 class="card-title">预警工单列表</h3>
-      <el-table :data="cases" stripe style="width: 100%">
+      <el-table :data="cases" v-loading="listLoading" stripe style="width: 100%">
         <el-table-column label="工单号" width="88">
           <template #default="{ row }">
             <span class="mono-num case-id">#{{ row.id }}</span>

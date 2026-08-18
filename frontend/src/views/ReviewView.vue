@@ -7,6 +7,7 @@ const emit = defineEmits<{ (e: 'open-case', id: number): void }>()
 
 const pending = ref<CaseItem[]>([])
 const stats = ref({ reviewedCount: 0, agreementRate: 0, approvedCount: 0, rejectedCount: 0, escalatedCount: 0 })
+const loading = ref(true)
 
 const reviewing = ref<CaseItem | null>(null)
 const dialogOpen = ref(false)
@@ -20,8 +21,15 @@ onMounted(async () => {
 })
 
 async function refresh() {
-  pending.value = await listPendingReviews()
-  stats.value = await reviewStats()
+  try {
+    const [p, s] = await Promise.all([listPendingReviews(), reviewStats()])
+    pending.value = p
+    stats.value = s
+  } catch {
+    ElMessage.error('加载复核数据失败，请稍后重试')
+  } finally {
+    loading.value = false
+  }
 }
 
 function openReview(row: CaseItem) {
@@ -45,8 +53,13 @@ async function doSubmit() {
     ElMessage.success('复核已提交')
     dialogOpen.value = false
     await refresh()
-  } catch {
-    ElMessage.error('提交失败')
+  } catch (e) {
+    // 并发冲突（409）：另一方已复核，提示用户刷新查看，避免误以为成功
+    if ((e as any)?.response?.status === 409) {
+      ElMessage.error('该工单已被其他人复核，状态已变化，请刷新查看最新信息')
+    } else {
+      ElMessage.error('提交失败，请稍后重试')
+    }
   } finally {
     submitting.value = false
   }
@@ -87,7 +100,7 @@ async function doSubmit() {
     <!-- 待复核队列 -->
     <div class="card">
       <h3 class="card-title">待复核队列（HOLD）</h3>
-      <el-table :data="pending" stripe>
+      <el-table :data="pending" v-loading="loading" stripe>
         <el-table-column label="工单号" width="88">
           <template #default="{ row }"><span class="mono-num case-id">#{{ row.id }}</span></template>
         </el-table-column>

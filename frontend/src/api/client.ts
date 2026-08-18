@@ -288,3 +288,10 @@ export async function getAgentEvalDatasetSummary(): Promise<AgentEvalDatasetSumm
 export async function runRagEval(): Promise<Record<string, unknown>> {
   return (await api.post('/eval/rag')).data
 }
+
+/** 将后端 ISO 时间格式化为"年-月-日 时:分:秒"；空值返回占位符 */
+export function fmtDateTime(s: string | null | undefined): string {
+  if (!s) return '-'
+  // ISO 形如 "2026-08-18T09:03:57.532" → "2026-08-18 09:03:57"
+  return s.replace('T', ' ').slice(0, 19)
+}

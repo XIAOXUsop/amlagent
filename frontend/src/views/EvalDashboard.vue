@@ -10,6 +10,7 @@ import { CaretTop, DataAnalysis, Warning } from '@element-plus/icons-vue'
 const status = ref<Record<string, any> | null>(null)
 const dataset = ref<Record<string, any> | null>(null)
 const loading = ref(false)
+const dataLoading = ref(true)
 const result = ref<Record<string, any> | null>(null)
 
 onMounted(async () => {
@@ -18,6 +19,8 @@ onMounted(async () => {
     dataset.value = await getAgentEvalDatasetSummary()
   } catch {
     ElMessage.error('加载评测状态失败')
+  } finally {
+    dataLoading.value = false
   }
 })
 
@@ -64,7 +67,7 @@ const baseline = [
     </el-alert>
 
     <div class="grid">
-      <div class="card">
+      <div class="card" v-loading="dataLoading">
         <h3 class="card-title">Agent 评测数据集</h3>
         <template v-if="dataset">
           <div class="kv"><span>数据集</span><b class="mono-num">{{ dataset.datasetId }} <em>v{{ dataset.version }}</em></b></div>
