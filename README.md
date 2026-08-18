@@ -291,7 +291,7 @@ python benchmark/fault_demo.py
 
 ### 成本控制
 - **RAG 检索缓存**：`CachingLegalSearcher` 用 Redis 缓存检索结果（TTL 1h），命中跳过 embedding/向量检索，指标 `aml_rag_cache_hit_total` / `aml_rag_cache_miss_total`
-- **Token 计量**：`ChatModelTokenListener` 记录每次模型调用的 Token 数，指标 `aml_llm_token_total` / `aml_llm_request_total`
+- **Token 计量**：`ObservedChatModel` / `ObservedStreamingChatModel` 包装器按 purpose 显式打标（main_agent / summary），记录每次模型调用的 Token 与延迟，指标 `aml_llm_token_total`（分 input/output） / `aml_llm_request_total` / `aml_llm_duration_seconds`
 - **成本路由**：`CostRouter` 按预警规则复杂度分级（SIMPLE/COMPLEX），`aml.cost-routing.rule-fallback-enabled=true` 时 SIMPLE 工单跳过 LLM 直接规则引擎（零模型成本，默认关闭不影响评测）
 
 ### CI 评测回归（.github/workflows/ci.yml）
