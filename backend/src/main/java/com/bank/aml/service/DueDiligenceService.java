@@ -216,7 +216,8 @@ public class DueDiligenceService {
                     agentWithTools = agentFactory.createWithTraces(snapshot);
                     report = agentWithTools.agent().investigate(context.toPrompt());
                 } catch (Exception e) {
-                    log.warn("Agent 调用失败，进入规则降级 caseId={}: {}", caseId, e.getMessage());
+                    // 保留完整堆栈：Agent 故障是运维关键信号，不能只记一句话被静默掩盖
+                    log.warn("Agent 调用失败，进入规则降级 caseId={}", caseId, e);
                     report = null;
                 } finally {
                     // Agent 异常/工具轮次耗尽时也保留已执行的部分工具轨迹
@@ -236,10 +237,11 @@ public class DueDiligenceService {
             record(c, WorkflowStage.REASONING, "综合研判交易 / 股权 / 黑名单 / 法规证据，完成风险推理。");
 
             if (report == null || report.riskLevel() == null || report.riskLevel().isBlank()) {
-                DueDiligenceReport fallback = ruleReporter.generate(snapshot.customer(), c.getAlertRule());
+                DueDiligenceReport fallback = ruleReporter.generate(snapshot, c.getAlertRule());
                 if (fallback != null) {
                     report = fallback;
                     reportSource = "RULE_FALLBACK"; // 规则降级输出，不再是模型评级
+                    metrics.caseLlmFallback(); // 降级成功也单独计数，便于区分正常成功与降级成功
                 }
             }
             if (report == null) {
@@ -320,12 +322,22 @@ public class DueDiligenceService {
         return c;
     }
 
-    public List<CaseEntity> listCases() {
-        return caseRepository.findAllByOrderByCreatedAtDesc();
-    }
-
     public org.springframework.data.domain.Page<CaseEntity> listCasesPageable(org.springframework.data.domain.Pageable pageable) {
         return caseRepository.findAllByOrderByCreatedAtDesc(pageable);
+    }
+
+    /** 全量工单状态统计（供看板态势概览，非当前页局部统计） */
+    public CaseStats caseStats() {
+        long total = caseRepository.count();
+        long pending = caseRepository.countByStatus(CaseStatus.PENDING);
+        long running = caseRepository.countByStatus(CaseStatus.RUNNING);
+        long hold = caseRepository.countByStatus(CaseStatus.HOLD);
+        long done = caseRepository.countByStatus(CaseStatus.DONE);
+        long failed = caseRepository.countByStatus(CaseStatus.FAILED);
+        return new CaseStats(total, pending, running, hold, done, failed);
+    }
+
+    public record CaseStats(long total, long pending, long running, long hold, long done, long failed) {
     }
 
     public List<CaseLogEntity> listLogs(Long caseId) {

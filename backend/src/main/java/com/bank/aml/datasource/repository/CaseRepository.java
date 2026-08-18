@@ -15,11 +15,11 @@ import java.util.List;
 
 public interface CaseRepository extends JpaRepository<CaseEntity, Long> {
 
-    List<CaseEntity> findAllByOrderByCreatedAtDesc();
-
     Page<CaseEntity> findAllByOrderByCreatedAtDesc(Pageable pageable);
 
     List<CaseEntity> findByStatusOrderByCreatedAtAsc(CaseStatus status);
+
+    long countByStatus(CaseStatus status);
 
     /** 执行超时的工单（Worker 崩溃等），用于接管恢复 */
     List<CaseEntity> findByStatusAndLockedAtBefore(CaseStatus status, java.time.LocalDateTime before);

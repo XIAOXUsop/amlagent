@@ -8,6 +8,8 @@ import com.bank.aml.service.DueDiligenceService;
 import com.bank.aml.service.WorkflowEventService;
 import com.bank.aml.workflow.CaseExecution;
 import com.bank.aml.workflow.CaseExecutionRepository;
+import com.bank.aml.tools.ToolExecutionTraceEntity;
+import com.bank.aml.tools.ToolExecutionTraceRepository;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
@@ -36,13 +38,16 @@ public class CaseController {
     private final WorkflowEventService workflowEventService;
     private final CaseExecutionRepository caseExecutionRepository;
     private final CustomerDataPort dataSource;
+    private final ToolExecutionTraceRepository toolTraceRepository;
 
     public CaseController(DueDiligenceService service, WorkflowEventService workflowEventService,
-                          CaseExecutionRepository caseExecutionRepository, CustomerDataPort dataSource) {
+                          CaseExecutionRepository caseExecutionRepository, CustomerDataPort dataSource,
+                           ToolExecutionTraceRepository toolTraceRepository) {
         this.service = service;
         this.workflowEventService = workflowEventService;
         this.caseExecutionRepository = caseExecutionRepository;
         this.dataSource = dataSource;
+        this.toolTraceRepository = toolTraceRepository;
     }
 
     /** 全部工单（倒序，分页） */
@@ -57,6 +62,12 @@ public class CaseController {
             throw new IllegalArgumentException("每页条数需在 1 ~ 100 之间");
         }
         return service.listCasesPageable(PageRequest.of(page, size)).map(CaseDto::from);
+    }
+
+    /** 工单全量状态统计（态势概览） */
+    @GetMapping("/stats")
+    public DueDiligenceService.CaseStats stats() {
+        return service.caseStats();
     }
 
     /** 创建预警工单；autoProcess 默认 true，创建后自动触发尽调（仅 ANALYST/ADMIN） */
@@ -99,6 +110,15 @@ public class CaseController {
         return caseExecutionRepository.findByCaseIdOrderByStartedAtAsc(id);
     }
 
+    /** 工具调用轨迹（按执行版本倒序，同一执行内按调用顺序返回；不暴露参数明文与完整结果） */
+    @GetMapping("/{id}/tools")
+    public List<ToolTraceDto> toolTraces(@PathVariable Long id) {
+        return toolTraceRepository.findByCaseIdOrderByExecutionVersionDescSequenceNoAsc(id)
+                .stream()
+                .map(ToolTraceDto::from)
+                .toList();
+    }
+
     /** 人工重试（置回 PENDING 并重新入队；仅 ANALYST/ADMIN） */
     @PostMapping("/{id}/retry")
     @PreAuthorize("hasAnyRole('ANALYST','ADMIN')")
@@ -123,5 +143,22 @@ public class CaseController {
             @NotBlank(message = "客户编号不能为空") String customerId,
             @Size(max = 500, message = "预警规则描述过长（最多 500 字）") String alertRule,
             Boolean autoProcess) {
+    }
+
+    /** 脱敏工具调用轨迹 DTO（不暴露参数明文、完整结果与结果摘要外的敏感字段） */
+    public record ToolTraceDto(
+            int executionVersion,
+            long sequenceNo,
+            String toolName,
+            boolean success,
+            boolean argumentValid,
+            long durationMs,
+            String resultDigest,
+            String errorCode
+    ) {
+        static ToolTraceDto from(ToolExecutionTraceEntity e) {
+            return new ToolTraceDto(e.getExecutionVersion(), e.getSequenceNo(), e.getToolName(),
+                    e.isSuccess(), e.isArgumentValid(), e.getDurationMs(), e.getResultDigest(), e.getErrorCode());
+        }
     }
 }

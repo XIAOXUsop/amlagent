@@ -15,6 +15,7 @@ import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.test.annotation.DirtiesContext;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
@@ -28,11 +29,13 @@ import static org.assertj.core.api.Assertions.assertThat;
  * 可靠工作流集成测试（确定性，直接驱动组件，不依赖后台异步 Worker，避免 Redis 消费时序抖动）。
  * <p>覆盖任务书的可靠性闭环：Outbox 幂等、退避重投、超时接管（Redis 恢复）、死信兜底、原子租约。
  * 复用本机 Docker 的 MySQL/Redis/PGVector。运行：./mvnw test -Dgroups=integration
- * <p>使用独立 Redis Stream 名称，避免与其他集成测试（WorkflowE2ETest）共享消费者组产生消息投递抖动。
+ * <p>使用独立 Redis Stream 名称，避免与其他集成测试（WorkflowE2ETest）共享消费者组产生消息投递抖动；
+ * 本类运行前强制销毁先前缓存的 Spring 上下文，防止其他上下文的后台 Outbox 发布器与本类共享 outbox 表时互相抢占投递。
  */
 @SpringBootTest
 @ActiveProfiles("test")
 @Tag("integration")
+@DirtiesContext(classMode = DirtiesContext.ClassMode.BEFORE_CLASS)
 class ReliabilityWorkflowTest {
 
     @DynamicPropertySource

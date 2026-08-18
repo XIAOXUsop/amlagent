@@ -14,6 +14,7 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 
 /**
@@ -36,11 +37,18 @@ public class WorkflowEventService {
     private static final long HEARTBEAT_INTERVAL_SECONDS = 15;
 
     private final Map<Long, List<SseEmitter>> emitters = new ConcurrentHashMap<>();
-    private final Map<Long, ScheduledExecutorService> heartbeats = new ConcurrentHashMap<>();
+    private final Map<Long, ScheduledFuture<?>> heartbeats = new ConcurrentHashMap<>();
     private final ObjectMapper objectMapper;
+    /** 共享心跳调度器：避免每个订阅工单各建一个线程（并发订阅多时线程数失控） */
+    private final ScheduledExecutorService heartbeatScheduler;
 
     public WorkflowEventService(ObjectMapper objectMapper) {
         this.objectMapper = objectMapper;
+        this.heartbeatScheduler = java.util.concurrent.Executors.newScheduledThreadPool(2, r -> {
+            Thread t = new Thread(r, "sse-heartbeat");
+            t.setDaemon(true);
+            return t;
+        });
     }
 
     /** 订阅某工单的实时事件流 */
@@ -107,12 +115,7 @@ public class WorkflowEventService {
     /** 周期性发送心跳，保持连接活跃、避免被代理掐断 */
     private void startHeartbeat(Long caseId) {
         stopHeartbeat(caseId); // 幂等：防止重复调度
-        ScheduledExecutorService scheduler = newHeartbeatScheduler(caseId);
-        if (scheduler == null) {
-            return;
-        }
-        heartbeats.put(caseId, scheduler);
-        scheduler.scheduleAtFixedRate(() -> {
+        ScheduledFuture<?> future = heartbeatScheduler.scheduleAtFixedRate(() -> {
             List<SseEmitter> list = emitters.get(caseId);
             if (list == null || list.isEmpty()) {
                 stopHeartbeat(caseId);
@@ -127,20 +130,13 @@ public class WorkflowEventService {
                 }
             }
         }, HEARTBEAT_INTERVAL_SECONDS, HEARTBEAT_INTERVAL_SECONDS, TimeUnit.SECONDS);
-    }
-
-    private ScheduledExecutorService newHeartbeatScheduler(Long caseId) {
-        return java.util.concurrent.Executors.newSingleThreadScheduledExecutor(r -> {
-            Thread t = new Thread(r, "sse-heartbeat-" + caseId);
-            t.setDaemon(true);
-            return t;
-        });
+        heartbeats.put(caseId, future);
     }
 
     private void stopHeartbeat(Long caseId) {
-        ScheduledExecutorService scheduler = heartbeats.remove(caseId);
-        if (scheduler != null) {
-            scheduler.shutdownNow();
+        ScheduledFuture<?> future = heartbeats.remove(caseId);
+        if (future != null) {
+            future.cancel(false);
         }
     }
 
@@ -161,5 +157,11 @@ public class WorkflowEventService {
         } catch (Exception e) {
             return "{}";
         }
+    }
+
+    /** 应用关闭时释放共享心跳线程池，避免泄漏 */
+    @jakarta.annotation.PreDestroy
+    public void shutdown() {
+        heartbeatScheduler.shutdownNow();
     }
 }

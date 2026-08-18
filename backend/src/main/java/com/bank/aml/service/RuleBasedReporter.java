@@ -1,9 +1,7 @@
 package com.bank.aml.service;
 
 import com.bank.aml.agent.DueDiligenceReport;
-import com.bank.aml.datasource.CustomerDataPort;
-import com.bank.aml.domain.CustomerProfile;
-import com.bank.aml.rag.LegalDocumentSearcher;
+import com.bank.aml.domain.InvestigationSnapshot;
 import com.bank.aml.tools.CorporateTool;
 import com.bank.aml.tools.LegalSearchTool;
 import com.bank.aml.tools.SanctionTool;
@@ -16,30 +14,24 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * 规则兜底报告器：基于真实数据按规则生成尽调报告。
+ * 规则兜底报告器：基于冻结快照按规则生成尽调报告。
  * <p>用途：
  * <ul>
  *   <li>LLM 报告缺失（Mock 降级 / 调用异常）时保证演示链路有可读输出；</li>
  *   <li>Phase 4 将在此基础上叠加独立 Guardrails 强制校验。</li>
  * </ul>
- * <p>注意：直接通过数据端口与法规检索读取数据（非 Agent 工具路径），避免暴露无身份校验的 Agent Tool。
+ * <p>注意：只读 {@link InvestigationSnapshot}（与 Agent/Guardrails 共享同一份冻结事实），
+ * 不直接访问可变数据源与实时 RAG 索引，避免规则降级报告与模型报告之间的数据漂移。
  */
 @Component
 public class RuleBasedReporter {
 
-    private final CustomerDataPort dataSource;
-    private final LegalDocumentSearcher legalSearcher;
-
-    public RuleBasedReporter(CustomerDataPort dataSource, LegalDocumentSearcher legalSearcher) {
-        this.dataSource = dataSource;
-        this.legalSearcher = legalSearcher;
-    }
-
-    public DueDiligenceReport generate(CustomerProfile customer, String alertRule) {
-        String tx = TransactionTool.format(dataSource.transactionsOf(customer.id()), customer.id());
-        String corp = CorporateTool.format(dataSource.shareholdingsOf(customer.id()), customer.id());
-        String sanction = SanctionTool.format(dataSource.searchSanctions(customer.name()));
-        String legal = LegalSearchTool.format(legalSearcher.search("大额交易 客户尽职调查", 3));
+    public DueDiligenceReport generate(InvestigationSnapshot snapshot, String alertRule) {
+        var customer = snapshot.customer();
+        String tx = TransactionTool.format(snapshot.transactions(), customer.id());
+        String corp = CorporateTool.format(snapshot.shareholdings(), customer.id());
+        String sanction = SanctionTool.format(snapshot.sanctionHits());
+        String legal = LegalSearchTool.format(snapshot.legalEvidence());
 
         List<String> riskPoints = new ArrayList<>();
         String riskLevel = assess(tx, sanction, riskPoints);
