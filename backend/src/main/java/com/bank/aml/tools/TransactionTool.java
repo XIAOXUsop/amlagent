@@ -1,10 +1,6 @@
 package com.bank.aml.tools;
 
-import com.bank.aml.datasource.CustomerDataPort;
 import com.bank.aml.domain.TransactionRecord;
-import dev.langchain4j.agent.tool.P;
-import dev.langchain4j.agent.tool.Tool;
-import org.springframework.stereotype.Component;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
@@ -14,26 +10,20 @@ import java.util.Map;
 import java.util.stream.Collectors;
 
 /**
- * 交易数据工具：查询客户近 180 天交易流水并聚合风险画像。
+ * 交易数据格式化工具：把交易记录聚合为可读的风险画像。
+ * <p>当前作为纯静态格式化器被 {@link SnapshotToolSuite} 复用。
+ * 注意：此工具不直接暴露给 LLM 作为 Agent Tool（避免无身份校验的 IDOR 越权面），
+ * Agent 一律通过绑定冻结快照的 {@link SnapshotToolSuite} 读取数据。
  */
-@Component
-public class TransactionTool {
+public final class TransactionTool {
 
     private static final BigDecimal MILLION = new BigDecimal("1000000");
     private static final BigDecimal HALF_MILLION = new BigDecimal("500000");
 
-    private final CustomerDataPort dataSource;
-
-    public TransactionTool(CustomerDataPort dataSource) {
-        this.dataSource = dataSource;
+    private TransactionTool() {
     }
 
-    @Tool("查询客户近180天交易画像，返回交易笔数、总额、夜间交易占比、跨境交易占比、大额交易笔数与涉及地区等风险特征")
-    public String transactionProfile(@P("客户编号，如 C001") String customerId) {
-        return format(dataSource.transactionsOf(customerId), customerId);
-    }
-
-    /** 从已冻结的交易原始数据生成画像文本（快照工具与 Spring 工具复用同一格式化逻辑） */
+    /** 从已冻结的交易原始数据生成画像文本（快照套件复用同一格式化逻辑） */
     public static String format(List<TransactionRecord> txns, String customerId) {
         if (txns.isEmpty()) {
             return "未查询到客户 " + customerId + " 的交易记录。";

@@ -10,6 +10,7 @@ import com.bank.aml.workflow.CaseExecution;
 import com.bank.aml.workflow.CaseExecutionRepository;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.Size;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -48,7 +49,14 @@ public class CaseController {
     @GetMapping
     public Page<CaseDto> list(@RequestParam(defaultValue = "0") int page,
                               @RequestParam(defaultValue = "10") int size) {
-        return service.listCasesPageable(PageRequest.of(page, Math.min(size, 100))).map(CaseDto::from);
+        // 显式校验，避免 Spring PageRequest 抛英文内部错误（反人性），改为 400 中文提示
+        if (page < 0) {
+            throw new IllegalArgumentException("页码不能为负数");
+        }
+        if (size <= 0 || size > 100) {
+            throw new IllegalArgumentException("每页条数需在 1 ~ 100 之间");
+        }
+        return service.listCasesPageable(PageRequest.of(page, size)).map(CaseDto::from);
     }
 
     /** 创建预警工单；autoProcess 默认 true，创建后自动触发尽调（仅 ANALYST/ADMIN） */
@@ -113,7 +121,7 @@ public class CaseController {
 
     public record CreateCaseRequest(
             @NotBlank(message = "客户编号不能为空") String customerId,
-            String alertRule,
+            @Size(max = 500, message = "预警规则描述过长（最多 500 字）") String alertRule,
             Boolean autoProcess) {
     }
 }

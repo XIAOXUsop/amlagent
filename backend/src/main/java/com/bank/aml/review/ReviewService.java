@@ -45,14 +45,20 @@ public class ReviewService {
     public ManualReview submit(Long caseId, String reviewerId, String reviewerRiskLevel,
                                String decision, String comment, int expectedReviewRevision) {
         if (reviewerRiskLevel != null && !ALLOWED_RISK_LEVELS.contains(reviewerRiskLevel)) {
-            throw new IllegalArgumentException("非法风险等级：" + reviewerRiskLevel);
+            throw new IllegalArgumentException("请选择有效的复核评级（低风险 / 中风险 / 高风险）");
         }
-        String normalizedDecision = decision == null ? "" : decision.toUpperCase();
+        if (decision == null || decision.isBlank()) {
+            throw new IllegalArgumentException("请填写复核决定（批准 / 驳回 / 升级）");
+        }
+        String normalizedDecision = decision.toUpperCase();
         if (!ALLOWED_DECISIONS.contains(normalizedDecision)) {
             throw new IllegalArgumentException("非法复核决定：" + decision);
         }
         if (comment != null && comment.length() > MAX_COMMENT_LENGTH) {
             throw new IllegalArgumentException("复核意见过长（最多 " + MAX_COMMENT_LENGTH + " 字）");
+        }
+        if (comment != null && comment.isBlank()) {
+            comment = null; // 全空白意见视为未填写，避免复核记录出现"看不见的空白"
         }
 
         CaseEntity c = caseRepository.findById(caseId)

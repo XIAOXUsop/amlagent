@@ -40,6 +40,9 @@ logging:
   level:
     com.bank.aml: INFO
     dev.langchain4j: INFO
+  # 在日志中加入 traceId（由 TraceIdFilter 写入 MDC），便于按一次请求/工单聚合关联排查
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss.SSS} %-5level [%thread] [%X{traceId:-}] %logger{36} - %msg%n"
 
 # ---- AML 专有配置 ----
 aml:

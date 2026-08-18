@@ -1,7 +1,9 @@
 package com.bank.aml.service;
 
 import com.bank.aml.agent.DueDiligenceReport;
+import com.bank.aml.datasource.CustomerDataPort;
 import com.bank.aml.domain.CustomerProfile;
+import com.bank.aml.rag.LegalDocumentSearcher;
 import com.bank.aml.tools.CorporateTool;
 import com.bank.aml.tools.LegalSearchTool;
 import com.bank.aml.tools.SanctionTool;
@@ -14,34 +16,30 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * 规则兜底报告器：基于工具返回的真实数据按规则生成尽调报告。
+ * 规则兜底报告器：基于真实数据按规则生成尽调报告。
  * <p>用途：
  * <ul>
  *   <li>LLM 报告缺失（Mock 降级 / 调用异常）时保证演示链路有可读输出；</li>
  *   <li>Phase 4 将在此基础上叠加独立 Guardrails 强制校验。</li>
  * </ul>
+ * <p>注意：直接通过数据端口与法规检索读取数据（非 Agent 工具路径），避免暴露无身份校验的 Agent Tool。
  */
 @Component
 public class RuleBasedReporter {
 
-    private final TransactionTool transactionTool;
-    private final CorporateTool corporateTool;
-    private final SanctionTool sanctionTool;
-    private final LegalSearchTool legalSearchTool;
+    private final CustomerDataPort dataSource;
+    private final LegalDocumentSearcher legalSearcher;
 
-    public RuleBasedReporter(TransactionTool transactionTool, CorporateTool corporateTool,
-                             SanctionTool sanctionTool, LegalSearchTool legalSearchTool) {
-        this.transactionTool = transactionTool;
-        this.corporateTool = corporateTool;
-        this.sanctionTool = sanctionTool;
-        this.legalSearchTool = legalSearchTool;
+    public RuleBasedReporter(CustomerDataPort dataSource, LegalDocumentSearcher legalSearcher) {
+        this.dataSource = dataSource;
+        this.legalSearcher = legalSearcher;
     }
 
     public DueDiligenceReport generate(CustomerProfile customer, String alertRule) {
-        String tx = transactionTool.transactionProfile(customer.id());
-        String corp = corporateTool.corporateProfile(customer.id());
-        String sanction = sanctionTool.checkSanctions(customer.name(), customer.idCard());
-        String legal = legalSearchTool.searchLegal("大额交易 客户尽职调查");
+        String tx = TransactionTool.format(dataSource.transactionsOf(customer.id()), customer.id());
+        String corp = CorporateTool.format(dataSource.shareholdingsOf(customer.id()), customer.id());
+        String sanction = SanctionTool.format(dataSource.searchSanctions(customer.name()));
+        String legal = LegalSearchTool.format(legalSearcher.search("大额交易 客户尽职调查", 3));
 
         List<String> riskPoints = new ArrayList<>();
         String riskLevel = assess(tx, sanction, riskPoints);

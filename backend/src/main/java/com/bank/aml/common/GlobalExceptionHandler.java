@@ -1,5 +1,7 @@
 package com.bank.aml.common;
 
+import com.bank.aml.common.exception.NonRetryableWorkflowException;
+import com.bank.aml.common.exception.RetryableWorkflowException;
 import com.bank.aml.common.exception.WorkflowStateConflictException;
 import jakarta.servlet.http.HttpServletRequest;
 import org.slf4j.Logger;
@@ -49,6 +51,34 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(WorkflowStateConflictException.class)
     public ResponseEntity<ApiError> handleStateConflict(WorkflowStateConflictException ex, HttpServletRequest req) {
         return build(HttpStatus.CONFLICT, "WORKFLOW_STATE_CONFLICT", ex.getMessage(), req);
+    }
+
+    /**
+     * 不可重试工作流异常：多为客户输入/参数级业务错误（如"客户不存在"）。
+     * 映射为 400，并透出可理解的中文 message，避免被当成"服务器内部错误"(500)。
+     */
+    @ExceptionHandler(NonRetryableWorkflowException.class)
+    public ResponseEntity<ApiError> handleNonRetryable(NonRetryableWorkflowException ex, HttpServletRequest req) {
+        return build(HttpStatus.BAD_REQUEST, "BUSINESS_ERROR", ex.getMessage(), req);
+    }
+
+    /**
+     * 可重试工作流异常属 Worker 内部重试语义；若意外在同步 HTTP 请求中出现，映射为 502
+     * （上游依赖不可用），并透出中文原因，而不是笼统的 500。
+     */
+    @ExceptionHandler(RetryableWorkflowException.class)
+    public ResponseEntity<ApiError> handleRetryable(RetryableWorkflowException ex, HttpServletRequest req) {
+        log.warn("同步请求透出可重试工作流异常 traceId={}", req.getAttribute("traceId"), ex);
+        return build(HttpStatus.BAD_GATEWAY, "UPSTREAM_RETRYABLE", ex.getMessage(), req);
+    }
+
+    /**
+     * {@link IllegalStateException} 表示请求的前置状态不满足（缺环境配置、重复执行等可预期场景）。
+     * 映射为 412（前置条件失败）而非 500，让用户能看到具体中文原因而非笼统的"服务器内部错误"。
+     */
+    @ExceptionHandler(IllegalStateException.class)
+    public ResponseEntity<ApiError> handleIllegalState(IllegalStateException ex, HttpServletRequest req) {
+        return build(HttpStatus.PRECONDITION_FAILED, "PRECONDITION_FAILED", ex.getMessage(), req);
     }
 
     @ExceptionHandler(Exception.class)

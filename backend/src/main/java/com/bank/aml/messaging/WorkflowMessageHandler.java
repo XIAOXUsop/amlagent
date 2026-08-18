@@ -60,6 +60,19 @@ public class WorkflowMessageHandler {
     }
 
     public void onMessage(MapRecord<String, String, String> record) {
+        // 用 caseId 作为 MDC 上下文，使本次 Worker 处理的所有日志（Agent/Guardrail/落库）可按工单聚合
+        String caseIdFromMsg = record.getValue().get("caseId");
+        if (caseIdFromMsg != null) {
+            org.slf4j.MDC.put("caseId", caseIdFromMsg);
+        }
+        try {
+            onMessageInternal(record);
+        } finally {
+            org.slf4j.MDC.remove("caseId");
+        }
+    }
+
+    private void onMessageInternal(MapRecord<String, String, String> record) {
         Map<String, String> value = record.getValue();
         Long caseId;
         try {

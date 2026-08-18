@@ -26,7 +26,6 @@ import com.bank.aml.datasource.repository.CaseRepository;
 import com.bank.aml.messaging.WorkflowCommandService;
 import com.bank.aml.messaging.ExecutionLease;
 import com.bank.aml.observability.MetricsRecorder;
-import com.bank.aml.observability.ModelPurposeContext;
 import com.bank.aml.tools.ToolExecutionTrace;
 import com.bank.aml.tools.ToolExecutionTraceEntity;
 import com.bank.aml.tools.ToolExecutionTraceRepository;
@@ -81,7 +80,6 @@ public class DueDiligenceService {
     private final LegalKeywordResolver legalKeywordResolver;
     private final ObjectMapper objectMapper;
     private final ExecutorService summaryExecutor;
-    private final ModelPurposeContext purposeContext;
     private final ToolExecutionTraceRepository toolTraceRepository;
     private final LlmProperties llmProperties;
 
@@ -102,7 +100,7 @@ public class DueDiligenceService {
                                @Value("${aml.cost-routing.summary-enabled:false}") boolean summaryEnabled,
                                StreamingAnalysisAgent streamingAnalysisAgent, StreamingChatModel streamingChatModel,
                                LegalKeywordResolver legalKeywordResolver, ObjectMapper objectMapper,
-                               ExecutorService summaryExecutor, ModelPurposeContext purposeContext,
+                               ExecutorService summaryExecutor,
                                ToolExecutionTraceRepository toolTraceRepository, LlmProperties llmProperties) {
         this.caseRepository = caseRepository;
         this.caseLogRepository = caseLogRepository;
@@ -125,7 +123,6 @@ public class DueDiligenceService {
         this.legalKeywordResolver = legalKeywordResolver;
         this.objectMapper = objectMapper;
         this.summaryExecutor = summaryExecutor;
-        this.purposeContext = purposeContext;
         this.toolTraceRepository = toolTraceRepository;
         this.llmProperties = llmProperties;
     }
@@ -314,6 +311,11 @@ public class DueDiligenceService {
                 c.getModelProvider(), c.getModelName(), c.isModelFallback());
         if (updated == 0) {
             log.warn("工单 {} 终态落库被丢弃（已被接管，worker/version 不匹配）", caseId);
+        } else {
+            // 落库成功且仍持有租约：推 DONE 终端事件并结束 SSE，让前端明确"流已结束"
+            if (lease == null || lease.isValid()) {
+                workflowEventService.complete(caseId);
+            }
         }
         return c;
     }
@@ -382,7 +384,7 @@ public class DueDiligenceService {
         exec.setDurationMs(durationMs);
         lastStageAt.set(now);
         caseExecutionRepository.save(exec);
-        metrics.recordStageDuration(durationMs);
+        metrics.recordStageDuration(stage.name(), durationMs);
     }
 
     /** 持久化工具调用轨迹（不落参数明文）：写入 tool_execution_trace 表 + 工单日志可读摘要 */
@@ -429,7 +431,6 @@ public class DueDiligenceService {
         }
         // 有界线程池异步执行，避免阻塞 Worker / 占用公共 ForkJoinPool；摘要失败不影响主工单成功
         summaryExecutor.execute(() -> {
-            purposeContext.set("summary");
             try {
                 StringBuilder sb = new StringBuilder();
                 CountDownLatch latch = new CountDownLatch(1);
@@ -450,8 +451,6 @@ public class DueDiligenceService {
                 latch.await(60, TimeUnit.SECONDS);
             } catch (Exception e) {
                 log.warn("流式摘要异常，跳过：{}", e.getMessage());
-            } finally {
-                purposeContext.clear();
             }
         });
     }

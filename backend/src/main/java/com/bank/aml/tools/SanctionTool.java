@@ -1,37 +1,21 @@
 package com.bank.aml.tools;
 
-import com.bank.aml.datasource.CustomerDataPort;
 import com.bank.aml.domain.SanctionRecord;
-import dev.langchain4j.agent.tool.P;
-import dev.langchain4j.agent.tool.Tool;
-import org.springframework.stereotype.Component;
 
-import java.util.ArrayList;
 import java.util.List;
 import java.util.stream.Collectors;
 
 /**
- * 制裁黑名单工具：检索 OFAC / 国内制裁名单，返回命中条目与风险等级。
+ * 制裁黑名单格式化工具：把制裁命中条目格式化为可读文本。
+ * <p>当前作为纯静态格式化器被 {@link SnapshotToolSuite} 复用。
+ * 不直接暴露给 LLM 作为 Agent Tool，规避无身份校验的越权面；Agent 一律经快照套件读取数据。
  */
-@Component
-public class SanctionTool {
+public final class SanctionTool {
 
-    private final CustomerDataPort dataSource;
-
-    public SanctionTool(CustomerDataPort dataSource) {
-        this.dataSource = dataSource;
+    private SanctionTool() {
     }
 
-    @Tool("检索制裁黑名单（OFAC / 国内制裁名单），按客户姓名与证件号匹配，返回命中条目、名单类型与风险等级")
-    public String checkSanctions(@P("客户姓名") String customerName, @P("客户证件号") String idCard) {
-        List<SanctionRecord> hits = new ArrayList<>(dataSource.searchSanctions(customerName));
-        if (idCard != null && !idCard.isBlank()) {
-            hits.addAll(dataSource.searchSanctions(idCard));
-        }
-        return format(hits);
-    }
-
-    /** 从已冻结的制裁命中生成文本（快照工具与 Spring 工具复用同一格式化逻辑；内部去重） */
+    /** 从已冻结的制裁命中生成文本（快照套件复用；内部去重） */
     public static String format(List<SanctionRecord> hits) {
         List<SanctionRecord> distinct = hits.stream().distinct().toList();
         if (distinct.isEmpty()) {

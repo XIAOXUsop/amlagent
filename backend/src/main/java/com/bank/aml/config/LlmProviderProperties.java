@@ -1,5 +1,6 @@
 package com.bank.aml.config;
 
+import java.time.Duration;
 import java.util.Optional;
 
 /**
@@ -21,6 +22,12 @@ public class LlmProviderProperties {
 
     /** 采样温度，金融场景默认较低以保证严谨 */
     private Double temperature = 0.2;
+
+    /** 单次 LLM 调用超时（秒）；默认 60s 防止模型挂起无限阻塞 Worker */
+    private int timeoutSeconds = 60;
+
+    /** LLM 单次调用失败的最大自动重试次数（仅瞬时类错误），防止无限重试 */
+    private int maxRetries = 2;
 
     public String getType() {
         return type;
@@ -60,6 +67,27 @@ public class LlmProviderProperties {
 
     public void setTemperature(Double temperature) {
         this.temperature = temperature;
+    }
+
+    public int getTimeoutSeconds() {
+        return timeoutSeconds;
+    }
+
+    public void setTimeoutSeconds(int timeoutSeconds) {
+        this.timeoutSeconds = timeoutSeconds;
+    }
+
+    /** 单次 LLM 调用超时 Duration */
+    public Duration timeout() {
+        return Duration.ofSeconds(Math.max(1, timeoutSeconds));
+    }
+
+    public int getMaxRetries() {
+        return maxRetries;
+    }
+
+    public void setMaxRetries(int maxRetries) {
+        this.maxRetries = maxRetries;
     }
 
     public LlmProperties.ProviderType typeEnum() {

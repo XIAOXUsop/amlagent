@@ -46,7 +46,8 @@ public class ChatModelConfig {
                 var b = AnthropicChatModel.builder()
                         .apiKey(active.getApiKey())
                         .modelName(active.getModelName())
-                        .temperature(active.getTemperature());
+                        .temperature(active.getTemperature())
+                        .timeout(active.timeout());
                 if (active.getBaseUrl() != null && !active.getBaseUrl().isBlank()) {
                     b.baseUrl(active.getBaseUrl());
                 }
@@ -62,6 +63,9 @@ public class ChatModelConfig {
                         .apiKey(active.getApiKey())
                         .modelName(active.getModelName())
                         .temperature(active.getTemperature())
+                        // 防止 LLM API 挂起无限阻塞 Worker：超时 + 瞬时错误自动重试
+                        .timeout(active.timeout())
+                        .maxRetries(active.getMaxRetries())
                         // DeepSeek 等支持并行工具调用
                         .parallelToolCalls(true);
                 if (active.getBaseUrl() != null && !active.getBaseUrl().isBlank()) {
@@ -100,7 +104,8 @@ public class ChatModelConfig {
         var b = OpenAiStreamingChatModel.builder()
                 .apiKey(active.getApiKey())
                 .modelName(active.getModelName())
-                .temperature(active.getTemperature());
+                .temperature(active.getTemperature())
+                .timeout(active.timeout());
         if (active.getBaseUrl() != null && !active.getBaseUrl().isBlank()) {
             b.baseUrl(active.getBaseUrl());
         }

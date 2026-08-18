@@ -20,7 +20,6 @@ public class MetricsRecorder {
     private final Counter guardrailCorrectionTotal;
     private final Counter ragCacheHitTotal;
     private final Counter ragCacheMissTotal;
-    private final Timer stageDuration;
 
     public MetricsRecorder(MeterRegistry registry) {
         this.registry = registry;
@@ -30,7 +29,6 @@ public class MetricsRecorder {
         this.guardrailCorrectionTotal = registry.counter("aml_guardrail_correction_total");
         this.ragCacheHitTotal = registry.counter("aml_rag_cache_hit_total");
         this.ragCacheMissTotal = registry.counter("aml_rag_cache_miss_total");
-        this.stageDuration = registry.timer("aml_stage_duration_seconds");
     }
 
     public void caseCreated() {
@@ -83,8 +81,8 @@ public class MetricsRecorder {
         ragCacheMissTotal.increment();
     }
 
-    public void recordStageDuration(long durationMs) {
-        stageDuration.record(Duration.ofMillis(durationMs));
+    public void recordStageDuration(String stage, long durationMs) {
+        registry.timer("aml_stage_duration_seconds", "stage", stage).record(Duration.ofMillis(durationMs));
     }
 
     // ---- 可靠队列健康指标（Redis Streams 消费者）----
