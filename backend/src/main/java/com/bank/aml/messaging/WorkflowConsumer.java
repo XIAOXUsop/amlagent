@@ -144,40 +144,25 @@ public class WorkflowConsumer implements ApplicationRunner, DisposableBean {
             return false;
         }
         try {
-            Long streamLen = redisTemplate.opsForStream().size(props.getStream());
             long ackTotal = consumptionTracker.ackTotal();
             // 本周期消费者是否推进（ACK 相比上次探测增加，说明在读消息）
             boolean progressing = ackTotal > lastAckTotal;
             lastAckTotal = ackTotal;
 
-            long lag;
-            if (streamLen == null || streamLen <= 0) {
-                // stream 为空：无积压，健康（即使 ack 未推进也正常）
-                lag = 0;
-            } else {
-                // stream 非空：积压以 pending（已投递未 ACK）计；pending 取不到时退化为 stream 长度
-                long pending = pendingCount();
-                lag = pending >= 0 ? pending : streamLen;
-                // 停滞判据：有积压但消费者未推进（未读取/未 ACK）
-                if (lag <= 0 && !progressing) {
-                    // pending 为 0 但 stream 非空，说明消息"完全未被读取"（消费组未投递），记积压为 stream 长度
-                    lag = streamLen;
-                }
-            }
+            // 真实 lag = 消费组 pending（已投递尚未 ACK 的消息数）。
+            // 注意：stream 总长度会长期保留已 ACK 的历史消息，绝不能把它当成 lag，
+            // 否则会误把"正常消费后的历史留存"判成停滞，触发无谓的容器重建打断消费。
+            long pending = pendingCount();
+            long lag = pending >= 0 ? pending : 0L;
 
             lastLag.set(Math.max(0, lag));
             lastProbeFailed.set(false);
             metrics.queueLag(lastLag.get());
 
-            boolean stalled;
-            if (lastLag.get() <= 0) {
-                stalled = false;
-            } else {
-                // 有积压；若消费者未推进则停滞，若在推进则是追赶中（健康）
-                stalled = !progressing;
-            }
-            if (lastLag.get() > 0 && progressing) {
-                log.debug("Redis Stream 消费追赶中，剩余 lag={}", lastLag.get());
+            // 停滞判据：确实有 pending 且消费者 ACK 未推进（真正卡住）；pending 为 0 时始终视为健康
+            boolean stalled = lag > 0 && !progressing;
+            if (lag > 0 && progressing) {
+                log.debug("Redis Stream 消费追赶中，剩余 pending={}", lag);
             }
             return !stalled;
         } catch (Exception e) {
