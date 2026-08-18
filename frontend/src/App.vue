@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { checkAuth, logout as apiLogout, type AuthenticatedUser } from './api/client'
 import { currentUser, markAuthReady } from './auth'
@@ -22,7 +22,18 @@ onMounted(async () => {
     authReady.value = true
     markAuthReady()
   }
+  // 会话过期（任意接口返回 401）时平滑回到登录界面，避免整页跳转丢失上下文
+  window.addEventListener('auth:expired', handleAuthExpired)
 })
+
+onBeforeUnmount(() => {
+  window.removeEventListener('auth:expired', handleAuthExpired)
+})
+
+function handleAuthExpired() {
+  currentUser.value = null
+  router.replace('/cases')
+}
 
 function handleLoggedIn(user: AuthenticatedUser) {
   currentUser.value = user

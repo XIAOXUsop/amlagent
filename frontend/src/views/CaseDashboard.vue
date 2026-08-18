@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { createCase, fmtDateTime, listCases, listCustomers, processCase, type CaseItem, type Customer } from '../api/client'
+import { createCase, fmtDateTime, listCases, listCaseStats, listCustomers, processCase, type CaseItem, type CaseStats, type Customer } from '../api/client'
+import { riskMeta, statusMeta } from '../constants/case'
 import { Plus, Refresh, Search } from '@element-plus/icons-vue'
 
 const emit = defineEmits<{ (e: 'open-case', id: number): void }>()
@@ -15,40 +16,36 @@ const processingId = ref<number | null>(null)
 const page = ref(0)
 const total = ref(0)
 const pageSize = 10
+const stats = ref<CaseStats | null>(null)
 
-const statusMeta: Record<string, { text: string; cls: string; dot: string }> = {
-  PENDING: { text: '待处理', cls: 'st-pending', dot: '#64748b' },
-  RUNNING: { text: '执行中', cls: 'st-running', dot: '#e0a23a' },
-  DONE: { text: '已完成', cls: 'st-done', dot: '#2fa37f' },
-  HOLD: { text: '转人工', cls: 'st-hold', dot: '#c43d4b' },
-  FAILED: { text: '失败', cls: 'st-failed', dot: '#c43d4b' },
-}
-
-const riskMeta: Record<string, { text: string; cls: string }> = {
-  低风险: { text: '低风险', cls: 'rk-low' },
-  中风险: { text: '中风险', cls: 'rk-mid' },
-  高风险: { text: '高风险', cls: 'rk-high' },
-}
-
-// 态势概览（基于当前页数据；总数来自分页 total）
+// 态势概览：来自后端全量统计接口（跨分页），不再以当前页数据冒充全局数字
 const overview = computed(() => {
-  const c = cases.value
+  const s = stats.value
   return {
-    total: total.value,
-    pending: c.filter((x) => x.status === 'PENDING').length,
-    running: c.filter((x) => x.status === 'RUNNING').length,
-    hold: c.filter((x) => x.status === 'HOLD').length,
-    done: c.filter((x) => x.status === 'DONE').length,
+    total: s?.total ?? total.value,
+    pending: s?.pending ?? 0,
+    running: s?.running ?? 0,
+    hold: s?.hold ?? 0,
+    done: s?.done ?? 0,
   }
 })
 
 onMounted(async () => {
   await refresh()
+  loadStats()
   customers.value = await listCustomers()
   if (customers.value.length > 0) {
     selectedCustomer.value = customers.value[0].id
   }
 })
+
+async function loadStats() {
+  try {
+    stats.value = await listCaseStats()
+  } catch {
+    stats.value = null
+  }
+}
 
 async function refresh() {
   listLoading.value = true
@@ -82,6 +79,7 @@ async function handleCreate() {
     const c = await createCase(selectedCustomer.value, alertRule.value.trim())
     ElMessage.success(`工单 #${c.id} 创建成功`)
     await refresh()
+    loadStats()
     emit('open-case', c.id)
   } catch {
     ElMessage.error('创建工单失败，请检查客户与预警规则后重试')
@@ -100,10 +98,6 @@ async function handleProcess(row: CaseItem) {
   } finally {
     processingId.value = null
   }
-}
-
-function fmtTime(s: string): string {
-  return fmtDateTime(s)
 }
 
 function srcTag(row: CaseItem) {
@@ -191,7 +185,7 @@ function srcTag(row: CaseItem) {
         </el-table-column>
         <el-table-column label="创建时间" width="168">
           <template #default="{ row }">
-            <span class="mono-num time">{{ fmtTime(row.createdAt) }}</span>
+            <span class="mono-num time">{{ fmtDateTime(row.createdAt) }}</span>
           </template>
         </el-table-column>
         <el-table-column label="操作" width="170" fixed="right">

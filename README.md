@@ -211,13 +211,14 @@ docker-compose.yml        MySQL + PostgreSQL(pgvector) + Redis
 | GET | /actuator/prometheus | Prometheus 指标（放行） |
 | GET | /swagger-ui.html | OpenAPI 文档（放行） |
 | GET | /api/cases/customers | 演示客户（脱敏，不含证件号） |
+| GET | /api/cases/stats | 工单全量状态统计（态势概览，跨分页） |
 | GET | /api/agent/ping | LLM 连通性验证 |
 
 ## 关键设计
 
-- **可靠异步任务**：Transactional Outbox（工单与事件同事务，`caseId:eventType:executionVersion` 幂等键防重复发布）→ Redis Streams 消费组 → 条件更新抢占（`executionVersion`）→ 版本化租约 + Worker 心跳（心跳/完成/失败均绑定 worker+version，防旧 Worker 污染新执行版本）→ 指数退避重试（RETRY_WAIT）→ 死信队列 → Pending 超时接管（服务重启任务不丢失）。重试、接管、死信重放统一走 Outbox，消除数据库提交与 Redis 投递之间的双写丢失窗口。
-- **Guardrails 配置化**：`risk_rule` 表驱动（DSL 条件表达式 + 优先级 + 生效时间），决策可解释（ruleCode / version / evidence / 动作），一级制裁命中零漏报并强制转人工。
-- **RAG 证据追溯**：法规片段带唯一 `evidenceId`，向量 + 关键词 + RRF 混合召回，报告引用可回溯到具体条款原文。
+- **可靠异步任务**：Transactional Outbox（工单与事件同事务，`caseId:eventType:executionVersion` 幂等键防重复发布）→ **发布抢占（PENDING→PUBLISHING→PUBLISHED 原子状态机，多实例并发只允许一个发布器投递，杜绝重复/错投；崩溃残留由陈旧 Claim 30s 回收）** → Redis Streams 消费组 → 条件更新抢占（`executionVersion`）→ 版本化租约 + Worker 心跳（心跳/完成/失败均绑定 worker+version，防旧 Worker 污染新执行版本）→ 指数退避重试（RETRY_WAIT）→ 死信队列 → Pending 超时接管（服务重启任务不丢失）。重试、接管、死信重放统一走 Outbox，消除数据库提交与 Redis 投递之间的双写丢失窗口；Stream 按 MAXLEN 近似裁剪，防止已 ACK 消息长期驻留导致内存无限增长。
+- **Guardrails 配置化**：`risk_rule` 表驱动（DSL 条件表达式 + 优先级 + 生效时间），决策可解释（ruleCode / version / evidence / 动作），一级制裁命中零漏报并强制转人工。规则加载带 60s TTL 缓存，避免每次护栏评估查库。
+- **RAG 证据追溯**：法规片段带唯一 `evidenceId`，向量 + 关键词 + RRF 混合召回，报告引用可回溯到具体条款原文；`searchLegal` 工具按快照冻结关键词校验查询覆盖，与评测契约一致。
 - **召回 + 精排两步走**：混合召回 top-20 候选，本地 bge-reranker（Cross-Encoder）精排 top-3，Recall@5 由 82.9% 提升至 94.3%。
 - **分层评测**：固定种子生成 100 条规则回归输入，各场景期望结果显式定义且基线固定为低风险，覆盖困难负例并隔离验证 Guardrails 升级行为；RAG 同源问题集仅用于检索回归。真实 Agent 指标来自独立 DEV 夹具，避免将规则结果误标为模型能力。
 - **独立 Agent 案例集**：首版 15 条版本化合成案例与规则代码完全分离，覆盖正常交易、跨境夜间、拆分交易、复杂 UBO、名单精确/误命中、数据缺失和提示注入；DEV/TEST 分片独立，TEST 标准答案不经接口暴露。当前标签状态为 `PENDING_DOMAIN_REVIEW`，不宣称专家金标。
@@ -225,10 +226,12 @@ docker-compose.yml        MySQL + PostgreSQL(pgvector) + Redis
 - **DeepSeek 工具调用兼容**：V4 默认 thinking 模式要求多轮回传 `reasoning_content`；当前基线显式使用非思考模式，保证 LangChain4j 多轮工具调用稳定且温度设置有效。
 - **多数据源隔离**：MySQL 业务库（@Primary，JPA）与 PostgreSQL 向量库（pgDataSource，仅 RAG）通过显式 DataSource 分离，避免自动配置冲突。
 - **Port/Adapter 数据解耦**：领域模型（`CustomerProfile`/`TransactionRecord`/`ShareholdingRecord`/`SanctionRecord`）与数据源分离，`CustomerDataPort` 接口隔离 Mock 与真实数据源；工具/Service/Guardrails 依赖 Port 而非 Mock 实现，生产核心包不再引用 `datasource.mock` 内部类型。
-- **Snapshot First 统一快照**：`InvestigationSnapshotFactory` 在 Agent 推理前一次性冻结客户、交易、股权、制裁原始领域对象与派生风险事实，并计算 `sourceDigest`/`snapshotId`/`asOfTime`/`legalIndexVersion`；每个工单由 `DueDiligenceAgentFactory` 动态创建绑定只读快照工具套件（`SnapshotToolSuite`）的 Agent，Agent 工具与 Guardrails 只读同一份冻结快照，不再二次访问可变数据源，消除长链路时序不一致。
+- **Snapshot First 统一快照**：`InvestigationSnapshotFactory` 在 Agent 推理前一次性冻结客户、交易、股权、制裁原始领域对象、法规证据与派生风险事实，并计算 `sourceDigest`/`snapshotId`/`asOfTime`/`legalIndexVersion`；每个工单由 `DueDiligenceAgentFactory` 动态创建绑定只读快照工具套件（`SnapshotToolSuite`）的 Agent，Agent 工具、Guardrails 与**规则兜底报告器**只读同一份冻结快照，不再二次访问可变数据源，消除长链路时序不一致。
 - **Mock 可插拔数据层**：`MockDataSource` 内置交易/股权/黑名单演示数据；接入真实系统时替换实现即可，工具签名不变。
 - **Mock 模型 agentic 循环**：无 API Key 时 Mock 模型模拟多轮工具调用，保证链路离线可演示。
 - **本地 embedding**：DeepSeek 无官方 embedding API，默认用 all-MiniLM-L6-v2 离线向量化，可在配置中切换中文 embedding 服务。
+- **安全加固**：登录失败速率限制（按 IP+用户名固定窗口计数，超限锁定 5 分钟，缓解暴力破解与撞库）；`X-Request-Id` 透传白名单校验（防日志注入），响应体/响应头/日志 MDC 三方 traceId 一致；JWT 走 HttpOnly Cookie，CSRF 双 Cookie，生产环境启动自检（强密钥/非默认口令/Flyway/真实 Key）。
+- **可观测性**：统一 `MetricsRecorder` 埋点（`aml_llm_*`、`aml_case_*`、`aml_stage_duration_seconds`、`aml_queue_*`），LLM 失败路径同样记录耗时与错误数；Agent 调用失败走规则降级时单独计数 `aml_case_llm_fallback_total`，保留完整异常堆栈，不再被静默掩盖；`aml_queue_lag` 用可变 AtomicLong 注册 Gauge，实时反映消费积压。
 
 ## 设计文档
 
@@ -240,14 +243,14 @@ docker-compose.yml        MySQL + PostgreSQL(pgvector) + Redis
 ## 自动化测试
 
 ```bash
-# 后端：91 项确定性单元测试（排除集成）+ 8 项工作流集成/E2E
+# 后端：137 项确定性单元测试（排除集成）+ 8 项工作流集成/E2E
 cd backend
 ./mvnw test                        # 单元测试（不依赖 Docker）
 ./mvnw test -Dgroups=integration   # 集成测试（需本机 Docker 的 MySQL/Redis/pgvector）
 
 # 前端：Vitest 组件测试 + 生产构建
 cd frontend
-npm test                           # 组件测试
+npm test                           # 组件测试（路由 + 共享状态常量）
 npm run build                      # vue-tsc 类型检查 + Vite 生产构建
 ```
 
@@ -297,6 +300,24 @@ python benchmark/fault_demo.py
 ### CI 评测回归（.github/workflows/ci.yml）
 - `unit-test` job：push/PR 自动跑确定性单元测试与规则回归（无需模型/网络）
 - `integration-test` job：`workflow_dispatch` 手动触发，service 容器启动 MySQL/Redis/pgvector 跑集成测试
+
+## 项目亮点（可写进简历）
+
+- **可靠 Agent 任务链路**：Transactional Outbox + Redis Streams 消费组 + 租约/心跳/死信/Pending 接管，保证异步尽调任务在应用重启、Worker 并发抢占下不丢失、不重复、可恢复。
+- **Snapshot First 数据一致性**：Agent 推理前一次性冻结客户交易/股权/制裁/法规证据并计算 `sourceDigest`，Agent 工具、Guardrails、规则兜底共享同一份只读快照，杜绝长链路中的时序不一致。
+- **Tool Calling 工程化**：四个领域工具绑定冻结快照，参数做身份/关键词业务校验，记录工具调用轨迹（不落敏感参数明文），支持 LangChain4j 并行工具调用并限制最大工具轮次防死循环。
+- **混合 RAG + Rerank**：PGVector 向量召回 + ILIKE 关键词召回 + RRF 融合 + bge-reranker 精排，法规证据带 `evidenceId` 可端到端追溯；Redis 缓存命中可跳过重复 embedding。
+- **确定性 Guardrails + 分层评测**：配置化风险规则护栏强制修正模型评级；规则回归 / RAG 检索评测 / 独立 Agent DEV-TEST 盲测三层评测体系，冻结清单保证结果可复现。
+- **可观测性与安全**：Micrometer + Prometheus 指标、traceId 全链路透传、JWT HttpOnly Cookie + CSRF、登录限流、Prompt 注入三层防护、生产启动自检与密钥环境变量注入。
+
+## 后续优化方向
+
+- 将 Tool 调用从快照并行执行扩展为真实业务系统的异步多数据源接入。
+- 引入会话级 Memory（最近 N 轮 + 长期摘要），支持多轮交互式尽调追问。
+- 基于 `CostRouter` 增加模型分级路由（简单工单用更快更便宜的模型，复杂工单用强模型）。
+- 将 RAG 关键词召回升级为 PostgreSQL 全文索引（`tsvector` + `GIN`），进一步提升大数据量下的检索性能。
+- 为 SSE 增加断线后的消息补偿/对账机制，保证前端最终状态与后端一致。
+
 
 ## Git 提交清单
 

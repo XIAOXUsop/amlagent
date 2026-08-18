@@ -1,17 +1,20 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import {
   fmtDateTime,
   getCase,
   listLogs,
+    listToolTraces,
   parseReport,
   processCase,
   retryCase,
   subscribeCase,
   type CaseItem,
   type DueDiligenceReport,
+    type ToolTrace,
   type WorkflowEvent,
 } from '../api/client'
+import { riskMeta, statusMeta, TERMINAL_STATUSES } from '../constants/case'
 import { Back, RefreshRight, VideoPlay } from '@element-plus/icons-vue'
 
 const props = defineProps<{ caseId: number }>()
@@ -22,11 +25,19 @@ const report = ref<DueDiligenceReport | null>(null)
 const loadError = ref(false)
 const detailLoading = ref(true)
 const logs = ref<{ stage: string; content: string; at: string }[]>([])
+const toolTraces = ref<ToolTrace[]>([])
 const doneKeys = ref<Set<string>>(new Set())
 const currentKey = ref('')
 const logOpen = ref<string[]>(['log'])
 const streamingText = ref('')
+const sseState = ref<'connecting' | 'open' | 'reconnecting'>('connecting')
+
 let unsubscribe: (() => void) | null = null
+let refreshTimer: number | null = null
+/** 连接序号：并发 connect() 时只有最新一次生效，防止旧订阅写回已重置的页面状态 */
+let connectSeq = 0
+/** 历史 + 实时日志去重（后端 SSE 事件与 case_log 落库内容一致） */
+let seenKeys = new Set<string>()
 
 const workflowStages = [
   { key: 'PLANNING', label: '任务规划', desc: '解析预警工单，拆解子任务' },
@@ -37,34 +48,41 @@ const workflowStages = [
   { key: 'DONE', label: '完成', desc: '归档 / 转人工' },
 ]
 
-const statusMeta: Record<string, { text: string; type: 'info' | 'warning' | 'success' | 'danger' }> = {
-  PENDING: { text: '待处理', type: 'info' },
-  RUNNING: { text: '执行中', type: 'warning' },
-  DONE: { text: '已完成', type: 'success' },
-  HOLD: { text: '转人工', type: 'danger' },
-  FAILED: { text: '失败', type: 'danger' },
-}
-
-const riskMeta: Record<string, { text: string; cls: string }> = {
-  低风险: { text: '低风险', cls: 'rk-low' },
-  中风险: { text: '中风险', cls: 'rk-mid' },
-  高风险: { text: '高风险', cls: 'rk-high' },
-}
-
-function handleEvent(ev: WorkflowEvent) {
-  logs.value.push({ stage: ev.stage, content: ev.content, at: new Date().toLocaleTimeString() })
-  currentKey.value = ev.stage
-  if (ev.stage === 'REPORTING') {
-    doneKeys.value.add('REASONING')
+function clearRefreshTimer() {
+  if (refreshTimer !== null) {
+    window.clearTimeout(refreshTimer)
+    refreshTimer = null
   }
-  if (ev.stage === 'DONE') {
+}
+
+/** 合并实时与历史日志：按 stage|content 去重、限制条数上限，避免重复与无限增长 */
+function pushLog(stage: string, content: string, at: string) {
+  const key = `${stage}|${content}`
+  if (seenKeys.has(key)) return
+  seenKeys.add(key)
+  logs.value.push({ stage, content, at })
+  if (logs.value.length > 300) logs.value.shift()
+  currentKey.value = stage
+  doneKeys.value.add(stage)
+  // REPORTING 到达时 REASONING 已完成（后端保证各阶段按序发事件，此处仅兜底标记）
+  if (stage === 'REPORTING') doneKeys.value.add('REASONING')
+  if (stage === 'DONE') {
     workflowStages.forEach((s) => doneKeys.value.add(s.key))
     doneKeys.value.add('REASONING')
   }
-  doneKeys.value.add(ev.stage)
-  if (['DONE', 'HOLD', 'FAILED'].includes(ev.stage)) {
-    setTimeout(refresh, 800)
+}
+
+function handleEvent(ev: WorkflowEvent) {
+  pushLog(ev.stage, ev.content, new Date().toLocaleTimeString())
+  // 终态事件后延迟拉取一次详情，对齐报告/状态字段（定时器统一在重连/卸载时清理）
+  if ((TERMINAL_STATUSES as readonly string[]).includes(ev.stage)) {
+    scheduleRefresh()
   }
+}
+
+function scheduleRefresh() {
+  clearRefreshTimer()
+  refreshTimer = window.setTimeout(refresh, 800)
 }
 
 async function refresh() {
@@ -76,46 +94,84 @@ async function refresh() {
   } catch {
     // 不静默吞错：标记错误，让页面展示"加载失败"态而非空白
     loadError.value = true
-  } finally {
-    detailLoading.value = false
   }
 }
 
 async function connect() {
+  const seq = ++connectSeq
   unsubscribe?.()
+  clearRefreshTimer()
   logs.value = []
+  seenKeys = new Set()
   doneKeys.value = new Set()
   currentKey.value = ''
   streamingText.value = ''
-  await refresh()
+    toolTraces.value = []
+  sseState.value = 'connecting'
+  detailLoading.value = true
+
+  // 先订阅实时事件，再拉历史：避免"拉取完成才订阅"的空窗丢事件；
+  // 历史与订阅窗口内的实时事件按 stage|content 去重合并。
+  unsubscribe = subscribeCase(
+    props.caseId,
+    handleEvent,
+    (token) => {
+      streamingText.value += token
+    },
+    (state) => {
+      sseState.value = state
+    },
+  )
+
+  try {
+    const c = await getCase(props.caseId)
+    if (seq !== connectSeq) return
+    caseItem.value = c
+    report.value = parseReport(c)
+    loadError.value = false
+  } catch {
+    if (seq !== connectSeq) return
+    loadError.value = true
+  } finally {
+    if (seq === connectSeq) detailLoading.value = false
+  }
+  if (seq !== connectSeq) return
+
   try {
     const history = await listLogs(props.caseId)
-    history.forEach((l) => {
-      if (['DONE', 'HOLD', 'FAILED'].includes(l.stage)) {
-        workflowStages.forEach((s) => doneKeys.value.add(s.key))
-      }
-      doneKeys.value.add(l.stage)
-      logs.value.push({ stage: l.stage, content: l.content, at: '' })
-      currentKey.value = l.stage
-    })
+    if (seq !== connectSeq) return
+    history.forEach((l) => pushLog(l.stage, l.content, ''))
   } catch {
     // 历史日志拉取失败不影响订阅实时进度
-    if (!logs.value.length) logs.value.push({ stage: 'PLANNING', content: '历史日志加载失败，正在订阅实时进度…', at: '' })
+    if (seq !== connectSeq) return
+    if (!logs.value.length) {
+      logs.value.push({ stage: 'PLANNING', content: '历史日志加载失败，正在订阅实时进度…', at: '' })
+    }
   }
-  unsubscribe = subscribeCase(props.caseId, handleEvent, (token) => {
-    streamingText.value += token
-  })
+
+    try {
+      const traces = await listToolTraces(props.caseId)
+      if (seq !== connectSeq) return
+      toolTraces.value = traces
+    } catch {
+      // 工具轨迹加载失败不影响主流程（日志/报告仍可查看）
+      if (seq !== connectSeq) return
+      toolTraces.value = []
+    }
 }
+
+// 同一组件实例在 /cases/1 → /cases/2 间复用（浏览器前进/后退）时重建订阅，避免展示旧工单数据
+watch(() => props.caseId, () => connect())
 
 onMounted(connect)
 
 onUnmounted(() => {
+  clearRefreshTimer()
   unsubscribe?.()
 })
 
 async function retryLoad() {
   loadError.value = false
-  // detailLoading 可能已为 false，重置以显示加载态
   caseItem.value = null
   await connect()
 }
@@ -236,7 +292,13 @@ function snapPrefix(id: string | null): string {
     </div>
 
     <div class="card">
-      <h3 class="card-title">Agent 工作流</h3>
+      <h3 class="card-title">
+        Agent 工作流
+        <span class="sse-indicator" :class="sseState">
+          <i class="sse-dot"></i>
+          <span>{{ sseState === 'open' ? '实时连接' : sseState === 'reconnecting' ? '连接中断，正在重连…' : '正在连接…' }}</span>
+        </span>
+      </h3>
       <div class="flow">
         <div
           v-for="(s, i) in workflowStages"
@@ -262,6 +324,19 @@ function snapPrefix(id: string | null): string {
             <span class="log-content">{{ l.content }}</span>
           </div>
         </el-collapse-item>
+          <el-collapse-item title="工具调用轨迹" name="tools">
+            <div v-if="toolTraces.length === 0" class="log-empty">暂无工具调用记录</div>
+            <div v-for="t in toolTraces" :key="`${t.executionVersion}-${t.sequenceNo}`" class="log-line tool-line">
+              <el-tag size="small" :type="t.success ? 'success' : t.argumentValid ? 'danger' : 'warning'" effect="plain">
+                {{ t.toolName }}
+              </el-tag>
+              <span class="log-time">v{{ t.executionVersion }} · {{ t.durationMs }}ms</span>
+              <span class="log-content">
+                {{ t.success ? '成功' : (t.argumentValid ? `失败（${t.errorCode ?? 'ERROR'}）` : '参数校验未通过') }}
+                <span v-if="t.resultDigest" class="trace-digest">#{{ t.resultDigest }}</span>
+              </span>
+            </div>
+          </el-collapse-item>
       </el-collapse>
     </div>
 
@@ -444,6 +519,34 @@ function snapPrefix(id: string | null): string {
 .src-rule { color: var(--risk-mid); background: rgba(224, 162, 58, 0.1); }
 
 /* 工作流 */
+.sse-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: 12px;
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--text-faint);
+  vertical-align: middle;
+}
+.sse-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--text-faint);
+}
+.sse-indicator.open .sse-dot {
+  background: var(--risk-low);
+  box-shadow: 0 0 0 3px rgba(47, 163, 127, 0.18);
+}
+.sse-indicator.open { color: var(--risk-low); }
+.sse-indicator.reconnecting .sse-dot {
+  background: var(--risk-mid);
+  box-shadow: 0 0 0 3px rgba(224, 162, 58, 0.18);
+  animation: nodepulse 1.2s ease-in-out infinite;
+}
+.sse-indicator.reconnecting { color: var(--risk-mid); }
+
 .flow {
   display: flex;
   gap: 0;

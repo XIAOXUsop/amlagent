@@ -105,7 +105,8 @@ api.interceptors.response.use(
     // /auth/me 返回 401 表示"未登录"这一正常状态（初始加载校验），不应触发整页跳转，
     // 否则会与 App 挂载时的 checkAuth 形成 401 → 跳转 → 再校验 的无限循环。
     if (err.response?.status === 401 && !err.config?.url?.includes('/auth/me')) {
-      window.location.href = '/'
+      // 通过自定义事件通知 App 清理登录态并回到登录界面（避免整页跳转丢失当前工作上下文）
+      window.dispatchEvent(new CustomEvent('auth:expired'))
     }
     return Promise.reject(err)
   },
@@ -146,6 +147,20 @@ export async function listCases(page = 0, size = 20): Promise<Page<CaseItem>> {
   return (await api.get('/cases', { params: { page, size } })).data
 }
 
+export interface CaseStats {
+  total: number
+  pending: number
+  running: number
+  hold: number
+  done: number
+  failed: number
+}
+
+/** 全量工单状态统计（态势概览，非当前页局部统计） */
+export async function listCaseStats(): Promise<CaseStats> {
+  return (await api.get('/cases/stats')).data
+}
+
 export async function listCustomers(): Promise<Customer[]> {
   return (await api.get('/cases/customers')).data
 }
@@ -170,13 +185,48 @@ export async function listLogs(id: number): Promise<CaseLog[]> {
   return (await api.get(`/cases/${id}/logs`)).data
 }
 
-/** 订阅工单工作流实时进度（SSE 通过 HttpOnly Cookie 认证，JWT 不进入 URL），返回取消订阅函数 */
+export interface ToolTrace {
+  executionVersion: number
+  sequenceNo: number
+  toolName: string
+  success: boolean
+  argumentValid: boolean
+  durationMs: number
+  resultDigest: string | null
+  errorCode: string | null
+}
+
+/** 工具调用轨迹（脱敏，不含参数明文；按执行版本倒序返回） */
+export async function listToolTraces(id: number): Promise<ToolTrace[]> {
+  return (await api.get(`/cases/${id}/tools`)).data
+}
+
+/** SSE 连接状态（用于界面展示"连接中/已连接/连接断开正在重连"） */
+export type SseState = 'connecting' | 'open' | 'reconnecting'
+
+/**
+ * 订阅工单工作流实时进度（SSE 通过 HttpOnly Cookie 认证，JWT 不进入 URL），返回取消订阅函数。
+ * @param onEvent  收到 stage 事件
+ * @param onToken  收到 token 事件（可选，流式摘要）
+ * @param onState  连接状态回调（可选，断线时 EventSource 自动重连，前端据此提示并拉取对账）
+ */
 export function subscribeCase(
   id: number,
   onEvent: (e: WorkflowEvent) => void,
   onToken?: (token: string) => void,
+  onState?: (state: SseState) => void,
 ): () => void {
   const es = new EventSource(`/api/cases/${id}/events`)
+  onState?.('connecting')
+  es.onopen = () => onState?.('open')
+  // EventSource 在连接失败时自动重连；CLOSED 表示已关闭（通常由 close() 触发）
+  es.onerror = () => {
+    if (es.readyState === EventSource.CLOSED) {
+      onState?.('reconnecting')
+    } else {
+      onState?.('reconnecting')
+    }
+  }
   es.addEventListener('stage', (ev: MessageEvent<string>) => {
     try {
       onEvent(JSON.parse(ev.data))
@@ -193,7 +243,10 @@ export function subscribeCase(
       }
     })
   }
-  return () => es.close()
+  return () => {
+    onState?.('connecting')
+    es.close()
+  }
 }
 
 /** 解析工单中的尽调报告 */
@@ -223,31 +276,6 @@ export async function reviewStats(): Promise<{ reviewedCount: number; agreementR
 }
 
 // ---------- 评测 ----------
-export interface RuleRegressionReport {
-  totalCases: number
-  highRiskRecallRate: number
-  lowRiskFalsePositiveRate: number
-  accuracy: number
-  manualReviewMissCount: number
-  manualReviewTotal: number
-  p50DurationMs: number
-  p95DurationMs: number
-  confusionMatrix: number[][]
-  details: Array<{
-    id: string
-    scenario: string
-    expectedRiskLevel: string
-    baselineRiskLevel: string
-    finalRiskLevel: string
-    escalated: boolean
-  }>
-}
-
-/** 确定性规则回归，不代表真实模型或 Agent 效果。 */
-export async function runRuleRegression(): Promise<RuleRegressionReport> {
-  return (await api.post('/eval/rules')).data
-}
-
 export interface AgentEvalDatasetSummary {
   datasetId: string
   version: string
@@ -271,22 +299,43 @@ export async function getAgentEvalStatus(): Promise<{
   return (await api.get('/eval/agent/status')).data
 }
 
-/** 仅运行 DEV 分片；后端会拒绝 Mock/fallback，并保持 TEST 标准答案冻结。 */
-export async function runAgentDevEval(): Promise<Record<string, unknown>> {
-  return (await api.post('/eval/agent/dev')).data
+/** 评测率：显式分子/分母；分母为 0 时 value 为 null（不伪造指标） */
+export interface EvalRate {
+  numerator: number
+  denominator: number
+  value: number | null
 }
 
-/** 运行冻结的隐藏 TEST 分片（最终评测，标准答案冻结，仅 ADMIN）。 */
-export async function runAgentTestEval(): Promise<Record<string, unknown>> {
-  return (await api.post('/eval/agent/test')).data
+/** 真实模型 Agent 评测结果（对应后端 AgentEvalReport 聚合字段） */
+export interface AgentEvalResult {
+  runId: string
+  datasetId: string
+  datasetVersion: string
+  split: string
+  promptVersion: string
+  runStatus: string
+  attempted: number
+  completed: number
+  scored: number
+  strictPassCount: number
+  strictPassRate: EvalRate | null
+  taskPassRate: EvalRate | null
+  rawRisk: { exactAccuracy: EvalRate | null; highRiskRecall: EvalRate | null } | null
+  finalRisk: { exactAccuracy: EvalRate | null; highRiskRecall: EvalRate | null } | null
+  tools: { requiredToolRecall: EvalRate | null } | null
+  citations: { evidenceIdRecall: EvalRate | null } | null
+  latency: { p50Ms: number; p95Ms: number } | null
+  tokens: { inputTokens: number; outputTokens: number; totalTokens: number } | null
+  runtime: { provider: string; configuredModel: string; realModel: boolean; fallbackUsed: boolean } | null
+}
+
+/** 仅运行 DEV 分片；后端会拒绝 Mock/fallback，并保持 TEST 标准答案冻结。 */
+export async function runAgentDevEval(): Promise<AgentEvalResult> {
+  return (await api.post('/eval/agent/dev')).data
 }
 
 export async function getAgentEvalDatasetSummary(): Promise<AgentEvalDatasetSummary> {
   return (await api.get('/eval/agent/dataset')).data
-}
-
-export async function runRagEval(): Promise<Record<string, unknown>> {
-  return (await api.post('/eval/rag')).data
 }
 
 /** 将后端 ISO 时间格式化为"年-月-日 时:分:秒"；空值返回占位符 */

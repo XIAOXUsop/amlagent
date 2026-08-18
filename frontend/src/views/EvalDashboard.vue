@@ -4,14 +4,17 @@ import {
   getAgentEvalStatus,
   getAgentEvalDatasetSummary,
   runAgentDevEval,
+  type AgentEvalDatasetSummary,
+  type AgentEvalResult,
+  type EvalRate,
 } from '../api/client'
 import { CaretTop, DataAnalysis, Warning } from '@element-plus/icons-vue'
 
-const status = ref<Record<string, any> | null>(null)
-const dataset = ref<Record<string, any> | null>(null)
+const status = ref<Awaited<ReturnType<typeof getAgentEvalStatus>> | null>(null)
+const dataset = ref<AgentEvalDatasetSummary | null>(null)
 const loading = ref(false)
 const dataLoading = ref(true)
-const result = ref<Record<string, any> | null>(null)
+const result = ref<AgentEvalResult | null>(null)
 
 onMounted(async () => {
   try {
@@ -37,7 +40,7 @@ async function runDev() {
   }
 }
 
-function rate(v: any): string {
+function rate(v: EvalRate | null | undefined): string {
   if (!v || v.value == null) return '-'
   return `${(v.value * 100).toFixed(1)}%`
 }

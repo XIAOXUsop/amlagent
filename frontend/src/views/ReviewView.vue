@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
 import { listPendingReviews, reviewStats, submitReview, type CaseItem } from '../api/client'
+import { riskMeta } from '../constants/case'
 import { Search, Stamp } from '@element-plus/icons-vue'
 
 const emit = defineEmits<{ (e: 'open-case', id: number): void }>()
@@ -110,10 +111,8 @@ async function doSubmit() {
         <el-table-column prop="alertRule" label="预警规则" min-width="180" show-overflow-tooltip />
         <el-table-column label="评级" width="96">
           <template #default="{ row }">
-            <span
-              class="rk"
-              :class="row.riskLevel === '高风险' ? 'rk-high' : row.riskLevel === '中风险' ? 'rk-mid' : 'rk-low'"
-            >{{ row.riskLevel ?? '-' }}</span>
+            <span v-if="row.riskLevel" class="rk" :class="riskMeta[row.riskLevel]?.cls">{{ row.riskLevel }}</span>
+            <span v-else class="rk-none">-</span>
           </template>
         </el-table-column>
         <el-table-column label="状态" width="96">
@@ -258,6 +257,7 @@ async function doSubmit() {
 .rk-high { color: #c43d4b; background: rgba(196, 61, 75, 0.12); border: 1px solid rgba(196, 61, 75, 0.32); }
 .rk-mid { color: #e0a23a; background: rgba(224, 162, 58, 0.12); border: 1px solid rgba(224, 162, 58, 0.32); }
 .rk-low { color: #2fa37f; background: rgba(47, 163, 127, 0.12); border: 1px solid rgba(47, 163, 127, 0.32); }
+.rk-none { font-size: 12px; color: var(--text-faint); }
 
 .st-hold {
   font-size: 12px;
