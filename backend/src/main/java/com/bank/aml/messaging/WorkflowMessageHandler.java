@@ -42,11 +42,13 @@ public class WorkflowMessageHandler {
     private final QueueProperties props;
     private final WorkerIdentity workerIdentity;
     private final ScheduledExecutorService heartbeatExecutor;
+    private final StreamConsumptionTracker consumptionTracker;
 
     public WorkflowMessageHandler(CaseRepository caseRepository, DueDiligenceService dueDiligenceService,
                                   WorkflowCommandService workflowCommandService,
                                   StringRedisTemplate redisTemplate, QueueProperties props,
-                                  WorkerIdentity workerIdentity, ScheduledExecutorService heartbeatExecutor) {
+                                  WorkerIdentity workerIdentity, ScheduledExecutorService heartbeatExecutor,
+                                  StreamConsumptionTracker consumptionTracker) {
         this.caseRepository = caseRepository;
         this.dueDiligenceService = dueDiligenceService;
         this.workflowCommandService = workflowCommandService;
@@ -54,6 +56,7 @@ public class WorkflowMessageHandler {
         this.props = props;
         this.workerIdentity = workerIdentity;
         this.heartbeatExecutor = heartbeatExecutor;
+        this.consumptionTracker = consumptionTracker;
     }
 
     public void onMessage(MapRecord<String, String, String> record) {
@@ -103,6 +106,7 @@ public class WorkflowMessageHandler {
             dueDiligenceService.process(caseId, worker, executionVersion, lease);
             ack(record);
         } catch (ManualReviewRequiredException e) {
+            // 正常业务：工单需转人工复核，视为已成功处理（ack 计数推进由 ack() 统一处理）
             ack(record);
         } catch (NonRetryableWorkflowException e) {
             markFailed(caseId, worker, executionVersion, "NON_RETRYABLE", e.getMessage());
@@ -154,6 +158,7 @@ public class WorkflowMessageHandler {
 
     private void ack(MapRecord<String, String, String> record) {
         redisTemplate.opsForStream().acknowledge(props.getStream(), props.getGroup(), record.getId());
+        consumptionTracker.recordAck();
     }
 
     private int parseVersion(String value) {

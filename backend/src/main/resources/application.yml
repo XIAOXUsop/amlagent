@@ -59,6 +59,11 @@ aml:
     outbox-poll-seconds: 5
     retry-backoff-seconds: 5   # 指数退避基数（5s、15s、45s）
     retry-poll-seconds: 5
+    # 消费者连接恢复与健康监控（Docker 重启等中断后自动重建消费者容器）
+    health-probe-seconds: 10    # 健康探测间隔（秒）
+    lag-alert-threshold: 20     # 积压告警阈值（0 禁用）
+    lag-recover-threshold: 50   # 积压强制重建阈值（应 > lag-alert-threshold）
+    consecutive-error-alert-threshold: 3  # 连续异常告警抑制阈值
 
   # 多 LLM 提供商：切换 aml.llm.active-provider 即可换模型。
   # 未配置 API Key 时自动降级到 Mock 模型（可离线演示完整链路）。

@@ -86,4 +86,21 @@ public class MetricsRecorder {
     public void recordStageDuration(long durationMs) {
         stageDuration.record(Duration.ofMillis(durationMs));
     }
+
+    // ---- 可靠队列健康指标（Redis Streams 消费者）----
+
+    /** 消费者容器异常/停摆事件计数（健康告警依据） */
+    public void queueConsumerError() {
+        registry.counter("aml_queue_consumer_error_total").increment();
+    }
+
+    /** 消费者容器处于停止状态（不可用）的事件计数 */
+    public void queueConsumerDown() {
+        registry.counter("aml_queue_consumer_down_total").increment();
+    }
+
+    /** 记录当前消费 lag（未消费消息数，Gauge 便于告警阈值判断） */
+    public void queueLag(long lag) {
+        registry.gauge("aml_queue_lag", lag);
+    }
 }
