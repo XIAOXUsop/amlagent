@@ -20,7 +20,7 @@
     <properties>
         <java.version>21</java.version>
         <!-- LangChain4j：core 稳定版与 starter/pgvector 的 beta 发布线对齐 -->
-        <langchain4j.version>1.18.1</langchain4j.version>
+        <langchain4j.version>1.19.0</langchain4j.version>
         <langchain4j.beta.version>1.18.1-beta28</langchain4j.beta.version>
         <!-- 默认测试不依赖 Docker；integration-test profile 显式切换到集成/E2E。 -->
         <test.included-groups></test.included-groups>
