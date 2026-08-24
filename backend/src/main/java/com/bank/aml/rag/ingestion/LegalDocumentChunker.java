@@ -25,6 +25,7 @@ public class LegalDocumentChunker {
     private static final Pattern DOC_NUMBER = Pattern.compile("[（(]?[^（(]*令[〔【]?\\d{4}[〕】]?第\\d+号[）)]?");
     private static final int MAX_CHARS = 1_200;
     private static final Set<String> ALLOWED_SCOPES = Set.of("PUBLIC_LEGAL", "AML_INTERNAL");
+    private static final Set<String> ALLOWED_SECURITY = Set.of("TRUSTED", "PENDING_REVIEW", "UNTRUSTED_METADATA");
     private static final Pattern RAG_POLICY = Pattern.compile("<!--\\s*rag:(.*?)-->", Pattern.CASE_INSENSITIVE | Pattern.DOTALL);
 
     public List<TextSegment> chunk(Path file, String corpusVersion) throws java.io.IOException {
@@ -32,7 +33,7 @@ public class LegalDocumentChunker {
         String title = firstHeading(source, file);
         String documentNumber = documentNumber(source, title);
         String documentId = "DOC-" + sha256(file.getFileName() + "|" + title).substring(0, 16);
-        DocumentPolicy policy = policy(source);
+        DocumentPolicy policy = policy(source, file);
 
         List<Section> sections = sections(RAG_POLICY.matcher(source).replaceAll(""));
         List<TextSegment> result = new ArrayList<>();
@@ -57,7 +58,8 @@ public class LegalDocumentChunker {
                         .put("accessScopes", policy.accessScopes().stream().sorted().collect(java.util.stream.Collectors.joining(",")))
                         .put("contentDigest", digest)
                         .put("sourceFile", file.getFileName().toString())
-                        .put("securityStatus", "TRUSTED")
+                        // 可信状态只能由显式策略头赋予，绝不默认放行
+                        .put("securityStatus", policy.securityStatus())
                         .put("corpusVersion", corpusVersion);
                 if (policy.effectiveFrom() != null) metadata.put("effectiveFrom", policy.effectiveFrom().toString());
                 if (policy.effectiveTo() != null) metadata.put("effectiveTo", policy.effectiveTo().toString());
@@ -121,26 +123,36 @@ public class LegalDocumentChunker {
         return matcher.find() ? matcher.group() : "";
     }
 
-    /** 可选文档策略头：<!-- rag:jurisdiction=CN;effectiveFrom=2025-01-01;accessScopes=PUBLIC_LEGAL --> */
-    private DocumentPolicy policy(String source) {
+    /**
+     * 解析文档策略头，例如：{@code <!-- rag:jurisdiction=CN;effectiveFrom=2025-01-01;accessScopes=PUBLIC_LEGAL;securityStatus=TRUSTED -->}
+     * <p>可信状态 fail-closed：没有策略头或未显式声明合法 {@code securityStatus} 的文档
+     * 一律落入不可信元数据（INVALID / QUARANTINED / UNTRUSTED_METADATA），不会被正式检索当作可信法规依据。
+     */
+    private DocumentPolicy policy(String source, Path file) {
         Matcher matcher = RAG_POLICY.matcher(source);
-        if (!matcher.find()) return DocumentPolicy.defaults();
+        if (!matcher.find()) {
+            // 无策略头：绝不默认放行为可信法规，进入隔离态
+            return DocumentPolicy.untrusted(file.getFileName().toString());
+        }
         Map<String, String> values = new LinkedHashMap<>();
         for (String pair : matcher.group(1).split(";")) {
             int separator = pair.indexOf('=');
             if (separator > 0) values.put(pair.substring(0, separator).strip(), pair.substring(separator + 1).strip());
         }
-        String jurisdiction = values.getOrDefault("jurisdiction", "CN");
-        if (!jurisdiction.matches("[A-Z]{2,8}")) throw new IllegalArgumentException("非法法规 jurisdiction 元数据");
+        String jurisdiction = values.getOrDefault("jurisdiction", "INVALID");
+        if (!jurisdiction.matches("^[A-Z]{2,8}(-[A-Z0-9]{1,8})?$")) return DocumentPolicy.untrusted(file.getFileName().toString());
         Set<String> scopes = java.util.Arrays.stream(values.getOrDefault("accessScopes", "PUBLIC_LEGAL").split(","))
                 .map(String::strip).filter(v -> !v.isBlank()).collect(java.util.stream.Collectors.toUnmodifiableSet());
         if (scopes.isEmpty() || !ALLOWED_SCOPES.containsAll(scopes)) {
-            throw new IllegalArgumentException("非法法规 accessScopes 元数据");
+            return DocumentPolicy.untrusted(file.getFileName().toString());
         }
+        // 可信状态必须显式声明为合法值；缺省 PENDING_REVIEW（不得默认 TRUSTED）
+        String security = values.getOrDefault("securityStatus", "PENDING_REVIEW").toUpperCase();
+        if (!ALLOWED_SECURITY.contains(security)) return DocumentPolicy.untrusted(file.getFileName().toString());
         LocalDate from = date(values.get("effectiveFrom"));
         LocalDate to = date(values.get("effectiveTo"));
         if (from != null && to != null && to.isBefore(from)) throw new IllegalArgumentException("法规失效日期早于生效日期");
-        return new DocumentPolicy(jurisdiction, from, to, scopes);
+        return new DocumentPolicy(jurisdiction, from, to, scopes, security);
     }
 
     private LocalDate date(String value) {
@@ -158,7 +170,10 @@ public class LegalDocumentChunker {
 
     private record Section(String heading, String content) {}
     private record DocumentPolicy(String jurisdiction, LocalDate effectiveFrom, LocalDate effectiveTo,
-                                  Set<String> accessScopes) {
-        static DocumentPolicy defaults() { return new DocumentPolicy("CN", null, null, Set.of("PUBLIC_LEGAL")); }
+                                  Set<String> accessScopes, String securityStatus) {
+        /** 未授权/未标记可信策略：隔离态，检索层不得作为可信法规依据返回 */
+        static DocumentPolicy untrusted(String sourceFile) {
+            return new DocumentPolicy("INVALID", null, null, Set.of("QUARANTINED"), "UNTRUSTED_METADATA");
+        }
     }
 }
