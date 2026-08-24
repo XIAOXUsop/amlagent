@@ -165,6 +165,175 @@ export async function listCustomers(): Promise<Customer[]> {
   return (await api.get('/cases/customers')).data
 }
 
+// ---------- 客户/人员管理（ADMIN） ----------
+export interface CustomerAdminItem {
+  id: number
+  customerNo: string
+  name: string
+  idCardMasked: string
+  type: string | null
+  industry: string | null
+  region: string | null
+  regCapital: string | null
+  status: string
+  createdAt: string
+  updatedAt: string
+}
+
+export interface CustomerEditPayload {
+  name?: string
+  idCard?: string
+  type?: string | null
+  industry?: string | null
+  region?: string | null
+  regCapital?: string | null
+  status?: string
+}
+
+export interface CustomerImportResult {
+  total: number
+  success: number
+  failed: number
+  errors: string[]
+}
+
+export async function listAdminCustomers(page = 0, size = 10, keyword = ''): Promise<Page<CustomerAdminItem>> {
+  return (await api.get('/admin/customers', { params: { page, size, keyword: keyword || undefined } })).data
+}
+
+export async function getAdminCustomer(id: number): Promise<CustomerAdminItem> {
+  return (await api.get(`/admin/customers/${id}`)).data
+}
+
+export async function createAdminCustomer(payload: CustomerEditPayload): Promise<CustomerAdminItem> {
+  return (await api.post('/admin/customers', payload)).data
+}
+
+export async function updateAdminCustomer(id: number, payload: CustomerEditPayload): Promise<CustomerAdminItem> {
+  return (await api.put(`/admin/customers/${id}`, payload)).data
+}
+
+export async function deleteAdminCustomer(id: number): Promise<void> {
+  await api.delete(`/admin/customers/${id}`)
+}
+
+export async function setCustomerStatus(id: number, status: string): Promise<CustomerAdminItem> {
+  return (await api.put(`/admin/customers/${id}/status`, null, { params: { status } })).data
+}
+
+export async function importCustomers(file: File): Promise<CustomerImportResult> {
+  const fd = new FormData()
+  fd.append('file', file)
+  return (await api.post('/admin/customers/import', fd)).data
+}
+
+// ---------- 当前客户 AI 小助（ADMIN，只读） ----------
+export interface AssistantStatus {
+  enabled: boolean
+  maxMessageChars: number
+}
+
+export interface AssistantConversation {
+  id: string
+  customerId: number
+  customerNo: string
+  status: 'ACTIVE' | 'ARCHIVED' | 'EXPIRED'
+  createdAt: string
+  updatedAt: string
+  expiresAt: string
+}
+
+export interface AssistantMessage {
+  id: string
+  sequenceNo: number
+  role: 'USER' | 'ASSISTANT'
+  status: 'ACCEPTED' | 'PROCESSING' | 'COMPLETED' | 'REFUSED' | 'FAILED' | 'BLOCKED'
+  resultType: string | null
+  content: string
+  createdAt: string
+  completedAt: string | null
+}
+
+export interface AssistantAcceptedRun {
+  runId: string
+  userMessageId: string
+  assistantMessageId: string
+  status: 'ACCEPTED'
+  idempotentReplay: boolean
+}
+
+export async function getAssistantStatus(): Promise<AssistantStatus> {
+  return (await api.get('/assistant/status')).data
+}
+
+export async function createAssistantConversation(customerId: number): Promise<AssistantConversation> {
+  return (await api.post(`/admin/customers/${customerId}/assistant/conversations`)).data
+}
+
+export async function listAssistantConversations(customerId: number): Promise<Page<AssistantConversation>> {
+  return (await api.get(`/admin/customers/${customerId}/assistant/conversations`, { params: { page: 0, size: 20 } })).data
+}
+
+export async function listAssistantMessages(conversationId: string): Promise<AssistantMessage[]> {
+  return (await api.get(`/assistant/conversations/${conversationId}/messages`)).data
+}
+
+export async function submitAssistantMessage(
+  conversationId: string,
+  clientMessageId: string,
+  content: string,
+): Promise<AssistantAcceptedRun> {
+  return (await api.post(`/assistant/conversations/${conversationId}/messages`, { clientMessageId, content })).data
+}
+
+export async function archiveAssistantConversation(conversationId: string): Promise<void> {
+  await api.delete(`/assistant/conversations/${conversationId}`)
+}
+
+export interface AssistantRunTerminalEvent {
+  type: 'completed' | 'refused' | 'failed'
+  payload: Record<string, unknown>
+}
+
+/** run 级 SSE；浏览器会在同一 EventSource 重连时自动携带 Last-Event-ID。 */
+export function subscribeAssistantRun(
+  runId: string,
+  onDelta: (text: string) => void,
+  onTerminal: (event: AssistantRunTerminalEvent) => void,
+  onState?: (state: SseState) => void,
+): () => void {
+  const es = new EventSource(`/api/assistant/runs/${encodeURIComponent(runId)}/events`)
+  let terminal = false
+  onState?.('connecting')
+  es.onopen = () => onState?.('open')
+  es.onerror = () => {
+    if (!terminal) onState?.('reconnecting')
+  }
+  es.addEventListener('delta', (event: MessageEvent<string>) => {
+    try {
+      const payload = JSON.parse(event.data) as { text?: unknown }
+      if (typeof payload.text === 'string') onDelta(payload.text)
+    } catch {
+      /* 畸形展示事件忽略，最终通过消息接口对账 */
+    }
+  })
+  for (const type of ['completed', 'refused', 'failed'] as const) {
+    es.addEventListener(type, (event: MessageEvent<string>) => {
+      let payload: Record<string, unknown> = {}
+      try { payload = JSON.parse(event.data) } catch { /* 最终仍回查消息 */ }
+      terminal = true
+      es.close()
+      onState?.('closed')
+      onTerminal({ type, payload })
+    })
+  }
+  return () => {
+    terminal = true
+    es.close()
+    onState?.('closed')
+  }
+}
+
 export async function createCase(customerId: string, alertRule: string): Promise<CaseItem> {
   return (await api.post('/cases', { customerId, alertRule, autoProcess: true })).data
 }
@@ -196,13 +365,85 @@ export interface ToolTrace {
   errorCode: string | null
 }
 
+export type SanctionMatchDecision = 'CONFIRMED' | 'REVIEW_REQUIRED' | 'DISMISSED'
+
+export interface SanctionCandidateMatch {
+  candidateFingerprint: string
+  candidateName: string
+  identityMasked: string
+  listType: string
+  detail: string
+  severity: number
+  score: number
+  algorithmDecision: SanctionMatchDecision
+  decision: SanctionMatchDecision
+  reasonCodes: string[]
+  explanation: string
+  reviewDecision: 'CONFIRM' | 'DISMISS' | 'REQUEST_MORE_INFO' | null
+  reviewRevision: number
+  reviewedBy: string | null
+  reviewedAt: string | null
+  reviewComment: string | null
+}
+
+export interface SanctionScreeningResult {
+  customerId: string
+  customerName: string
+  status: 'CONFIRMED_MATCH' | 'REVIEW_REQUIRED' | 'NO_MATCH'
+  screenedAt: string
+  sourceSystem: string
+  sourceVersion: string
+  candidates: SanctionCandidateMatch[]
+}
+
+/** 对数据库召回候选进行身份要素评分；返回值不包含完整证件号码。 */
+export async function screenSanctions(customerId: string): Promise<SanctionScreeningResult> {
+  return (await api.get(`/sanctions/screen/${encodeURIComponent(customerId)}`)).data
+}
+
+export async function reviewSanctionCandidate(
+  customerId: string,
+  body: {
+    candidateFingerprint: string
+    decision: 'CONFIRM' | 'DISMISS' | 'REQUEST_MORE_INFO'
+    comment: string
+    expectedRevision: number
+  },
+): Promise<SanctionScreeningResult> {
+  return (await api.post(`/sanctions/screen/${encodeURIComponent(customerId)}/review`, body)).data
+}
+
+export interface CaseDossier {
+  schemaVersion: string
+  classification: 'INTERNAL_CONFIDENTIAL'
+  generatedAt: string
+  hashAlgorithm: 'SHA-256'
+  contentHash: string
+  content: {
+    caseSummary: Record<string, unknown>
+    reportParseStatus: 'MISSING' | 'VALID' | 'INVALID'
+    report: DueDiligenceReport | null
+    snapshot: Record<string, unknown> | null
+    workflowLogs: unknown[]
+    executionCheckpoints: unknown[]
+    toolTraces: unknown[]
+    reviewHistory: unknown[]
+    sanctionReviewHistory: unknown[]
+  }
+}
+
+/** 导出含快照元数据、流程、工具轨迹和复核历史的完整调查档案。 */
+export async function getCaseDossier(id: number): Promise<CaseDossier> {
+  return (await api.get(`/cases/${id}/dossier`)).data
+}
+
 /** 工具调用轨迹（脱敏，不含参数明文；按执行版本倒序返回） */
 export async function listToolTraces(id: number): Promise<ToolTrace[]> {
   return (await api.get(`/cases/${id}/tools`)).data
 }
 
 /** SSE 连接状态（用于界面展示"连接中/已连接/连接断开正在重连"） */
-export type SseState = 'connecting' | 'open' | 'reconnecting'
+export type SseState = 'connecting' | 'open' | 'reconnecting' | 'closed'
 
 /**
  * 订阅工单工作流实时进度（SSE 通过 HttpOnly Cookie 认证，JWT 不进入 URL），返回取消订阅函数。
@@ -229,7 +470,14 @@ export function subscribeCase(
   }
   es.addEventListener('stage', (ev: MessageEvent<string>) => {
     try {
-      onEvent(JSON.parse(ev.data))
+      const event: WorkflowEvent = JSON.parse(ev.data)
+      onEvent(event)
+      // EventSource 会在服务端正常关闭后自动重连；业务终态必须由客户端显式 close，
+      // 否则终态工单会形成“连接→立即关闭→重连”的永久循环。
+      if (['DONE', 'HOLD', 'FAILED'].includes(event.stage)) {
+        es.close()
+        onState?.('closed')
+      }
     } catch {
       /* ignore */
     }
@@ -244,8 +492,8 @@ export function subscribeCase(
     })
   }
   return () => {
-    onState?.('connecting')
     es.close()
+    onState?.('closed')
   }
 }
 
@@ -287,6 +535,8 @@ export interface AgentEvalDatasetSummary {
   scenarioCounts: Record<string, number>
   riskLevelCounts: Record<string, number>
   datasetHash: string
+  hiddenTestReady: boolean
+  hiddenTestDatasetHash: string | null
 }
 
 export async function getAgentEvalStatus(): Promise<{
@@ -326,6 +576,14 @@ export interface AgentEvalResult {
   citations: { evidenceIdRecall: EvalRate | null } | null
   latency: { p50Ms: number; p95Ms: number } | null
   tokens: { inputTokens: number; outputTokens: number; totalTokens: number } | null
+  efficiency: {
+    p95LatencyBudgetMs: number
+    averageTokensPerCaseBudget: number
+    observedP95LatencyMs: number
+    observedAverageTokensPerCase: number | null
+    latencyPass: boolean | null
+    tokenPass: boolean | null
+  } | null
   runtime: { provider: string; configuredModel: string; realModel: boolean; fallbackUsed: boolean } | null
 }
 

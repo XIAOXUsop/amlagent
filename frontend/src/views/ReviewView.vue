@@ -69,6 +69,10 @@ async function doSubmit() {
 
 <template>
   <div class="review">
+    <header class="page-intro">
+      <h2>人工复核</h2>
+      <p>处理 Agent 升级工单，并记录可审计的最终决定。</p>
+    </header>
     <!-- 决策闭环统计 -->
     <div class="stats">
       <div class="stat-main">
@@ -122,14 +126,16 @@ async function doSubmit() {
         </el-table-column>
         <el-table-column label="操作" width="200" fixed="right">
           <template #default="{ row }">
-            <el-button size="small" @click="emit('open-case', row.id)">
-              <el-icon><Search /></el-icon>
-              <span>查看详情</span>
-            </el-button>
-            <el-button size="small" type="primary" @click="openReview(row as CaseItem)">
-              <el-icon><Stamp /></el-icon>
-              <span>复核</span>
-            </el-button>
+            <div class="row-actions">
+              <el-button size="small" @click="emit('open-case', row.id)">
+                <el-icon><Search /></el-icon>
+                <span>查看详情</span>
+              </el-button>
+              <el-button size="small" type="primary" @click="openReview(row as CaseItem)">
+                <el-icon><Stamp /></el-icon>
+                <span>复核</span>
+              </el-button>
+            </div>
           </template>
         </el-table-column>
       </el-table>
@@ -179,17 +185,18 @@ async function doSubmit() {
 .review {
   display: flex;
   flex-direction: column;
-  gap: 18px;
+  gap: 0;
 }
 
 .stats {
   display: flex;
   gap: 20px;
   align-items: stretch;
-  background: linear-gradient(180deg, rgba(22, 33, 58, 0.92), rgba(17, 26, 44, 0.92));
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  padding: 20px;
+  background: transparent;
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+  border-radius: 0;
+  padding: 20px 0;
 }
 
 .stat-main {
@@ -210,7 +217,7 @@ async function doSubmit() {
 .stat-main b {
   font-size: 40px;
   font-weight: 650;
-  color: var(--gold);
+  color: var(--text);
   line-height: 1.1;
   margin: 6px 0 12px;
 }
@@ -218,22 +225,22 @@ async function doSubmit() {
 .agree-bar {
   height: 4px;
   border-radius: 2px;
-  background: rgba(11, 18, 32, 0.6);
+  background: #e2e8f0;
   overflow: hidden;
 }
 .agree-bar i {
   display: block;
   height: 100%;
   border-radius: 2px;
-  background: linear-gradient(90deg, var(--gold), var(--gold-soft));
-  box-shadow: 0 0 8px rgba(201, 169, 97, 0.5);
+  background: var(--risk-info);
+  box-shadow: none;
 }
 
 .stat-cells {
   flex: 1;
   display: grid;
   grid-template-columns: repeat(4, 1fr);
-  gap: 12px;
+  gap: 0;
 }
 
 .stat-cell {
@@ -243,9 +250,9 @@ async function doSubmit() {
   align-items: center;
   gap: 4px;
   padding: 12px;
-  background: rgba(11, 18, 32, 0.42);
-  border: 1px solid var(--line-faint);
-  border-radius: 8px;
+  background: transparent;
+  border-left: 1px solid var(--line);
+  border-radius: 0;
 }
 .stat-cell span { font-size: 11px; color: var(--text-faint); letter-spacing: 0.04em; }
 .stat-cell b { font-size: 22px; font-weight: 650; color: var(--text); }
@@ -287,7 +294,7 @@ async function doSubmit() {
   justify-content: space-between;
   padding: 12px 16px;
   margin-bottom: 16px;
-  background: rgba(11, 18, 32, 0.5);
+  background: #f8fafc;
   border: 1px solid var(--line-faint);
   border-radius: 8px;
 }

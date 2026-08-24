@@ -18,7 +18,6 @@ spring:
     open-in-view: false
     properties:
       hibernate:
-        dialect: org.hibernate.dialect.MySQLDialect
         jdbc:
           batch_size: 20
           batch_versioned_data: true
@@ -28,8 +27,14 @@ spring:
     # 开发默认禁用（用 ddl-auto=update）；生产环境设 FLYWAY_ENABLED=true 并 ddl-auto=validate
     enabled: ${FLYWAY_ENABLED:false}
     locations: classpath:db/migration
+  servlet:
+    multipart:
+      max-file-size: 5MB
+      max-request-size: 6MB
   data:
     redis:
+      repositories:
+        enabled: false
       host: localhost
       port: 6379
       timeout: 3s
@@ -42,7 +47,9 @@ spring:
 
 server:
   port: 8080
-  forward-headers-strategy: framework
+  # 默认不解析客户端可伪造的 Forwarded/X-Forwarded-*。若部署在受控反向代理后，
+  # 应由网关覆盖/清除这些头，并在容器层配置明确的 trusted proxies 后再启用。
+  forward-headers-strategy: none
   tomcat:
     threads:
       max: 200
@@ -70,7 +77,31 @@ logging:
 
 # ---- AML 专有配置 ----
 aml:
+  assistant:
+    # 默认关闭；开发或生产必须显式开启。关闭时不得创建会话或触发模型调用。
+    enabled: ${AML_ASSISTANT_ENABLED:false}
+    max-message-chars: ${AML_ASSISTANT_MAX_MESSAGE_CHARS:2000}
+    retention-days: ${AML_ASSISTANT_RETENTION_DAYS:7}
+    rate-limit-per-minute: ${AML_ASSISTANT_RATE_LIMIT_PER_MINUTE:10}
+    run-timeout-seconds: ${AML_ASSISTANT_RUN_TIMEOUT_SECONDS:120}
+    event-stream-ttl-minutes: ${AML_ASSISTANT_EVENT_STREAM_TTL_MINUTES:10}
+    lease-ttl-seconds: ${AML_ASSISTANT_LEASE_TTL_SECONDS:120}
+    lease-renew-seconds: ${AML_ASSISTANT_LEASE_RENEW_SECONDS:30}
+    history-max-messages: ${AML_ASSISTANT_HISTORY_MAX_MESSAGES:12}
+    max-tool-round-trips: ${AML_ASSISTANT_MAX_TOOL_ROUND_TRIPS:5}
+    # 模型完整输出通过证据/安全护栏后，再按小块推送；绝不向前端透传未校验 token。
+    validated-stream-chunk-chars: ${AML_ASSISTANT_VALIDATED_STREAM_CHUNK_CHARS:48}
+    validated-stream-chunk-delay-ms: ${AML_ASSISTANT_VALIDATED_STREAM_CHUNK_DELAY_MS:12}
+  eval:
+    # 正式 TEST 金标不进入仓库；仅从受控外部路径加载，且数据集/每条案例均须 DOMAIN_EXPERT_APPROVED。
+    hidden-test:
+      path: ${AML_HIDDEN_TEST_PATH:}
+  demo:
+    # 仅用于本地演示。生产 profile 会强制关闭，客户主数据应由真实上游系统提供。
+    seed-customers: ${AML_DEMO_SEED_CUSTOMERS:true}
   security:
+    # 开发默认密钥仅用于本地演示；prod 必须通过 AML_FIELD_ENCRYPTION_KEY 提供独立 64 位十六进制密钥。
+    field-encryption-key: ${AML_FIELD_ENCRYPTION_KEY:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef}
     # JWT 签名密钥（生产环境应改为环境变量注入）
     jwt-secret: ${AML_JWT_SECRET:aml-agent-jwt-secret-2026-change-me-0123456789abcdef}
     jwt-validity-hours: 24
@@ -79,6 +110,7 @@ aml:
       max-attempts: 5
       window-seconds: 60
       lock-seconds: 300
+      max-buckets: 10000
 
   # 可靠任务队列（Redis Streams）
   queue:
@@ -88,6 +120,7 @@ aml:
     consumer: worker-1
     max-retry: 3
     claim-idle-seconds: 60
+    heartbeat-seconds: 30
     outbox-poll-seconds: 5
     retry-backoff-seconds: 5   # 指数退避基数（5s、15s、45s）
     retry-poll-seconds: 5
@@ -129,6 +162,27 @@ aml:
   # RAG 向量库（PostgreSQL + pgvector），独立于 MySQL 业务库
   rag:
     cache-ttl-minutes: 60   # 检索结果缓存 TTL（分钟）
+    cache:
+      pipeline-version: hybrid-rrf-v7
+    retained-retired-versions: 2
+    retrieval:
+      recall-multiplier: 4
+      max-per-document: 3
+      max-context-characters: 8000
+    fusion:
+      rrf-k: 60
+      vector-weight: 1.0
+      keyword-weight: 1.2
+    chunker-version: legal-article-v2
+    metadata-schema-version: legal-metadata-v2
+    embedding:
+      provider: langchain4j-onnx
+      model: all-MiniLM-L6-v2
+      revision: 1.18.1-beta28
+      model-hash: bundled-artifact
+    ingestion:
+      max-document-bytes: 5242880
+      lease-heartbeat-seconds: 60
     rerank:
       enabled: true         # 召回后精排（bge-reranker 本地 cross-encoder）
       recall-size: 20       # 召回候选数
@@ -139,12 +193,14 @@ aml:
       password: ${PG_PASSWORD:aml123456}
       table: legal_docs
       dimensions: 384   # all-MiniLM-L6-v2 输出维度
+      distance-metric: cosine
     data-dir: ./data/legal
 
-  # 成本路由：默认关闭规则兜底（不影响真实模型评测）；开启后 SIMPLE 工单零 LLM 成本
+  # 成本路由：请求文本不能触发 RULE_ONLY。rule-fallback-enabled 仅控制 Agent 调用失败后的规则降级；
+  # 模型已返回但结构不合规时，无论该开关如何都不会自动完成，而是生成保守报告并转人工。
   cost-routing:
     rule-fallback-enabled: false
-    summary-enabled: false   # 流式摘要默认关闭（避免第二次模型调用）
+    summary-enabled: false   # 开启后仅流式推送已落库结构化报告，不再触发第二次模型调用
 
 
 # OpenAPI 文档元信息

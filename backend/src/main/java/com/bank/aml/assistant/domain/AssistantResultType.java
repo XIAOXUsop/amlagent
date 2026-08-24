@@ -1,0 +1,13 @@
+package com.bank.aml.assistant.domain;
+
+public enum AssistantResultType {
+    ANSWERED,
+    OUT_OF_SCOPE,
+    WRITE_NOT_ALLOWED,
+    CROSS_CUSTOMER_DENIED,
+    SENSITIVE_DATA_DENIED,
+    INSUFFICIENT_EVIDENCE,
+    CLARIFICATION_REQUIRED,
+    MODEL_UNAVAILABLE,
+    OUTPUT_BLOCKED
+}

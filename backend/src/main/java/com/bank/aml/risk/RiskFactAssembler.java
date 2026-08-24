@@ -6,6 +6,9 @@ import com.bank.aml.domain.CustomerProfile;
 import com.bank.aml.domain.SanctionRecord;
 import com.bank.aml.domain.ShareholdingRecord;
 import com.bank.aml.domain.TransactionRecord;
+import com.bank.aml.sanction.SanctionMatchScorer;
+import com.bank.aml.sanction.SanctionScreeningService;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import java.math.BigDecimal;
@@ -27,9 +30,23 @@ public class RiskFactAssembler {
     private static final BigDecimal MILLION = new BigDecimal("1000000");
 
     private final CustomerDataPort dataSource;
+    private final SanctionMatchScorer sanctionMatchScorer;
+    private final SanctionScreeningService sanctionScreeningService;
 
     public RiskFactAssembler(CustomerDataPort dataSource) {
+        this(dataSource, new SanctionMatchScorer(), null);
+    }
+
+    public RiskFactAssembler(CustomerDataPort dataSource, SanctionMatchScorer sanctionMatchScorer) {
+        this(dataSource, sanctionMatchScorer, null);
+    }
+
+    @Autowired
+    public RiskFactAssembler(CustomerDataPort dataSource, SanctionMatchScorer sanctionMatchScorer,
+                             SanctionScreeningService sanctionScreeningService) {
         this.dataSource = dataSource;
+        this.sanctionMatchScorer = sanctionMatchScorer;
+        this.sanctionScreeningService = sanctionScreeningService;
     }
 
     /** 从客户数据源组装完整 RiskContext（制裁 + 交易聚合 + 新增风险事实） */
@@ -47,7 +64,12 @@ public class RiskFactAssembler {
      */
     public RiskContext assembleFrom(List<TransactionRecord> txns, List<ShareholdingRecord> shareholdings,
                                     List<SanctionRecord> hits, String modelRiskLevel) {
-        int maxSeverity = hits.stream().mapToInt(SanctionRecord::severity).max().orElse(0);
+        // 名单等级采用“1 级最严重”的业务编码；多名单命中必须保留最严重（数值最小）的正等级。
+        // 旧实现取 max 会在同时命中 1/2 级名单时把一级制裁错误降成二级。
+        int maxSeverity = hits.stream().mapToInt(SanctionRecord::severity)
+                .filter(severity -> severity > 0)
+                .min()
+                .orElse(0);
         boolean sanctionHit = !hits.isEmpty();
 
         long night = txns.stream().filter(t -> isNight(t.date())).count();
@@ -67,13 +89,21 @@ public class RiskFactAssembler {
                 RiskLevel.fromLabel(modelLevel).code());
     }
 
-    /** 检索制裁名单（按姓名 + 证件号），返回命中条目 */
+    /**
+     * 检索制裁名单（按姓名 + 证件号），只把高置信候选送入 Guardrail。
+     * 数据库模糊召回产生的低分候选仍可通过制裁筛查接口查看，但不会直接触发确定性制裁规则。
+     */
     public List<SanctionRecord> searchSanctions(CustomerProfile customer) {
+        if (sanctionScreeningService != null) {
+            return sanctionScreeningService.actionableRecords(customer);
+        }
         List<SanctionRecord> hits = new ArrayList<>(dataSource.searchSanctions(customer.name()));
         if (customer.idCard() != null && !customer.idCard().isBlank()) {
             hits.addAll(dataSource.searchSanctions(customer.idCard()));
         }
-        return hits.stream().distinct().toList();
+        return hits.stream().distinct()
+                .filter(candidate -> sanctionMatchScorer.score(customer, candidate).actionable())
+                .toList();
     }
 
     /** 交易模式严重度：拆分/分层（同一金额大量重复）→ 2，否则 0 */

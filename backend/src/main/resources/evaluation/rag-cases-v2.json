@@ -1,0 +1,24 @@
+{
+  "datasetVersion": "rag-legal-dev-v2",
+  "reviewStatus": "PENDING_DOMAIN_REVIEW",
+  "cases": [
+    {"id":"RAG-001","question":"公司账户一天累计向外划转两百万元是否属于大额交易报告范围？","answerable":true,"expectedTitleContains":"大额交易和可疑交易报告","expectedContentContains":"200万元"},
+    {"id":"RAG-002","question":"个人账户跨境汇款达到多少人民币需要报送大额交易？","answerable":true,"expectedTitleContains":"大额交易和可疑交易报告","expectedContentContains":"5万元"},
+    {"id":"RAG-003","question":"客户一次存入五十万元现金，银行有什么报告义务？","answerable":true,"expectedTitleContains":"大额交易和可疑交易报告","expectedContentContains":"50万元"},
+    {"id":"RAG-004","question":"大额交易发生后最迟几个工作日提交报告？","answerable":true,"expectedTitleContains":"大额交易和可疑交易报告","expectedContentContains":"5个工作日"},
+    {"id":"RAG-005","question":"可疑交易报告的提交时限是什么？","answerable":true,"expectedTitleContains":"大额交易和可疑交易报告","expectedContentContains":"10个工作日"},
+    {"id":"RAG-006","question":"对高风险客户强化尽调时是否需要了解财产与资金来源？","answerable":true,"expectedTitleContains":"客户尽职调查","expectedContentContains":"财产和资金来源"},
+    {"id":"RAG-007","question":"企业股权多层嵌套且在境外注册时，受益所有人应如何核验？","answerable":true,"expectedTitleContains":"客户尽职调查","expectedContentContains":"多层嵌套"},
+    {"id":"RAG-008","question":"普通交易记录至少应保存几年？","answerable":true,"expectedTitleContains":"客户尽职调查","expectedContentContains":"至少5年"},
+    {"id":"RAG-009","question":"客户命中恐怖活动人员名单后能否等待人工审批再冻结？","answerable":true,"expectedTitleContains":"恐怖活动资产冻结","expectedContentContains":"立即对相关资产采取冻结措施"},
+    {"id":"RAG-010","question":"采取恐怖资产冻结措施后需要向哪些部门报告？","answerable":true,"expectedTitleContains":"恐怖活动资产冻结","expectedContentContains":"国务院有关部门"},
+    {"id":"RAG-011","question":"名单比对应在哪些业务环节开展？","answerable":true,"expectedTitleContains":"恐怖活动资产冻结","expectedContentContains":"客户准入、日常交易监测"},
+    {"id":"RAG-012","question":"冻结措施能提前告知被命中的客户吗？","answerable":true,"expectedTitleContains":"恐怖活动资产冻结","expectedContentContains":"不得向客户及相关人员泄露"},
+    {"id":"RAG-013","question":"银行必须核实交易实际受益人的身份吗？","answerable":true,"expectedTitleContains":"反洗钱法","expectedContentContains":"交易的实际受益人"},
+    {"id":"RAG-014","question":"哪个机构负责金融机构反洗钱监督管理？","answerable":true,"expectedTitleContains":"反洗钱法","expectedContentContains":"中国人民银行"},
+    {"id":"RAG-015","question":"未履行客户身份识别义务可能面临多少罚款？","answerable":true,"expectedTitleContains":"反洗钱法","expectedContentContains":"二十万元以上二百万元以下"},
+    {"id":"RAG-016","question":"员工连续加班应当支付多少加班工资？","answerable":false,"expectedTitleContains":"","expectedContentContains":""},
+    {"id":"RAG-017","question":"虚拟货币交易的个人所得税税率是多少？","answerable":false,"expectedTitleContains":"","expectedContentContains":""},
+    {"id":"RAG-018","question":"明天上海是否会下雨？","answerable":false,"expectedTitleContains":"","expectedContentContains":""}
+  ]
+}

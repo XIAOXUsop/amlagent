@@ -30,7 +30,7 @@ class AgentEvalFixtureToolsTest {
 
         assertThat(tools.transactionProfile("E1001")).isEqualTo("TX-E1001-SECRET");
         assertThat(tools.corporateProfile("E1001")).isEqualTo("CORP-E1001-SECRET");
-        assertThat(tools.checkSanctions("Alice", "ID-001")).isEqualTo("SANCTION-E1001-SECRET");
+        assertThat(tools.checkSanctions("E1001")).isEqualTo("SANCTION-E1001-SECRET");
         assertThat(tools.searchLegal("customer due diligence")).isEqualTo("LEGAL-E1001-SECRET");
 
         assertThat(tools.traces()).hasSize(4).allSatisfy(trace -> {
@@ -43,9 +43,7 @@ class AgentEvalFixtureToolsTest {
         assertThat(tools.traces()).extracting(AgentEvalToolCallTrace::toolName)
                 .containsExactly("transactionProfile", "corporateProfile", "checkSanctions", "searchLegal");
         assertThat(tools.traces().getFirst().arguments()).containsEntry("customerId", "[REDACTED]");
-        assertThat(tools.traces().get(2).arguments())
-                .containsEntry("customerName", "[REDACTED]")
-                .containsEntry("identityNumber", "[REDACTED]");
+        assertThat(tools.traces().get(2).arguments()).containsEntry("customerId", "[REDACTED]");
     }
 
     @Test
@@ -56,8 +54,8 @@ class AgentEvalFixtureToolsTest {
         List<String> invalidResults = List.of(
                 caseOne.transactionProfile("E2002"),
                 caseOne.corporateProfile("e1001"),
-                caseOne.checkSanctions("Bob", "ID-002"),
-                caseOne.checkSanctions("Alice", null)
+                caseOne.checkSanctions("E2002"),
+                caseOne.checkSanctions(null)
         );
 
         assertThat(invalidResults).containsOnly(AgentEvalFixtureTools.ARGUMENT_VALIDATION_FAILED);

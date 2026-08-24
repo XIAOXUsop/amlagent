@@ -18,6 +18,9 @@ public class LoginRateLimitProperties {
     /** 触发限制后的锁定时长（秒） */
     private int lockSeconds = 300;
 
+    /** 单实例最多保留的 IP+用户名桶；达到上限时清理过期项，否则对新维度失败关闭。 */
+    private int maxBuckets = 10_000;
+
     public int getMaxAttempts() {
         return maxAttempts;
     }
@@ -40,5 +43,13 @@ public class LoginRateLimitProperties {
 
     public void setLockSeconds(int lockSeconds) {
         this.lockSeconds = lockSeconds;
+    }
+
+    public int getMaxBuckets() {
+        return maxBuckets;
+    }
+
+    public void setMaxBuckets(int maxBuckets) {
+        this.maxBuckets = maxBuckets;
     }
 }

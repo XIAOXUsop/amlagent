@@ -22,6 +22,9 @@
         <!-- LangChain4j：core 稳定版与 starter/pgvector 的 beta 发布线对齐 -->
         <langchain4j.version>1.18.1</langchain4j.version>
         <langchain4j.beta.version>1.18.1-beta28</langchain4j.beta.version>
+        <!-- 默认测试不依赖 Docker；integration-test profile 显式切换到集成/E2E。 -->
+        <test.included-groups></test.included-groups>
+        <test.excluded-groups>integration</test.excluded-groups>
     </properties>
 
     <dependencies>
@@ -122,6 +125,13 @@
             <version>${langchain4j.beta.version}</version>
         </dependency>
 
+        <!-- Excel 导入（客户/人员批量新增） -->
+        <dependency>
+            <groupId>org.apache.poi</groupId>
+            <artifactId>poi-ooxml</artifactId>
+            <version>5.4.1</version>
+        </dependency>
+
         <!-- OpenAPI / Swagger -->
         <dependency>
             <groupId>org.springdoc</groupId>
@@ -143,6 +153,25 @@
                 <groupId>org.springframework.boot</groupId>
                 <artifactId>spring-boot-maven-plugin</artifactId>
             </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <configuration>
+                    <groups>${test.included-groups}</groups>
+                    <excludedGroups>${test.excluded-groups}</excludedGroups>
+                </configuration>
+            </plugin>
         </plugins>
     </build>
+
+    <profiles>
+        <profile>
+            <id>integration-test</id>
+            <properties>
+                <test.included-groups>integration</test.included-groups>
+                <!-- 使用一个不存在的标签表示不排除 integration。 -->
+                <test.excluded-groups>__none__</test.excluded-groups>
+            </properties>
+        </profile>
+    </profiles>
 </project>

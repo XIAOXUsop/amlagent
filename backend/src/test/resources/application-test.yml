@@ -16,6 +16,8 @@ spring:
       port: 6379
 
 aml:
+  assistant:
+    enabled: false
   llm:
     active-provider: mock
   queue:
@@ -24,6 +26,8 @@ aml:
     group: aml-workers-test
     consumer: worker-test
   rag:
+    rerank:
+      enabled: false
     pg:
       url: jdbc:postgresql://localhost:5433/aml_rag
       username: ${PG_USER:aml}

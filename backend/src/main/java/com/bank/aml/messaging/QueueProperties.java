@@ -20,11 +20,15 @@ public class QueueProperties {
     /** 单工单最大重试次数（超过进死信） */
     private int maxRetry = 3;
 
-    /** Stream 最大长度（近似裁剪 MAXLEN ~，防止已 ACK 消息长期驻留导致 Redis 内存无限增长） */
+    /** @deprecated 工作流 Stream 禁止按 MAXLEN 裁剪；保留字段仅兼容旧配置。 */
+    @Deprecated
     private long streamMaxLen = 10000;
 
     /** Pending 消息接管阈值（秒） */
     private long claimIdleSeconds = 60;
+
+    /** Worker 心跳间隔；claimIdleSeconds 必须至少为其两倍。 */
+    private long heartbeatSeconds = 30;
 
     /** Outbox 扫描间隔（秒） */
     private int outboxPollSeconds = 5;
@@ -92,6 +96,9 @@ public class QueueProperties {
     public void setClaimIdleSeconds(long claimIdleSeconds) {
         this.claimIdleSeconds = claimIdleSeconds;
     }
+
+    public long getHeartbeatSeconds() { return heartbeatSeconds; }
+    public void setHeartbeatSeconds(long heartbeatSeconds) { this.heartbeatSeconds = heartbeatSeconds; }
 
     public int getOutboxPollSeconds() {
         return outboxPollSeconds;

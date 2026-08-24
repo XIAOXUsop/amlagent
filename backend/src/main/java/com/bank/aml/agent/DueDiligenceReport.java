@@ -31,4 +31,14 @@ public record DueDiligenceReport(
         /** 后续处置代码，只能来自系统提示声明的闭集 */
         List<String> actionCodes
 ) {
+    /** 将不含身份信息的模型分析封装为可信最终报告。 */
+    public static DueDiligenceReport fromAnalysis(String customerId, String customerName, AgentAnalysis analysis) {
+        if (analysis == null) {
+            return null;
+        }
+        return new DueDiligenceReport(customerId, customerName, analysis.riskLevel(),
+                analysis.transactionProfile(), analysis.corporateProfile(), analysis.sanctions(),
+                analysis.legalBasis(), analysis.riskPoints(), analysis.conclusion(), analysis.evidenceChain(),
+                analysis.manualReviewRequired(), analysis.findingCodes(), analysis.actionCodes());
+    }
 }

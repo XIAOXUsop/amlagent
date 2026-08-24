@@ -33,6 +33,7 @@ import java.security.NoSuchAlgorithmException;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.util.HexFormat;
+import java.util.Comparator;
 import java.util.List;
 
 /**
@@ -109,6 +110,12 @@ public class EvaluationController {
         return persistIfCompleted(agentEvalRunner.runDev(), "AGENT_DEV");
     }
 
+    /** 单案例 DEV 重放：用于修复后验证，避免每次定位问题都消耗整套评测 Token。 */
+    @PostMapping("/agent/dev/case")
+    public AgentEvalReport agentDevCase(@RequestParam String caseId) {
+        return agentEvalRunner.runDevCase(caseId);
+    }
+
     /**
      * 运行冻结的隐藏 TEST 分片（最终评测）。标准答案冻结，仅返回聚合指标，不返回逐案例金标。
      * <p>需显式设置环境变量 {@code RUN_HIDDEN_AGENT_EVAL=true}，避免在普通 Web 页面反复调用 TEST 造成指标泄漏。
@@ -175,7 +182,10 @@ public class EvaluationController {
     }
 
     private String computeRuleSetHash() {
-        List<RiskRule> rules = riskRuleRepository.findAll();
+        List<RiskRule> rules = riskRuleRepository.findAll().stream()
+                .sorted(Comparator.comparing(RiskRule::getRuleCode)
+                        .thenComparingInt(RiskRule::getVersion))
+                .toList();
         StringBuilder sb = new StringBuilder();
         for (RiskRule r : rules) {
             sb.append(r.getRuleCode()).append('|').append(r.getVersion()).append('|')

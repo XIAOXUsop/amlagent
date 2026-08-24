@@ -1,6 +1,5 @@
 package com.bank.aml.tools;
 
-import com.bank.aml.domain.CustomerProfile;
 import com.bank.aml.domain.InvestigationSnapshot;
 import com.bank.aml.rag.LegalDoc;
 import dev.langchain4j.agent.tool.P;
@@ -46,10 +45,10 @@ public class SnapshotToolSuite {
         });
     }
 
-    @Tool("检索制裁黑名单（OFAC / 国内制裁名单），按客户姓名与证件号匹配，返回命中条目、名单类型与风险等级")
-    public String checkSanctions(@P("客户姓名") String customerName, @P("客户证件号") String idCard) {
+    @Tool("读取后端已按当前客户身份完成的制裁名单筛查结果；模型无需且不得传递姓名或证件号")
+    public String checkSanctions(@P("当前工单中的客户编号，如 C001") String customerId) {
         return record("checkSanctions", () -> {
-            requireSanctionIdentity(customerName, idCard);
+            requireCustomer(customerId);
             return SanctionTool.format(snapshot.sanctionHits());
         });
     }
@@ -58,9 +57,11 @@ public class SnapshotToolSuite {
     public String searchLegal(@P("法规查询关键词，如'大额交易报告'或'客户尽职调查'") String query) {
         long start = System.nanoTime();
         try {
-            requireLegalQuery(query);
+            List<String> matchedTopics = requireLegalQuery(query);
             // 从冻结快照读取预检索的法规证据，不再实时访问可变 RAG 索引
-            List<LegalDoc> docs = snapshot.legalEvidence();
+            List<LegalDoc> docs = matchedTopics.stream()
+                    .flatMap(topic -> snapshot.legalEvidenceByTopic().getOrDefault(topic, List.of()).stream())
+                    .distinct().toList();
             String result = LegalSearchTool.format(docs);
             // 记录结果摘要哈希与返回的 evidenceId，供报告追溯引用了哪些法规证据
             List<String> evidenceIds = docs.stream().map(LegalDoc::evidenceId).toList();
@@ -84,10 +85,10 @@ public class SnapshotToolSuite {
         long start = System.nanoTime();
         try {
             String result = invocation.get();
-            traces.add(ToolExecutionTrace.ok(toolName, elapsedMs(start)));
+            traces.add(ToolExecutionTrace.ok(toolName, elapsedMs(start), digest(result), List.of()));
             return result;
         } catch (IllegalArgumentException e) {
-            // 参数校验失败（客户编号/姓名/证件号不匹配或 query 为空）
+            // 参数校验失败（客户编号不匹配或 query 为空）
             traces.add(ToolExecutionTrace.invalidArgument(toolName, elapsedMs(start)));
             throw e;
         } catch (RuntimeException e) {
@@ -106,27 +107,19 @@ public class SnapshotToolSuite {
      * 法规查询校验：query 必须命中快照冻结的任一法规关键词（不区分大小写），
      * 与评测工具契约一致，防止模型乱写查询词导致报告引用与工单主题无关的法规。
      */
-    private void requireLegalQuery(String query) {
+    private List<String> requireLegalQuery(String query) {
         if (query == null || query.isBlank()) {
             throw new IllegalArgumentException("法规查询关键词不能为空");
         }
         String normalized = normalize(query);
-        boolean matched = snapshot.legalKeywords().stream()
+        List<String> matched = snapshot.legalKeywords().stream()
                 .filter(k -> k != null && !k.isBlank())
-                .anyMatch(k -> normalized.contains(normalize(k)));
-        if (!matched) {
+                .filter(k -> normalized.contains(normalize(k)))
+                .toList();
+        if (matched.isEmpty()) {
             throw new IllegalArgumentException("法规查询关键词与当前工单预警规则不匹配");
         }
-    }
-
-    private void requireSanctionIdentity(String customerName, String idCard) {
-        CustomerProfile c = snapshot.customer();
-        boolean nameMatch = customerName != null && normalize(customerName).equals(normalize(c.name()));
-        boolean idMatch = idCard != null && idCard.equals(c.idCard());
-        // 制裁检索要求姓名与证件号两个可信字段都匹配，避免"同名不同证件号"也能取得制裁结果
-        if (!nameMatch || !idMatch) {
-            throw new IllegalArgumentException("客户姓名/证件号与当前工单快照不匹配");
-        }
+        return matched;
     }
 
     private static String normalize(String value) {

@@ -26,7 +26,7 @@ public final class TransactionTool {
     /** 从已冻结的交易原始数据生成画像文本（快照套件复用同一格式化逻辑） */
     public static String format(List<TransactionRecord> txns, String customerId) {
         if (txns.isEmpty()) {
-            return "未查询到客户 " + customerId + " 的交易记录。";
+            return "未查询到交易记录。";
         }
 
         int total = txns.size();
@@ -44,18 +44,18 @@ public final class TransactionTool {
         String amountWan = totalAmount.divide(new BigDecimal("10000"), 2, RoundingMode.HALF_UP).toPlainString();
 
         return """
-                客户 %s 近180天交易画像：
+                近180天交易画像：
                 - 交易笔数：%d 笔
                 - 交易总额：约 %s 万元
                 - 夜间交易（22:00-06:00）：%d 笔，占比 %.1f%%
                 - 跨境交易：%d 笔，占比 %.1f%%，涉及地区：%s
                 - 大额交易（≥100万）：%d 笔；（≥50万）：%d 笔
-                - 典型交易对手含：%s
-                """.formatted(customerId, total, amountWan,
+                - 去重交易对手数量：%d
+                """.formatted(total, amountWan,
                 nightCount, 100.0 * nightCount / total,
                 cross.size(), 100.0 * cross.size() / total, countries.isEmpty() ? "无" : countries,
                 largeCount, large50,
-                txns.stream().map(TransactionRecord::counterparty).distinct().limit(5).collect(Collectors.joining("、")));
+                txns.stream().map(TransactionRecord::counterparty).distinct().count());
     }
 
     private static boolean isNight(LocalDateTime date) {

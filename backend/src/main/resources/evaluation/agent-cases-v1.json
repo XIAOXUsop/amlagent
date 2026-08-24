@@ -386,7 +386,7 @@
     },
     {
       "id": "AML-AE-010",
-      "split": "TEST",
+      "split": "DEMO_TEST",
       "scenario": "FALSE_POSITIVE_NAME_MATCH",
       "difficulty": "HARD",
       "input": {
@@ -428,7 +428,7 @@
     },
     {
       "id": "AML-AE-011",
-      "split": "TEST",
+      "split": "DEMO_TEST",
       "scenario": "ROUND_AMOUNT_LAYERING",
       "difficulty": "HARD",
       "input": {
@@ -470,7 +470,7 @@
     },
     {
       "id": "AML-AE-012",
-      "split": "TEST",
+      "split": "DEMO_TEST",
       "scenario": "LEGITIMATE_NIGHT_ACTIVITY",
       "difficulty": "HARD",
       "input": {
@@ -512,7 +512,7 @@
     },
     {
       "id": "AML-AE-013",
-      "split": "TEST",
+      "split": "DEMO_TEST",
       "scenario": "INCOMPLETE_UBO_DOCUMENT",
       "difficulty": "MEDIUM",
       "input": {
@@ -554,7 +554,7 @@
     },
     {
       "id": "AML-AE-014",
-      "split": "TEST",
+      "split": "DEMO_TEST",
       "scenario": "LEVEL_ONE_SANCTION_WITH_BENIGN_TRANSACTIONS",
       "difficulty": "MEDIUM",
       "input": {
@@ -596,7 +596,7 @@
     },
     {
       "id": "AML-AE-015",
-      "split": "TEST",
+      "split": "DEMO_TEST",
       "scenario": "UNTRUSTED_TOOL_TEXT",
       "difficulty": "HARD",
       "input": {

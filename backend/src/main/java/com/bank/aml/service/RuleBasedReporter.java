@@ -9,6 +9,7 @@ import com.bank.aml.tools.TransactionTool;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -35,6 +36,11 @@ public class RuleBasedReporter {
 
         List<String> riskPoints = new ArrayList<>();
         String riskLevel = assess(tx, sanction, riskPoints);
+        List<String> findingCodes = findings(snapshot, riskLevel);
+        List<String> actionCodes = actions(riskLevel);
+        List<String> evidenceChain = new ArrayList<>(List.of(
+                "交易数据源：冻结快照", "工商股权：冻结快照", "黑名单：后端制裁筛查"));
+        snapshot.legalEvidence().stream().map(doc -> "法规证据：" + doc.evidenceId()).forEach(evidenceChain::add);
 
         return new DueDiligenceReport(
                 customer.id(),
@@ -46,12 +52,81 @@ public class RuleBasedReporter {
                 List.of(legal),
                 riskPoints,
                 conclusion(riskLevel),
-                List.of("交易数据源：Mock 核心交易系统", "工商股权：Mock 工商数据库", "黑名单：OFAC/国内制裁名单",
-                        "法规：人民银行反洗钱规章"),
+                evidenceChain,
                 false,
-                List.of(),
-                List.of()
+                findingCodes,
+                actionCodes
         );
+    }
+
+    /** 模型返回了不可安全接受的结构化输出时，生成只用于人工复核的保守报告。 */
+    public DueDiligenceReport generateSafetyHold(InvestigationSnapshot snapshot, String alertRule,
+                                                 List<String> validationCodes) {
+        DueDiligenceReport base = generate(snapshot, alertRule);
+        List<String> points = new ArrayList<>(base.riskPoints());
+        points.add("模型输出未通过生产契约校验：" + String.join("、", validationCodes));
+        SetBuilder findings = new SetBuilder(base.findingCodes());
+        findings.remove("NORMAL_TRANSACTION_PATTERN");
+        findings.add("RISK_ASSESSMENT_UNCERTAIN");
+        SetBuilder actions = new SetBuilder(base.actionCodes());
+        actions.add("MANUAL_REVIEW");
+        actions.add("ENHANCED_DUE_DILIGENCE");
+        String risk = "低风险".equals(base.riskLevel()) ? "中风险" : base.riskLevel();
+        return new DueDiligenceReport(base.customerId(), base.customerName(), risk,
+                base.transactionProfile(), base.corporateProfile(), base.sanctions(), base.legalBasis(), points,
+                "模型输出未通过生产契约校验，已生成保守报告并强制转人工复核。",
+                base.evidenceChain(), true, findings.values(), actions.values());
+    }
+
+    private List<String> findings(InvestigationSnapshot snapshot, String riskLevel) {
+        SetBuilder findings = new SetBuilder(List.of());
+        var facts = snapshot.riskFacts();
+        if (facts.sanctionHit()) {
+            if (facts.maxSeverity() == 1) findings.add("SANCTION_LEVEL_1_MATCH");
+            else if (facts.maxSeverity() >= 2) findings.add("DOMESTIC_WATCHLIST_MATCH");
+            else findings.add("RISK_ASSESSMENT_UNCERTAIN");
+        } else {
+            findings.add("NO_SANCTION_HIT");
+        }
+        if (!facts.transactionDataComplete()) {
+            findings.add("TRANSACTION_DATA_UNAVAILABLE");
+            findings.add("RISK_ASSESSMENT_UNCERTAIN");
+        }
+        if (facts.crossRatio() > 0) findings.add("CROSS_BORDER_ACTIVITY");
+        if (facts.uboRiskSeverity() >= 2) findings.add("UBO_UNVERIFIED");
+        else if (facts.uboRiskSeverity() == 1) findings.add("UBO_DOCUMENTS_INCOMPLETE");
+        if ("低风险".equals(riskLevel) && findings.values().stream().noneMatch("NORMAL_TRANSACTION_PATTERN"::equals)) {
+            findings.add("NORMAL_TRANSACTION_PATTERN");
+        }
+        return findings.values();
+    }
+
+    private List<String> actions(String riskLevel) {
+        return switch (riskLevel) {
+            case "高风险" -> List.of("ENHANCED_DUE_DILIGENCE");
+            case "中风险" -> List.of("INCREASE_MONITORING");
+            default -> List.of("MAINTAIN_STANDARD_MONITORING");
+        };
+    }
+
+    private static final class SetBuilder {
+        private final LinkedHashSet<String> values;
+
+        private SetBuilder(List<String> initial) {
+            this.values = new LinkedHashSet<>(initial == null ? List.of() : initial);
+        }
+
+        private void add(String value) {
+            values.add(value);
+        }
+
+        private void remove(String value) {
+            values.remove(value);
+        }
+
+        private List<String> values() {
+            return List.copyOf(values);
+        }
     }
 
     /** 工具文本为"黑名单命中结果："开头时视为命中（避免误匹配"未命中"） */

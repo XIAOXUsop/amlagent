@@ -9,6 +9,7 @@ import {
   type EvalRate,
 } from '../api/client'
 import { CaretTop, DataAnalysis, Warning } from '@element-plus/icons-vue'
+import { formatEvalRate } from '../utils/eval'
 
 const status = ref<Awaited<ReturnType<typeof getAgentEvalStatus>> | null>(null)
 const dataset = ref<AgentEvalDatasetSummary | null>(null)
@@ -40,25 +41,26 @@ async function runDev() {
   }
 }
 
-function rate(v: EvalRate | null | undefined): string {
-  if (!v || v.value == null) return '-'
-  return `${(v.value * 100).toFixed(1)}%`
-}
+const rate = (v: EvalRate | null | undefined): string => formatEvalRate(v)
 
-// v2/v5 历史对比（冻结 DEV，来自二轮对比报告）
+// v2/v9 历史对比（冻结 DEV，v9 为最近一次真实 DeepSeek 全量运行）
 const baseline = [
-  { metric: '原始风险准确率', v2: '44.4%', v5: '100%' },
+  { metric: '原始风险准确率', v2: '44.4%', v5: '88.9%' },
   { metric: '原始高风险召回率', v2: '40%', v5: '100%' },
   { metric: 'Guardrails 后风险准确率', v2: '77.8%', v5: '100%' },
   { metric: '必需工具召回率', v2: '94.4%', v5: '100%' },
   { metric: '法规 evidenceId 召回率', v2: '77.8%', v5: '100%' },
   { metric: '无效输出', v2: '2/9', v5: '0/9' },
-  { metric: '端到端任务通过率', v2: '未统计', v5: '66.7%' },
+  { metric: '端到端任务通过率', v2: '未统计', v5: '100%' },
 ]
 </script>
 
 <template>
   <div class="eval">
+    <header class="page-intro">
+      <h2>评测</h2>
+      <p>查看冻结数据集、质量基线和真实模型运行结果。</p>
+    </header>
     <el-alert
       v-if="status && !status.ready"
       type="warning"
@@ -85,7 +87,7 @@ const baseline = [
       </div>
 
       <div class="card">
-        <h3 class="card-title">v2 → v5 DEV 迭代对比</h3>
+        <h3 class="card-title">v2 → v9 DEV 迭代对比</h3>
         <div class="baseline-list">
           <div v-for="row in baseline" :key="row.metric" class="bl-row">
             <span class="bl-metric">{{ row.metric }}</span>
@@ -94,7 +96,7 @@ const baseline = [
             <b class="bl-v5 mono-num">{{ row.v5 }}</b>
           </div>
         </div>
-        <p class="hint">v5 为调优集结果（可能过拟合），需以冻结的隐藏 TEST 分片验证泛化。</p>
+        <p class="hint">v9 为公开 DEV 调优结果，仍需以冻结的隐藏 TEST 分片验证泛化。</p>
       </div>
     </div>
 
@@ -122,6 +124,8 @@ const baseline = [
         <div class="metric"><span>evidenceId 召回</span><b class="mono-num">{{ rate(result.citations?.evidenceIdRecall) }}</b></div>
         <div class="metric"><span>Token（输入/输出）</span><b class="mono-num">{{ result.tokens?.inputTokens }} / {{ result.tokens?.outputTokens }}</b></div>
         <div class="metric"><span>延迟 P50/P95</span><b class="mono-num">{{ result.latency?.p50Ms }}ms / {{ result.latency?.p95Ms }}ms</b></div>
+        <div class="metric"><span>平均 Token 预算</span><b :class="{ pass: result.efficiency?.tokenPass === true, fail: result.efficiency?.tokenPass === false }">{{ result.efficiency?.observedAverageTokensPerCase ?? '-' }} / {{ result.efficiency?.averageTokensPerCaseBudget ?? '-' }}</b></div>
+        <div class="metric"><span>P95 延迟预算</span><b :class="{ pass: result.efficiency?.latencyPass === true, fail: result.efficiency?.latencyPass === false }">{{ result.efficiency?.observedP95LatencyMs ?? '-' }} / {{ result.efficiency?.p95LatencyBudgetMs ?? '-' }} ms</b></div>
       </div>
       <p class="hint">promptVersion: <code>{{ result.promptVersion }}</code> · 模型: <code>{{ result.runtime?.configuredModel }}</code> · 评分: <code>{{ result.scored }}/{{ result.attempted }}</code></p>
     </div>
@@ -132,7 +136,7 @@ const baseline = [
 .eval {
   display: flex;
   flex-direction: column;
-  gap: 18px;
+  gap: 0;
 }
 
 .ready-alert {
@@ -142,7 +146,7 @@ const baseline = [
 .grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 18px;
+  gap: 28px;
 }
 
 .kv {
@@ -163,7 +167,7 @@ const baseline = [
   font-size: 11px;
   color: var(--gold);
   word-break: break-all;
-  background: rgba(11, 18, 32, 0.5);
+  background: #f8fafc;
   border: 1px solid var(--line-faint);
   padding: 4px 8px;
   border-radius: 6px;
@@ -193,13 +197,18 @@ const baseline = [
 .metrics {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
-  gap: 12px;
+  gap: 0;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  overflow: hidden;
 }
 .metric {
   padding: 12px 14px;
-  border-radius: 8px;
-  background: rgba(11, 18, 32, 0.42);
-  border: 1px solid var(--line-faint);
+  border-radius: 0;
+  background: #ffffff;
+  border: 0;
+  border-right: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
 }
 .metric span {
   display: block;
@@ -212,12 +221,16 @@ const baseline = [
   color: var(--text);
   font-weight: 650;
 }
+.metric b.pass { color: var(--risk-low); }
+.metric b.fail { color: var(--risk-high); }
+
+.grid .card { border-top: 0; padding-top: 0; }
 
 .eval .hint code {
   font-family: var(--font-mono);
   font-size: 11px;
   color: var(--gold);
-  background: rgba(11, 18, 32, 0.5);
+  background: #f1f5f9;
   padding: 2px 6px;
   border-radius: 6px;
 }

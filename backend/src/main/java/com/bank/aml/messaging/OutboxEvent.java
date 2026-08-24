@@ -66,6 +66,13 @@ public class OutboxEvent {
 
     private LocalDateTime publishedAt;
 
+    /** 发布 Claim 的所有者与单调版本；旧发布器只能确认自己持有的版本。 */
+    @Column(length = 64)
+    private String claimOwner;
+
+    @Column(nullable = false)
+    private long claimVersion = 0;
+
     @PrePersist
     void onCreate() {
         this.createdAt = LocalDateTime.now();
@@ -153,4 +160,7 @@ public class OutboxEvent {
     public void setPublishedAt(LocalDateTime publishedAt) {
         this.publishedAt = publishedAt;
     }
+
+    public String getClaimOwner() { return claimOwner; }
+    public long getClaimVersion() { return claimVersion; }
 }

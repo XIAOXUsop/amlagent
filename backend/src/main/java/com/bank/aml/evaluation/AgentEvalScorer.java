@@ -183,8 +183,9 @@ public class AgentEvalScorer {
         long required = 0, matched = 0, validCalls = 0, allCalls = 0, exactCases = 0;
         long invalidArgs = 0, duplicates = 0, failures = 0;
         for (CaseResult evalCase : cases) {
-            required += 4;
-            matched += 4L - evalCase.missingTools().size();
+            long requiredForCase = evalCase.requiredTools().size();
+            required += requiredForCase;
+            matched += Math.max(0, requiredForCase - evalCase.missingTools().size());
             allCalls += evalCase.toolCalls().size();
             validCalls += evalCase.toolCalls().stream().filter(t -> t.success() && t.argumentValid()).count();
             invalidArgs += evalCase.invalidArgumentCalls();

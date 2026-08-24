@@ -18,8 +18,8 @@ import java.util.function.Supplier;
 /**
  * Case-scoped tools backed exclusively by one evaluation fixture.
  *
- * <p>Create a fresh instance for every evaluation case. Identity-bearing calls must match the
- * current case exactly; invalid calls return a generic error and never expose fixture content.</p>
+ * <p>Create a fresh instance for every evaluation case. Tools receive only a case customer reference;
+ * raw names and identity numbers remain inside the fixture and are never sent to the model.</p>
  */
 public final class AgentEvalFixtureTools {
 
@@ -71,21 +71,16 @@ public final class AgentEvalFixtureTools {
 
     @Tool(
             name = "checkSanctions",
-            value = "Check sanctions using the current evaluation customer's exact name and identity number."
+            value = "Read the backend sanctions-screening result already bound to the current customer reference."
     )
     public String checkSanctions(
-            @P(name = "customerName", value = "Exact customer name from the case") String customerName,
-            @P(name = "identityNumber", value = "Exact identity number from the case") String identityNumber
+            @P(name = "customerId", value = "Exact customer identifier from the case") String customerId
     ) {
-        Map<String, String> arguments = arguments(
-                "customerName", customerName,
-                "identityNumber", identityNumber
-        );
+        Map<String, String> arguments = arguments("customerId", customerId);
         return invoke(
                 "checkSanctions",
                 arguments,
-                () -> exact(customerName, evalCase.input().customerName())
-                        && exact(identityNumber, evalCase.input().identityNumber()),
+                () -> exact(customerId, evalCase.input().customerId()),
                 () -> evalCase.toolFixture().sanctionResult()
         );
     }

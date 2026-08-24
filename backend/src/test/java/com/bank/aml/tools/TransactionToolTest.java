@@ -43,7 +43,7 @@ class TransactionToolTest {
     @Test
     void unknownCustomerReturnsEmptyMessage() {
         String result = profile("C999");
-        assertThat(result).contains("未查询到客户 C999");
+        assertThat(result).isEqualTo("未查询到交易记录。").doesNotContain("C999");
     }
 
     @Test

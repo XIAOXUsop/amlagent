@@ -9,6 +9,8 @@ import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMock
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.http.MediaType;
 import org.springframework.test.context.ActiveProfiles;
+import org.springframework.test.context.DynamicPropertyRegistry;
+import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
@@ -21,14 +23,23 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * Cookie 认证 + CSRF 完整链路安全测试（复用本机 Docker 的 MySQL/Redis/PGVector）。
  * <p>覆盖任务书 D10 的 MockMvc 安全矩阵：未认证 401、角色 403、Cookie 已认证但无 CSRF 403、
  * Cookie + 正确 CSRF 放行、login 豁免 CSRF、logout 需要 CSRF。
- * 运行：./mvnw test -Dgroups=integration
+ * 运行：./mvnw -Pintegration-test test
  */
 @SpringBootTest
 @AutoConfigureMockMvc
 @ActiveProfiles("test")
 @Tag("integration")
-@TestPropertySource(properties = "aml.rag.rerank.enabled=false")
+@TestPropertySource(properties = {"aml.rag.rerank.enabled=false", "aml.assistant.enabled=true"})
 class CsrfSecurityTest {
+
+    @DynamicPropertySource
+    static void isolatedInfrastructure(DynamicPropertyRegistry registry) {
+        com.bank.aml.testinfra.IntegrationTestDatabase.configure(registry, "aml_security_test");
+        String suffix = java.util.UUID.randomUUID().toString().substring(0, 8);
+        registry.add("aml.queue.stream", () -> "aml:workflow:cases-security-" + suffix);
+        registry.add("aml.queue.dead-stream", () -> "aml:workflow:dead-security-" + suffix);
+        registry.add("aml.queue.group", () -> "aml-workers-security-" + suffix);
+    }
 
     @Autowired
     private MockMvc mockMvc;
@@ -61,6 +72,33 @@ class CsrfSecurityTest {
     }
 
     @Test
+    @DisplayName("ANALYST 不能访问 RAG 索引管理面")
+    void analystCannotAccessRagAdministration() throws Exception {
+        Cookie token = login("analyst", "analyst123");
+
+        mockMvc.perform(get("/api/admin/rag/indexes").cookie(token))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    @DisplayName("仅 ADMIN 可读取 AI 小助状态")
+    void assistantStatusRequiresAdminRole() throws Exception {
+        Cookie analyst = login("analyst", "analyst123");
+        Cookie admin = login("admin", "admin123");
+
+        mockMvc.perform(get("/api/assistant/status").cookie(analyst)).andExpect(status().isForbidden());
+        mockMvc.perform(get("/api/assistant/status").cookie(admin)).andExpect(status().isOk());
+    }
+
+    @Test
+    @DisplayName("AI 小助会话创建同样强制 CSRF")
+    void assistantConversationCreationRequiresCsrf() throws Exception {
+        Cookie admin = login("admin", "admin123");
+        mockMvc.perform(post("/api/admin/customers/1/assistant/conversations").cookie(admin))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
     @DisplayName("REVIEWER 重放死信被 403 拒绝")
     void reviewerCannotReplayDeadLetter() throws Exception {
         Auth auth = loginWithCsrf("reviewer", "reviewer123");
@@ -69,6 +107,23 @@ class CsrfSecurityTest {
                         .cookie(auth.token())
                         .cookie(auth.xsrf())
                         .header("X-XSRF-TOKEN", auth.csrfValue()))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    @DisplayName("ANALYST 不能提交制裁候选人工核验")
+    void analystCannotReviewSanctionCandidate() throws Exception {
+        Auth auth = loginWithCsrf("analyst", "analyst123");
+
+        mockMvc.perform(post("/api/sanctions/screen/C001/review")
+                        .cookie(auth.token())
+                        .cookie(auth.xsrf())
+                        .header("X-XSRF-TOKEN", auth.csrfValue())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"candidateFingerprint":"%s","decision":"DISMISS",
+                                 "comment":"权限边界测试","expectedRevision":0}
+                                """.formatted("a".repeat(64))))
                 .andExpect(status().isForbidden());
     }
 

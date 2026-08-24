@@ -9,6 +9,7 @@ import com.bank.aml.risk.RiskFactAssembler;
 import com.bank.aml.risk.RiskRuleEngine;
 import com.bank.aml.risk.RiskRuleRepository;
 import com.bank.aml.risk.RiskRuleSeeder;
+import com.bank.aml.service.FinalDecisionAssembler;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.langchain4j.model.chat.ChatModel;
 import dev.langchain4j.model.openai.OpenAiChatModel;
@@ -83,6 +84,7 @@ class AgentEvalLiveTest {
                 new AgentEvalSchemaValidator(),
                 new AgentEvalScorer(),
                 guardrailEngine,
+                new FinalDecisionAssembler(),
                 new ForbiddenClaimDetectorRegistry());
 
         AgentEvalReport report = runner.runDev();

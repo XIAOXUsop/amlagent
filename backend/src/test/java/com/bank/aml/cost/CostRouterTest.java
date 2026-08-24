@@ -26,10 +26,15 @@ class CostRouterTest {
     }
 
     @Test
-    void simpleWithRuleFallbackIsZeroLlm() {
-        // SIMPLE + 规则兜底启用 → RULE_ONLY，零 LLM 调用（含流式摘要）
-        assertThat(router.route("常规监测", true, false)).isEqualTo(Route.RULE_ONLY);
-        assertThat(router.route("常规监测", true, true)).isEqualTo(Route.RULE_ONLY);
+    void naturalLanguageNeverSilentlyDowngradesToRuleOnly() {
+        assertThat(router.route("常规监测", true, false)).isEqualTo(Route.AGENT);
+        assertThat(router.route("常规监测", true, true)).isEqualTo(Route.AGENT);
+    }
+
+    @Test
+    void requestControlledPrefixCannotBypassAgent() {
+        assertThat(router.route("[RULE_ONLY_VERIFIED]常规监测", true, false)).isEqualTo(Route.AGENT);
+        assertThat(router.route("[RULE_ONLY_VERIFIED]常规监测", false, false)).isEqualTo(Route.AGENT);
     }
 
     @Test
@@ -42,7 +47,7 @@ class CostRouterTest {
     void complexRoutesBySummarySwitch() {
         // COMPLEX + 摘要关闭 → 仅主 Agent 一次
         assertThat(router.route("命中制裁名单", true, false)).isEqualTo(Route.AGENT);
-        // COMPLEX + 摘要开启 → 主 Agent + 异步流式摘要
+        // COMPLEX + 报告流开启 → 主 Agent + 已落库结果的确定性流，不产生第二次模型调用
         assertThat(router.route("命中制裁名单", true, true)).isEqualTo(Route.AGENT_WITH_SUMMARY);
     }
 }

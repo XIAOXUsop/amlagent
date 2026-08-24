@@ -7,7 +7,8 @@ import com.bank.aml.domain.InvestigationSnapshot;
 import com.bank.aml.domain.SanctionRecord;
 import com.bank.aml.domain.ShareholdingRecord;
 import com.bank.aml.domain.TransactionRecord;
-import com.bank.aml.rag.LegalDocumentSearcher;
+import com.bank.aml.rag.EnterpriseLegalRetriever;
+import com.bank.aml.rag.RetrievalResponse;
 import com.bank.aml.risk.RiskFactAssembler;
 import com.bank.aml.service.LegalKeywordResolver;
 import com.bank.aml.tools.SnapshotToolSuite;
@@ -24,6 +25,7 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static org.mockito.ArgumentMatchers.any;
 
 /**
  * 验证 Snapshot First：快照在 Agent 推理前冻结，工具只读快照，数据源变化不影响当前执行。
@@ -71,7 +73,7 @@ class InvestigationSnapshotTest {
 
         SnapshotToolSuite tools = new SnapshotToolSuite(snapshot);
         tools.corporateProfile("C001");
-        tools.checkSanctions("张伟", "110101198506123456");
+        tools.checkSanctions("C001");
 
         // 股权/制裁工具均从快照读，不再访问数据源
         verify(dataSource, times(1)).shareholdingsOf("C001");
@@ -104,8 +106,11 @@ class InvestigationSnapshotTest {
     }
 
     private InvestigationSnapshotFactory factory(CustomerDataPort dataSource) {
+        EnterpriseLegalRetriever retriever = mock(EnterpriseLegalRetriever.class);
+        when(retriever.retrieve(any())).thenReturn(new RetrievalResponse(
+                RetrievalResponse.Status.NO_RELEVANT_EVIDENCE, "v1", List.of()));
         return new InvestigationSnapshotFactory(dataSource, new RiskFactAssembler(dataSource),
-                mock(LegalDocumentSearcher.class), new LegalKeywordResolver(), "v1");
+                retriever, new LegalKeywordResolver(), () -> "v1");
     }
 
     private CustomerDataPort stubDataSource() {

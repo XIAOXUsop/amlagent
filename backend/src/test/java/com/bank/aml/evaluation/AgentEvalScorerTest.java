@@ -97,8 +97,9 @@ class AgentEvalScorerTest {
                 actualEscalation, List.of(),
                 List.of("SANCTION_LEVEL_1_MATCH"), "SCORED".equals(status) ? List.of() : List.of("SANCTION_LEVEL_1_MATCH"),
                 List.of(), List.of("MANUAL_REVIEW"), "SCORED".equals(status) ? List.of() : List.of("MANUAL_REVIEW"),
-                List.of(), List.of(), List.of(), List.of(), List.of(),
+                List.of(), List.of(), List.of(), List.of(),
                 List.of("transactionProfile", "corporateProfile", "checkSanctions", "searchLegal"),
+                List.of(), List.of(),
                 0, 0, List.of(), endToEndTaskPass, strictPass, 10, null, null
         );
     }

@@ -73,11 +73,15 @@ public class ChatModelConfig {
                 }
                 // DeepSeek V4 默认开启 thinking；工具调用的后续轮次要求完整回传 reasoning_content。
                 // 当前 LangChain4j 链路以稳定、可复现的非思考模式运行，避免多轮工具调用返回 400。
-                if ("deepseek".equalsIgnoreCase(providerName)
-                        || (active.getBaseUrl() != null && active.getBaseUrl().contains("api.deepseek.com"))) {
+                boolean deepSeek = "deepseek".equalsIgnoreCase(providerName)
+                        || (active.getBaseUrl() != null && active.getBaseUrl().contains("api.deepseek.com"));
+                if (deepSeek) {
                     b.customParameters(Map.of("thinking", Map.of("type", "disabled")));
                 }
-                return b.build();
+                ChatModel model = b.build();
+                // DeepSeek 自带服务端上下文缓存，不接受 OpenAI extended prompt cache retention 参数。
+                // 在出站边界清洗调用方可能注入的该字段，避免兼容接口返回 invalid_parameter。
+                return deepSeek ? new DeepSeekCompatibleChatModel(model) : model;
             }
         }
     }
@@ -110,8 +114,14 @@ public class ChatModelConfig {
         if (active.getBaseUrl() != null && !active.getBaseUrl().isBlank()) {
             b.baseUrl(active.getBaseUrl());
         }
+        boolean deepSeek = "deepseek".equalsIgnoreCase(props.getActiveProvider())
+                || (active.getBaseUrl() != null && active.getBaseUrl().contains("api.deepseek.com"));
+        if (deepSeek) {
+            b.customParameters(Map.of("thinking", Map.of("type", "disabled")));
+        }
         log.info("初始化流式模型: provider={}, model={}", props.getActiveProvider(), active.getModelName());
-        return b.build();
+        StreamingChatModel model = b.build();
+        return deepSeek ? new DeepSeekCompatibleStreamingChatModel(model) : model;
     }
 
     /** 摘要用的流式模型：显式包装 purpose=summary，异步回调中记录 Token/错误不依赖 ThreadLocal */
@@ -121,5 +131,14 @@ public class ChatModelConfig {
         LlmProviderProperties active = props.active();
         return new ObservedStreamingChatModel(streamingChatModel, metrics,
                 new ModelInvocationTags(props.getActiveProvider(), active.getModelName(), "summary"));
+    }
+
+    /** AI 小助独立观测目的，避免与工单摘要的 Token/延迟指标混合。 */
+    @Bean
+    public StreamingChatModel assistantStreamingChatModel(StreamingChatModel streamingChatModel,
+                                                          MetricsRecorder metrics, LlmProperties props) {
+        LlmProviderProperties active = props.active();
+        return new ObservedStreamingChatModel(streamingChatModel, metrics,
+                new ModelInvocationTags(props.getActiveProvider(), active.getModelName(), "customer_assistant"));
     }
 }

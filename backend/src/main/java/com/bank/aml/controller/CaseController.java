@@ -26,6 +26,7 @@ import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.util.List;
+import java.time.LocalDateTime;
 
 /**
  * 反洗钱预警工单 REST API（返回 DTO，不暴露 JPA 实体）。
@@ -89,7 +90,8 @@ public class CaseController {
     /** 订阅工单工作流实时进度（SSE） */
     @GetMapping("/{id}/events")
     public SseEmitter events(@PathVariable Long id) {
-        return workflowEventService.subscribe(id);
+        var current = service.getCase(id);
+        return workflowEventService.subscribe(id, current.getStatus());
     }
 
     /** 工单详情 */
@@ -106,8 +108,10 @@ public class CaseController {
 
     /** 阶段执行记录（检查点） */
     @GetMapping("/{id}/executions")
-    public List<CaseExecution> executions(@PathVariable Long id) {
-        return caseExecutionRepository.findByCaseIdOrderByStartedAtAsc(id);
+    public List<CaseExecutionDto> executions(@PathVariable Long id) {
+        return caseExecutionRepository.findByCaseIdOrderByStartedAtAsc(id).stream()
+                .map(CaseExecutionDto::from)
+                .toList();
     }
 
     /** 工具调用轨迹（按执行版本倒序，同一执行内按调用顺序返回；不暴露参数明文与完整结果） */
@@ -159,6 +163,23 @@ public class CaseController {
         static ToolTraceDto from(ToolExecutionTraceEntity e) {
             return new ToolTraceDto(e.getExecutionVersion(), e.getSequenceNo(), e.getToolName(),
                     e.isSuccess(), e.isArgumentValid(), e.getDurationMs(), e.getResultDigest(), e.getErrorCode());
+        }
+    }
+
+    /** 检查点诊断 DTO：不暴露内部输入/输出正文或底层异常消息。 */
+    public record CaseExecutionDto(
+            int executionVersion,
+            com.bank.aml.common.enums.WorkflowStage stage,
+            CaseExecution.ExecutionStatus status,
+            LocalDateTime startedAt,
+            LocalDateTime completedAt,
+            Long durationMs,
+            String errorCode
+    ) {
+        static CaseExecutionDto from(CaseExecution execution) {
+            return new CaseExecutionDto(execution.getExecutionVersion(), execution.getStage(), execution.getStatus(),
+                    execution.getStartedAt(), execution.getCompletedAt(), execution.getDurationMs(),
+                    execution.getErrorCode());
         }
     }
 }

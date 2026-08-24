@@ -149,11 +149,9 @@ public class WorkflowConsumer implements ApplicationRunner, DisposableBean {
             boolean progressing = ackTotal > lastAckTotal;
             lastAckTotal = ackTotal;
 
-            // 真实 lag = 消费组 pending（已投递尚未 ACK 的消息数）。
-            // 注意：stream 总长度会长期保留已 ACK 的历史消息，绝不能把它当成 lag，
-            // 否则会误把"正常消费后的历史留存"判成停滞，触发无谓的容器重建打断消费。
-            long pending = pendingCount();
-            long lag = pending >= 0 ? pending : 0L;
+            // 真实 lag = 未投递消息 + 已投递未 ACK。只看 pending 会漏掉消费者完全停摆前尚未投递的积压。
+            long lag = groupLagCount();
+            lag = lag >= 0 ? lag : 0L;
 
             lastLag.set(Math.max(0, lag));
             lastProbeFailed.set(false);
@@ -173,13 +171,20 @@ public class WorkflowConsumer implements ApplicationRunner, DisposableBean {
         }
     }
 
-    /** 读取消费组 pending（已投递未 ACK）数量；取不到返回 -1。 */
-    private long pendingCount() {
+    /** 读取 Redis XINFO GROUPS 的 lag + pending；取不到返回 -1。 */
+    private long groupLagCount() {
         return redisTemplate.opsForStream().groups(props.getStream()).stream()
                 .filter(g -> props.getGroup().equals(g.groupName()))
-                .mapToLong(g -> g.pendingCount() == null ? 0L : g.pendingCount())
+                .mapToLong(WorkflowConsumer::totalGroupLag)
                 .findFirst()
                 .orElse(-1L);
+    }
+
+    static long totalGroupLag(org.springframework.data.redis.connection.stream.StreamInfo.XInfoGroup group) {
+        long pending = group.pendingCount() == null ? 0L : group.pendingCount();
+        Object rawLag = group.getRaw().get("lag");
+        long undelivered = rawLag instanceof Number number ? number.longValue() : 0L;
+        return pending + Math.max(0L, undelivered);
     }
 
     /**

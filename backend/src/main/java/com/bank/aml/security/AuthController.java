@@ -6,11 +6,11 @@ import jakarta.servlet.http.HttpServletResponse;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.security.authentication.AuthenticationManager;
+import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.core.AuthenticationException;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.userdetails.UserDetails;
-import org.springframework.security.core.userdetails.UserDetailsService;
-import org.springframework.security.core.userdetails.UsernameNotFoundException;
-import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.web.csrf.CsrfToken;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -27,17 +27,15 @@ import java.util.Map;
 @RequestMapping("/api/auth")
 public class AuthController {
 
-    private final UserDetailsService userDetailsService;
-    private final PasswordEncoder passwordEncoder;
+    private final AuthenticationManager authenticationManager;
     private final JwtTokenProvider tokenProvider;
     private final LoginRateLimiter loginRateLimiter;
     private final boolean cookieSecure;
 
-    public AuthController(UserDetailsService userDetailsService, PasswordEncoder passwordEncoder,
-                          JwtTokenProvider tokenProvider, LoginRateLimiter loginRateLimiter,
+    public AuthController(AuthenticationManager authenticationManager, JwtTokenProvider tokenProvider,
+                          LoginRateLimiter loginRateLimiter,
                           @Value("${aml.security.cookie-secure:false}") boolean cookieSecure) {
-        this.userDetailsService = userDetailsService;
-        this.passwordEncoder = passwordEncoder;
+        this.authenticationManager = authenticationManager;
         this.tokenProvider = tokenProvider;
         this.loginRateLimiter = loginRateLimiter;
         this.cookieSecure = cookieSecure;
@@ -49,17 +47,15 @@ public class AuthController {
         String ip = clientIp(httpRequest);
         // 先检查是否已被锁定（避免仍进入昂贵的 BCrypt 校验）
         loginRateLimiter.checkBlocked(ip, req.username());
-        UserDetails user;
+        Authentication authentication;
         try {
-            user = userDetailsService.loadUserByUsername(req.username());
-        } catch (UsernameNotFoundException e) {
+            authentication = authenticationManager.authenticate(
+                    UsernamePasswordAuthenticationToken.unauthenticated(req.username(), req.password()));
+        } catch (AuthenticationException e) {
             loginRateLimiter.recordFailure(ip, req.username());
             throw new IllegalArgumentException("用户名或密码错误");
         }
-        if (!passwordEncoder.matches(req.password(), user.getPassword())) {
-            loginRateLimiter.recordFailure(ip, req.username());
-            throw new IllegalArgumentException("用户名或密码错误");
-        }
+        UserDetails user = (UserDetails) authentication.getPrincipal();
         loginRateLimiter.reset(ip, req.username());
         String role = user.getAuthorities().stream()
                 .findFirst().map(a -> a.getAuthority().replace("ROLE_", "")).orElse("ANALYST");
@@ -75,15 +71,12 @@ public class AuthController {
         return Map.of("username", user.getUsername(), "role", role);
     }
 
-    /** 取客户端真实 IP（识别反向代理透传 X-Forwarded-For 的第一个地址），并防御异常值 */
+    /**
+     * 只信任 Servlet 容器解析后的远端地址。
+     * <p>应用不能直接信任客户端可伪造的 X-Forwarded-For；默认配置不解析 Forwarded 头。
+     * 如部署在受控代理后，应由网关覆盖这些头并在容器层配置明确的可信代理范围。
+     */
     private String clientIp(HttpServletRequest request) {
-        String forwarded = request.getHeader("X-Forwarded-For");
-        if (forwarded != null && !forwarded.isBlank()) {
-            String first = forwarded.split(",")[0].trim();
-            if (first.length() <= 64) {
-                return first;
-            }
-        }
         return request.getRemoteAddr();
     }
 

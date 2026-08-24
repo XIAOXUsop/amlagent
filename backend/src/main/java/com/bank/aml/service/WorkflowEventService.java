@@ -1,6 +1,7 @@
 package com.bank.aml.service;
 
 import com.bank.aml.common.enums.WorkflowStage;
+import com.bank.aml.common.enums.CaseStatus;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -51,9 +52,13 @@ public class WorkflowEventService {
         });
     }
 
-    /** 订阅某工单的实时事件流 */
-    public SseEmitter subscribe(Long caseId) {
+    /** 订阅某工单的实时事件流；已到终态的历史工单立即返回终态事件并关闭，避免永久心跳泄漏。 */
+    public SseEmitter subscribe(Long caseId, CaseStatus currentStatus) {
         SseEmitter emitter = new SseEmitter(0L); // 不设应用级超时，由心跳维持 + 用户断开/终态结束
+        if (isTerminal(currentStatus)) {
+            sendTerminal(emitter, caseId, currentStatus);
+            return emitter;
+        }
         emitters.computeIfAbsent(caseId, k -> new CopyOnWriteArrayList<>()).add(emitter);
         emitter.onCompletion(() -> remove(caseId, emitter));
         emitter.onTimeout(() -> remove(caseId, emitter));
@@ -66,24 +71,46 @@ public class WorkflowEventService {
      * 推送"工单已到达终态"并结束所有连接。
      * 由业务方在工作流完成/转人工/失败时调用一次。
      */
-    public void complete(Long caseId) {
+    public void complete(Long caseId, CaseStatus terminalStatus) {
         List<SseEmitter> list = emitters.get(caseId);
         if (list == null || list.isEmpty()) {
             stopHeartbeat(caseId);
             return;
         }
-        String payload = toJson(Map.of("caseId", caseId, "stage", "DONE", "content", "工作流执行完成"));
         for (SseEmitter emitter : list) {
-            try {
-                emitter.send(SseEmitter.event().name("stage").data(payload, MediaType.APPLICATION_JSON));
-            } catch (IOException e) {
-                log.debug("工单 {} SSE 终端事件发送失败：{}", caseId, e.getMessage());
-            }
-            emitter.complete();
+            sendTerminal(emitter, caseId, terminalStatus);
         }
         stopHeartbeat(caseId);
         emitters.remove(caseId);
         log.debug("工单 {} SSE 已结束（{} 个连接）", caseId, list.size());
+    }
+
+    private void sendTerminal(SseEmitter emitter, Long caseId, CaseStatus terminalStatus) {
+        CaseStatus status = isTerminal(terminalStatus) ? terminalStatus : CaseStatus.DONE;
+        String payload = toJson(Map.of(
+                "caseId", caseId,
+                "stage", status.name(),
+                "content", terminalContent(status)));
+        try {
+            emitter.send(SseEmitter.event().name("stage").data(payload, MediaType.APPLICATION_JSON));
+        } catch (IOException e) {
+            log.debug("工单 {} SSE 终端事件发送失败：{}", caseId, e.getMessage());
+        } finally {
+            emitter.complete();
+        }
+    }
+
+    private boolean isTerminal(CaseStatus status) {
+        return status == CaseStatus.DONE || status == CaseStatus.HOLD || status == CaseStatus.FAILED;
+    }
+
+    private String terminalContent(CaseStatus status) {
+        return switch (status) {
+            case DONE -> "工作流执行完成";
+            case HOLD -> "工作流已完成，工单转入人工复核";
+            case FAILED -> "工作流执行失败，可查看失败原因或人工重试";
+            default -> "工作流已结束";
+        };
     }
 
     /** 推送一个阶段事件 */
@@ -157,6 +184,11 @@ public class WorkflowEventService {
         } catch (Exception e) {
             return "{}";
         }
+    }
+
+    int activeEmitterCount(Long caseId) {
+        List<SseEmitter> list = emitters.get(caseId);
+        return list == null ? 0 : list.size();
     }
 
     /** 应用关闭时释放共享心跳线程池，避免泄漏 */

@@ -12,14 +12,12 @@ import java.util.concurrent.atomic.AtomicInteger;
  * 登录失败速率限制：固定窗口 + 锁定。按"客户端 IP + 用户名"维度计数，
  * 窗口内失败超过阈值后锁定一段时间，缓解暴力破解；同时避免攻击者通过
  * 用户名探测无限次试错。
- * <p>纯内存实现（单实例足够），不引入额外存储依赖；key 与旧窗口会在访问时惰性清理，
- * 避免长期驻留造成内存泄漏。
+ * <p>纯内存实现适用于单实例；桶数量有硬上限，达到上限时先清理过期项，
+ * 仍无容量则失败关闭，避免随机用户名造成无界内存增长。
  */
 @Component
 @EnableConfigurationProperties(LoginRateLimitProperties.class)
 public class LoginRateLimiter {
-
-    private static final String LOCK_SUFFIX = "#lock#";
 
     private final LoginRateLimitProperties props;
     private final Map<String, Bucket> buckets = new ConcurrentHashMap<>();
@@ -34,9 +32,13 @@ public class LoginRateLimiter {
             return;
         }
         long now = System.currentTimeMillis();
-        Bucket lock = buckets.get(key(ip, username) + LOCK_SUFFIX);
-        if (lock != null && lock.lockedUntil > now) {
+        String k = key(ip, username);
+        Bucket bucket = buckets.get(k);
+        if (bucket != null && bucket.lockedUntil > now) {
             throw new TooManyRequestsException("登录尝试过于频繁，请稍后再试");
+        }
+        if (bucket != null && expired(bucket, now)) {
+            buckets.remove(k, bucket);
         }
     }
 
@@ -48,7 +50,10 @@ public class LoginRateLimiter {
         long now = System.currentTimeMillis();
         long windowMs = props.getWindowSeconds() * 1000L;
         String k = key(ip, username);
-        Bucket b = buckets.computeIfAbsent(k, ignored -> new Bucket(now));
+        Bucket b = buckets.get(k);
+        if (b == null) {
+            b = createBucket(k, now);
+        }
         synchronized (b) {
             if (now - b.windowStart > windowMs) {
                 // 窗口过期：重置计数
@@ -56,9 +61,9 @@ public class LoginRateLimiter {
                 b.windowStart = now;
             }
             if (b.count.incrementAndGet() >= props.getMaxAttempts()) {
-                buckets.put(k + LOCK_SUFFIX, new Bucket(now + props.getLockSeconds() * 1000L));
+                b.lockedUntil = now + props.getLockSeconds() * 1000L;
                 b.count.set(0);
-                b.windowStart = now + windowMs; // 重置下次窗口
+                b.windowStart = now;
             }
         }
     }
@@ -67,7 +72,32 @@ public class LoginRateLimiter {
     public void reset(String ip, String username) {
         String k = key(ip, username);
         buckets.remove(k);
-        buckets.remove(k + LOCK_SUFFIX);
+    }
+
+    private synchronized Bucket createBucket(String key, long now) {
+        Bucket existing = buckets.get(key);
+        if (existing != null) {
+            return existing;
+        }
+        int maxBuckets = Math.max(1, props.getMaxBuckets());
+        if (buckets.size() >= maxBuckets) {
+            buckets.entrySet().removeIf(entry -> expired(entry.getValue(), now));
+        }
+        if (buckets.size() >= maxBuckets) {
+            throw new TooManyRequestsException("登录保护容量已满，请稍后再试");
+        }
+        Bucket created = new Bucket(now);
+        buckets.put(key, created);
+        return created;
+    }
+
+    private boolean expired(Bucket bucket, long now) {
+        long windowMs = Math.max(1, props.getWindowSeconds()) * 1000L;
+        return bucket.lockedUntil <= now && now - bucket.windowStart > windowMs;
+    }
+
+    int trackedBucketCount() {
+        return buckets.size();
     }
 
     private String key(String ip, String username) {

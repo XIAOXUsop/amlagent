@@ -38,6 +38,8 @@ AI 尽调 Agent + 规则护栏 + 人工复核 + 冻结评测的可审计闭环�
 - Cookie 认证（HttpOnly JWT）+ Cookie CSRF（XSRF-TOKEN）。
 - 工单状态机：PENDING/RUNNING/DONE/HOLD/FAILED/RETRY_WAIT，非法迁移返回 409。
 - Agent 工作流：快照（Snapshot First）、工具轨迹（脱敏）、规则护栏、法规 RAG 检索。
+- 可解释制裁筛查：数据库只负责候选召回，再按证件号、姓名别名、相似度和主体类型输出分值、原因与处置结论；REVIEWER/ADMIN 可追加确认、排除或补充材料决定，revision 防止并发覆盖。
+- 调查档案交付：工单详情可导出包含报告、快照元数据、工作流、工具轨迹和人工复核历史的 JSON 档案，并附 SHA-256 内容摘要。
 - 评测体系：规则回归、RAG 检索质量（Recall@5/MRR/P95）、Agent DEV/TEST（freezeId 一次性冻结）。
 - 可靠消息：事务性 Outbox + Redis Streams + 死信 + 租约 fencing + 幂等。
 - 前端文案为中文；演示账号 admin/admin123、reviewer/reviewer123、analyst/analyst123。

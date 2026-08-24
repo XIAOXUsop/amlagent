@@ -8,6 +8,13 @@ spring:
     locations: classpath:db/migration
 
 aml:
+  assistant:
+    # 生产必须经安全评测后显式开启，默认保持关闭。
+    enabled: ${AML_ASSISTANT_ENABLED:false}
+  rag:
+    fail-fast-on-empty-index: true
+  demo:
+    seed-customers: false
   security:
     cookie-secure: true
 

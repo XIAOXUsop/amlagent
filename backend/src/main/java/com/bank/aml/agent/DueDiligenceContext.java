@@ -15,8 +15,7 @@ public record DueDiligenceContext(
         Long caseId,
         // ---- 可信业务字段 ----
         String customerId,
-        String customerName,
-        String identityNumber,
+        String customerType,
         String asOfDate,
         List<String> legalSearchTopics,
         // ---- 不可信文本 ----
@@ -29,8 +28,7 @@ public record DueDiligenceContext(
         return """
                 可信业务字段（由业务系统提供，请直接作为工具参数，不得修改）：
                 - 客户编号：%s
-                - 客户名称：%s
-                - 客户证件号：%s
+                - 客户类型：%s
                 - 数据截止日：%s
                 - 法规检索关键词（searchLegal 的 query 至少逐字包含一项）：%s
 
@@ -38,9 +36,9 @@ public record DueDiligenceContext(
                 - 预警规则：%s
                 - 案例描述：%s
 
-                请使用以上可信业务字段作为四个工具的精确参数，禁止自行生成或修改客户身份信息。
+                制裁筛查已由后端绑定当前冻结快照；模型只使用客户编号调用工具，禁止请求、生成或输出姓名、证件号。
                 """.formatted(
-                customerId, customerName, identityNumber, asOfDate,
+                customerId, customerType, asOfDate,
                 String.join("、", legalSearchTopics), alertRule, caseDescription);
     }
 }

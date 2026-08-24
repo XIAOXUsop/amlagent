@@ -3,11 +3,16 @@ package com.bank.aml.evaluation;
 import com.bank.aml.evaluation.AgentEvalDataset.AgentEvalCase;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.annotation.PostConstruct;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.io.ClassPathResource;
 import org.springframework.stereotype.Component;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -21,20 +26,34 @@ import java.util.stream.Collectors;
 public class AgentEvalDatasetLoader {
 
     static final String DATASET_RESOURCE = "evaluation/agent-cases-v1.json";
-    private static final Set<String> ALLOWED_SPLITS = Set.of("DEV", "TEST");
+    private static final Set<String> EMBEDDED_SPLITS = Set.of("DEV", "DEMO_TEST");
+    private static final Set<String> HIDDEN_SPLITS = Set.of("TEST");
     private static final Set<String> ALLOWED_DIFFICULTIES = Set.of("EASY", "MEDIUM", "HARD");
     private static final Set<String> ALLOWED_RISK_LEVELS = Set.of("低风险", "中风险", "高风险");
     private static final Set<String> ALLOWED_REVIEW_STATUS =
-            Set.of("PENDING_DOMAIN_REVIEW", "DOMAIN_REVIEWED");
+            Set.of("PENDING_DOMAIN_REVIEW", "DOMAIN_REVIEWED", "DOMAIN_EXPERT_APPROVED");
     private static final Set<String> KNOWN_TOOLS =
             Set.of("transactionProfile", "corporateProfile", "checkSanctions", "searchLegal");
 
     private final ObjectMapper objectMapper;
+    private final String hiddenTestPath;
     private volatile AgentEvalDataset cached;
     private volatile String datasetHash;
+    private volatile String hiddenTestDatasetHash;
+    private volatile boolean approvedHiddenTest;
 
-    public AgentEvalDatasetLoader(ObjectMapper objectMapper) {
+    @Autowired
+    public AgentEvalDatasetLoader(
+            ObjectMapper objectMapper,
+            @Value("${aml.eval.hidden-test.path:}") String hiddenTestPath
+    ) {
         this.objectMapper = objectMapper;
+        this.hiddenTestPath = hiddenTestPath == null ? "" : hiddenTestPath.trim();
+    }
+
+    /** 仅供不启动 Spring 的单元测试使用。 */
+    AgentEvalDatasetLoader(ObjectMapper objectMapper) {
+        this(objectMapper, "");
     }
 
     @PostConstruct
@@ -67,7 +86,9 @@ public class AgentEvalDatasetLoader {
                 counts(dataset.cases(), AgentEvalCase::split),
                 counts(dataset.cases(), AgentEvalCase::scenario),
                 counts(dataset.cases(), c -> c.expected().riskLevel()),
-                datasetHash
+                datasetHash,
+                approvedHiddenTest,
+                hiddenTestDatasetHash
         );
     }
 
@@ -75,17 +96,34 @@ public class AgentEvalDatasetLoader {
         ClassPathResource resource = new ClassPathResource(DATASET_RESOURCE);
         try (InputStream input = resource.getInputStream()) {
             byte[] bytes = input.readAllBytes();
-            // 数据集内容哈希：用于冻结审计（TEST 冻结后任何改动都会改变哈希）
             this.datasetHash = sha256(bytes);
             AgentEvalDataset dataset = objectMapper.readValue(bytes, AgentEvalDataset.class);
             validate(dataset);
-            return dataset;
+            if (hiddenTestPath.isBlank()) {
+                return dataset;
+            }
+
+            byte[] hiddenBytes = Files.readAllBytes(Path.of(hiddenTestPath).toAbsolutePath().normalize());
+            AgentEvalDataset hidden = objectMapper.readValue(hiddenBytes, AgentEvalDataset.class);
+            validateHiddenDataset(hidden);
+            ensureNoDuplicateIds(dataset.cases(), hidden.cases());
+
+            this.hiddenTestDatasetHash = sha256(hiddenBytes);
+            this.datasetHash = sha256((this.datasetHash + ":" + this.hiddenTestDatasetHash)
+                    .getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            this.approvedHiddenTest = true;
+            List<AgentEvalCase> merged = new ArrayList<>(dataset.cases());
+            merged.addAll(hidden.cases());
+            return new AgentEvalDataset(
+                    dataset.datasetId(), dataset.version(), dataset.description(), dataset.sourceType(),
+                    dataset.annotationMethod(), dataset.reviewStatus(), List.copyOf(merged));
         } catch (IOException e) {
-            throw new IllegalStateException("无法加载 Agent 评测数据集：" + DATASET_RESOURCE, e);
+            String source = hiddenTestPath.isBlank() ? DATASET_RESOURCE : hiddenTestPath;
+            throw new IllegalStateException("无法加载 Agent 评测数据集：" + source, e);
         }
     }
 
-    /** 当前数据集内容 SHA-256 哈希（前 16 位），用于 TEST 冻结审计 */
+    /** 当前 DEV + 可选外部隐藏 TEST 的组合内容哈希，用于冻结审计。 */
     public String datasetHash() {
         load();
         return datasetHash;
@@ -101,6 +139,25 @@ public class AgentEvalDatasetLoader {
     }
 
     void validate(AgentEvalDataset dataset) {
+        validateDataset(dataset, EMBEDDED_SPLITS, 12, true);
+    }
+
+    public boolean hasApprovedHiddenTest() {
+        load();
+        return approvedHiddenTest;
+    }
+
+    private void validateHiddenDataset(AgentEvalDataset dataset) {
+        validateDataset(dataset, HIDDEN_SPLITS, 1, false);
+        require("DOMAIN_EXPERT_APPROVED".equals(dataset.reviewStatus()),
+                "外部隐藏 TEST 数据集必须完成领域专家审批");
+        require(dataset.cases().stream().allMatch(c ->
+                        "DOMAIN_EXPERT_APPROVED".equals(c.annotation().reviewStatus())),
+                "外部隐藏 TEST 每条案例都必须完成领域专家审批");
+    }
+
+    private void validateDataset(AgentEvalDataset dataset, Set<String> allowedSplits,
+                                 int minimumCases, boolean requireEverySplit) {
         require(dataset != null, "数据集不能为空");
         requireText(dataset.datasetId(), "datasetId");
         requireText(dataset.version(), "version");
@@ -108,7 +165,8 @@ public class AgentEvalDatasetLoader {
         requireText(dataset.sourceType(), "sourceType");
         requireText(dataset.annotationMethod(), "annotationMethod");
         require(ALLOWED_REVIEW_STATUS.contains(dataset.reviewStatus()), "数据集 reviewStatus 非法");
-        require(dataset.cases() != null && dataset.cases().size() >= 12, "独立案例不得少于 12 条");
+        require(dataset.cases() != null && dataset.cases().size() >= minimumCases,
+                "独立案例数量不足：至少 " + minimumCases + " 条");
 
         Set<String> ids = new HashSet<>();
         Set<String> splits = new HashSet<>();
@@ -117,7 +175,7 @@ public class AgentEvalDatasetLoader {
             requireText(evalCase.id(), "case.id");
             require(ids.add(evalCase.id()), "案例 ID 重复：" + evalCase.id());
             require(!evalCase.id().startsWith("RULE-"), "Agent 案例不得复用规则回归 ID：" + evalCase.id());
-            require(ALLOWED_SPLITS.contains(evalCase.split()), "案例 split 非法：" + evalCase.id());
+            require(allowedSplits.contains(evalCase.split()), "案例 split 非法：" + evalCase.id());
             splits.add(evalCase.split());
             requireText(evalCase.scenario(), "case.scenario");
             require(ALLOWED_DIFFICULTIES.contains(evalCase.difficulty()), "案例 difficulty 非法：" + evalCase.id());
@@ -127,7 +185,18 @@ public class AgentEvalDatasetLoader {
             validateExpected(evalCase);
             validateAnnotation(evalCase);
         }
-        require(splits.containsAll(ALLOWED_SPLITS), "数据集必须同时包含 DEV 和 TEST 分片");
+        if (requireEverySplit) {
+            require(splits.containsAll(allowedSplits), "内置数据集必须同时包含 DEV 和 DEMO_TEST 分片");
+        } else {
+            require(splits.equals(allowedSplits), "外部隐藏数据集只能包含 TEST 分片");
+        }
+    }
+
+    private void ensureNoDuplicateIds(List<AgentEvalCase> embedded, List<AgentEvalCase> hidden) {
+        Set<String> ids = embedded.stream().map(AgentEvalCase::id).collect(Collectors.toSet());
+        for (AgentEvalCase evalCase : hidden) {
+            require(ids.add(evalCase.id()), "外部隐藏 TEST 与内置数据集案例 ID 重复：" + evalCase.id());
+        }
     }
 
     private void validateInput(AgentEvalCase evalCase) {
@@ -253,7 +322,9 @@ public class AgentEvalDatasetLoader {
             Map<String, Long> splitCounts,
             Map<String, Long> scenarioCounts,
             Map<String, Long> riskLevelCounts,
-            String datasetHash
+            String datasetHash,
+            boolean hiddenTestReady,
+            String hiddenTestDatasetHash
     ) {
     }
 }

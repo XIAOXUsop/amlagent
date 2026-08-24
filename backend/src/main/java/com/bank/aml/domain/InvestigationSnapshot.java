@@ -5,6 +5,8 @@ import com.bank.aml.risk.RiskContext;
 
 import java.time.Instant;
 import java.util.List;
+import java.util.Map;
+import java.util.LinkedHashMap;
 
 /**
  * 不可变尽调快照：一次工单执行中，Agent 推理与 Guardrails 校验共享的同一份冻结业务事实。
@@ -23,6 +25,8 @@ public record InvestigationSnapshot(
         List<ShareholdingRecord> shareholdings,
         List<SanctionRecord> sanctionHits,
         List<LegalDoc> legalEvidence,
+        /** 按法规主题冻结的证据包；Agent 查询只能选择已授权主题，不再返回同一份混合结果。 */
+        Map<String, List<LegalDoc>> legalEvidenceByTopic,
         /** 由预警规则解析出的法规查询关键词（与 legalEvidence 同源冻结，供工具校验查询覆盖） */
         List<String> legalKeywords,
         RiskContext riskFacts,
@@ -35,6 +39,13 @@ public record InvestigationSnapshot(
         shareholdings = shareholdings == null ? List.of() : List.copyOf(shareholdings);
         sanctionHits = sanctionHits == null ? List.of() : List.copyOf(sanctionHits);
         legalEvidence = legalEvidence == null ? List.of() : List.copyOf(legalEvidence);
+        if (legalEvidenceByTopic == null) {
+            legalEvidenceByTopic = Map.of();
+        } else {
+            Map<String, List<LegalDoc>> frozen = new LinkedHashMap<>();
+            legalEvidenceByTopic.forEach((topic, docs) -> frozen.put(topic, docs == null ? List.of() : List.copyOf(docs)));
+            legalEvidenceByTopic = Map.copyOf(frozen);
+        }
         legalKeywords = legalKeywords == null ? List.of() : List.copyOf(legalKeywords);
     }
 }

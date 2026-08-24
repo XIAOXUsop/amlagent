@@ -16,7 +16,7 @@ import java.sql.Statement;
  * 验证 Flyway 迁移产出的 schema 能通过 Hibernate ddl-auto=validate。
  * <p>覆盖任务书 D9 §13.5 的 "Hibernate validate 成功"：生产使用 ddl-auto=validate + Flyway 管理 schema，
  * 若实体与迁移列不一致（如 boolean 用 TINYINT 而非 BIT、缺列等），本测试会在 Spring 上下文启动时失败。
- * 复用本机 Docker 的 MySQL。运行：./mvnw test -Dgroups=integration
+ * 复用本机 Docker 的 MySQL。运行：./mvnw -Pintegration-test test
  */
 @SpringBootTest
 @ActiveProfiles("test")

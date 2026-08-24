@@ -30,11 +30,26 @@ public class ReRankingLegalSearcher implements LegalDocumentSearcher {
 
     @Override
     public List<LegalDoc> search(String query, int topK) {
-        List<LegalDoc> recalled = hybridSearcher.search(query, recallSize);
+        return rerank(query, topK, hybridSearcher.search(query, recallSize));
+    }
+
+    @Override
+    public List<LegalDoc> search(RetrievalRequest request, int topK) {
+        return rerank(request.query(), topK, hybridSearcher.search(request, recallSize));
+    }
+
+    /** 缓存身份反映运行时模型状态、精排窗口和融合参数，而不只依赖人工版本号。 */
+    String pipelineIdentity() {
+        return "rerank-" + reranker.runtimeIdentity() + "-window" + recallSize + "-" + hybridSearcher.fusionIdentity();
+    }
+
+    private List<LegalDoc> rerank(String query, int topK, List<LegalDoc> recalled) {
         if (recalled.isEmpty()) {
             return recalled;
         }
-        if (recalled.size() <= topK || !reranker.isAvailable()) {
+        // 即使候选数等于 topK 也必须重排：上层会为有效期/相关性门控扩大候选集，
+        // 若在这里按 size<=topK 跳过，生产配置中的 Cross-Encoder 实际永远不会执行。
+        if (!reranker.isAvailable()) {
             return recalled.subList(0, Math.min(topK, recalled.size()));
         }
 

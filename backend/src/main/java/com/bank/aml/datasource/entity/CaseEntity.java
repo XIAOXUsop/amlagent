@@ -11,6 +11,7 @@ import jakarta.persistence.Id;
 import jakarta.persistence.PrePersist;
 import jakarta.persistence.PreUpdate;
 import jakarta.persistence.Table;
+import com.fasterxml.jackson.annotation.JsonIgnore;
 
 import java.time.LocalDateTime;
 
@@ -51,10 +52,15 @@ public class CaseEntity {
     @Column(columnDefinition = "TEXT")
     private String reportJson;
 
+    /** 模型原始结构化报告（Guardrail/最终决策组装前），仅供内部审计，不直接通过工单 API 暴露。 */
+    @JsonIgnore
+    @Column(columnDefinition = "MEDIUMTEXT")
+    private String rawReportJson;
+
     @Column(length = 255)
     private String summary;
 
-    /** 报告来源：AGENT / RULE_FALLBACK */
+    /** 报告来源：AGENT / RULE_FALLBACK / AGENT_INVALID_HOLD */
     @Column(length = 32)
     private String reportSource;
 
@@ -183,6 +189,14 @@ public class CaseEntity {
 
     public void setReportJson(String reportJson) {
         this.reportJson = reportJson;
+    }
+
+    public String getRawReportJson() {
+        return rawReportJson;
+    }
+
+    public void setRawReportJson(String rawReportJson) {
+        this.rawReportJson = rawReportJson;
     }
 
     public String getSummary() {

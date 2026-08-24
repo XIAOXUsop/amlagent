@@ -102,7 +102,7 @@ public interface CaseRepository extends JpaRepository<CaseEntity, Long> {
     @Query("""
             UPDATE CaseEntity c
             SET c.status = :status, c.riskLevel = :riskLevel, c.rawRiskLevel = :rawRiskLevel,
-                c.reportJson = :reportJson, c.summary = :summary,
+                c.reportJson = :reportJson, c.rawReportJson = :rawReportJson, c.summary = :summary,
                 c.reportSource = :reportSource, c.snapshotId = :snapshotId,
                 c.modelProvider = :modelProvider, c.modelName = :modelName, c.modelFallback = :modelFallback,
                 c.failureCode = NULL, c.failureMessage = NULL,
@@ -116,6 +116,7 @@ public interface CaseRepository extends JpaRepository<CaseEntity, Long> {
                    @Param("riskLevel") String riskLevel,
                    @Param("rawRiskLevel") String rawRiskLevel,
                    @Param("reportJson") String reportJson,
+                   @Param("rawReportJson") String rawReportJson,
                    @Param("summary") String summary,
                    @Param("reportSource") String reportSource,
                    @Param("snapshotId") String snapshotId,

@@ -33,6 +33,8 @@ import java.util.stream.Collectors;
 public class MockChatModel implements ChatModel {
 
     private static final Pattern CUSTOMER_ID_PATTERN = Pattern.compile("C\\d{3}");
+    private static final Pattern LEGAL_KEYWORDS_PATTERN = Pattern.compile("法规检索关键词[^：:]*[：:]\\s*([^\\n]+)");
+    private static final Pattern LEGAL_EVIDENCE_PATTERN = Pattern.compile("\\bLEGAL-[A-Za-z0-9_-]+\\b");
 
     private final String modelName;
 
@@ -48,7 +50,7 @@ public class MockChatModel implements ChatModel {
         // 已有工具结果：结束工具循环，给出最终回答
         if (hasToolResults) {
             String text = wantsJson(messages)
-                    ? "{}"
+                    ? mockReportJson(allText(messages))
                     : "【Mock 模型】工具执行完成，已完成数据采集与分析。";
             return ChatResponse.builder()
                     .aiMessage(AiMessage.from(text))
@@ -107,7 +109,7 @@ public class MockChatModel implements ChatModel {
             return "110101198506123456";
         }
         if (p.contains("query") || p.contains("keyword") || p.contains("text")) {
-            return "反洗钱";
+            return extractLegalKeywords(contextText);
         }
         return "";
     }
@@ -121,6 +123,26 @@ public class MockChatModel implements ChatModel {
     private String extractCustomerId(String text) {
         Matcher m = CUSTOMER_ID_PATTERN.matcher(text);
         return m.find() ? m.group() : "C001";
+    }
+
+    private String extractLegalKeywords(String text) {
+        Matcher matcher = LEGAL_KEYWORDS_PATTERN.matcher(text);
+        return matcher.find() ? matcher.group(1).trim() : "反洗钱";
+    }
+
+    /** 结构化离线报告：用于验证真实 AiServices 工具循环，不再依赖规则 fallback 假装 Agent 成功。 */
+    private String mockReportJson(String contextText) {
+        Matcher evidenceMatcher = LEGAL_EVIDENCE_PATTERN.matcher(contextText);
+        String evidenceId = evidenceMatcher.find() ? evidenceMatcher.group() : null;
+        String legalBasis = evidenceId == null ? "离线 Mock 未检索到法规证据" : "依据法规证据 " + evidenceId;
+        String evidenceChain = evidenceId == null ? "离线 Mock 工具执行链" : "法规检索证据 " + evidenceId;
+        return """
+                {"riskLevel":"低风险",
+                 "transactionProfile":"已基于交易工具完成画像","corporateProfile":"已基于股权工具完成核验",
+                 "sanctions":[],"legalBasis":["%s"],"riskPoints":["离线 Mock 仅验证工程链路"],
+                 "conclusion":"离线 Mock 初审完成，最终评级以 Guardrails 为准","evidenceChain":["%s"],
+                 "manualReviewRequired":true,"findingCodes":["RISK_ASSESSMENT_UNCERTAIN"],"actionCodes":["MANUAL_REVIEW"]}
+                """.formatted(legalBasis, evidenceChain).replaceAll("\\s+", " ");
     }
 
     private String lastUserText(List<ChatMessage> messages) {
@@ -141,6 +163,8 @@ public class MockChatModel implements ChatModel {
             } else if (msg instanceof AiMessage am) {
                 String t = am.text();
                 if (t != null) sb.append(t).append('\n');
+            } else if (msg instanceof ToolExecutionResultMessage tm) {
+                if (tm.text() != null) sb.append(tm.text()).append('\n');
             }
         }
         return sb.toString();

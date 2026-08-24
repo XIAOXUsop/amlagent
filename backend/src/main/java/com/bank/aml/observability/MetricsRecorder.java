@@ -89,6 +89,20 @@ public class MetricsRecorder {
         ragCacheMissTotal.increment();
     }
 
+    public void ragRetrieval(String status, long durationMs, int hitCount) {
+        registry.counter("aml_rag_retrieval_total", "status", status).increment();
+        registry.timer("aml_rag_retrieval_duration_seconds", "status", status)
+                .record(Duration.ofMillis(durationMs));
+        registry.summary("aml_rag_returned_hits", "status", status).record(hitCount);
+    }
+
+    public void ragIndexBuild(String status, long durationMs, int segmentCount) {
+        registry.counter("aml_rag_index_build_total", "status", status).increment();
+        registry.timer("aml_rag_index_build_duration_seconds", "status", status)
+                .record(Duration.ofMillis(durationMs));
+        if (segmentCount > 0) registry.summary("aml_rag_index_segments").record(segmentCount);
+    }
+
     public void recordStageDuration(String stage, long durationMs) {
         registry.timer("aml_stage_duration_seconds", "stage", stage).record(Duration.ofMillis(durationMs));
     }
@@ -113,5 +127,23 @@ public class MetricsRecorder {
     /** Agent 调用失败后由规则引擎降级出报告的次数（区分正常成功与降级成功，供运维感知 LLM 故障） */
     public void caseLlmFallback() {
         llmFallbackTotal.increment();
+    }
+
+    /** AI 小助运行结果；status/intent 均为有限枚举，禁止放入客户或会话标识。 */
+    public void assistantRun(String status, String intent, long durationMs) {
+        String safeStatus = safeMetricTag(status, "UNKNOWN");
+        String safeIntent = safeMetricTag(intent, "UNKNOWN");
+        registry.counter("aml_assistant_run_total", "status", safeStatus, "intent", safeIntent).increment();
+        registry.timer("aml_assistant_run_duration_seconds", "status", safeStatus)
+                .record(Duration.ofMillis(Math.max(0, durationMs)));
+    }
+
+    public void assistantOutputBlocked(String reason) {
+        registry.counter("aml_assistant_output_blocked_total", "reason", safeMetricTag(reason, "UNKNOWN")).increment();
+    }
+
+    private static String safeMetricTag(String value, String fallback) {
+        if (value == null || !value.matches("[A-Z][A-Z0-9_]{0,63}")) return fallback;
+        return value;
     }
 }

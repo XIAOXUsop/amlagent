@@ -91,19 +91,17 @@ async function doLogin() {
   align-items: center;
   justify-content: center;
   padding: 20px;
-  background:
-    radial-gradient(900px 500px at 50% -10%, rgba(201, 169, 97, 0.10), transparent 60%),
-    linear-gradient(180deg, #0d1526, #0b1220);
+  background: #f8fafc;
 }
 
 .login-card {
   width: 400px;
   max-width: 100%;
-  background: linear-gradient(180deg, rgba(22, 33, 58, 0.96), rgba(17, 26, 44, 0.96));
-  border: 1px solid var(--line);
-  border-radius: 12px;
-  padding: 34px 34px 26px;
-  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  padding: 28px;
+  box-shadow: none;
 }
 
 .login-brand {
@@ -112,15 +110,15 @@ async function doLogin() {
 }
 
 .login-mark {
-  width: 64px;
-  height: 64px;
+  width: 42px;
+  height: 42px;
   margin: 0 auto 14px;
-  border-radius: 12px;
+  border-radius: 6px;
   display: grid;
   place-items: center;
-  background: linear-gradient(145deg, #d6bc7d, #a98f49);
-  box-shadow: 0 8px 24px rgba(201, 169, 97, 0.32);
-  color: var(--text-inverse);
+  background: #eef2f6;
+  box-shadow: none;
+  color: var(--text-dim);
 }
 
 .login-card h1 {
@@ -133,7 +131,7 @@ async function doLogin() {
 
 .login-card h1 em {
   font-style: normal;
-  color: var(--gold);
+  color: var(--text-faint);
 }
 
 .login-sub {
@@ -146,9 +144,10 @@ async function doLogin() {
 .login-hint {
   margin-top: 18px;
   padding: 12px 14px;
-  border: 1px dashed var(--line);
-  border-radius: 8px;
-  background: rgba(11, 18, 32, 0.4);
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+  border-radius: 0;
+  background: transparent;
   font-size: 12px;
   color: var(--text-dim);
   line-height: 2;
@@ -157,7 +156,7 @@ async function doLogin() {
 .hint-line {
   display: block;
   font-size: 11px;
-  color: var(--gold);
+  color: var(--text-faint);
   letter-spacing: 0.06em;
   margin-bottom: 2px;
 }

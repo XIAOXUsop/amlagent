@@ -3,6 +3,7 @@ package com.bank.aml.messaging;
 import com.bank.aml.common.enums.CaseStatus;
 import com.bank.aml.datasource.entity.CaseEntity;
 import com.bank.aml.datasource.repository.CaseRepository;
+import com.bank.aml.service.WorkflowEventService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -24,12 +25,14 @@ public class PendingClaimer {
     private final CaseRepository caseRepository;
     private final WorkflowCommandService workflowCommandService;
     private final QueueProperties props;
+    private final WorkflowEventService workflowEventService;
 
     public PendingClaimer(CaseRepository caseRepository, WorkflowCommandService workflowCommandService,
-                          QueueProperties props) {
+                          QueueProperties props, WorkflowEventService workflowEventService) {
         this.caseRepository = caseRepository;
         this.workflowCommandService = workflowCommandService;
         this.props = props;
+        this.workflowEventService = workflowEventService;
     }
 
     @Scheduled(fixedDelayString = "${aml.queue.claim-idle-seconds:60}000")
@@ -48,6 +51,7 @@ public class PendingClaimer {
                 if (workflowCommandService.failReclaimExhausted(c.getId(), c.getExecutionVersion(),
                         c.getLockedBy(), threshold)) {
                     log.error("工单 {} 多次接管失败，标记 FAILED", c.getId());
+                    workflowEventService.complete(c.getId(), CaseStatus.FAILED);
                 }
                 continue;
             }

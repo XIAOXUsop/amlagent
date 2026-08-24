@@ -34,7 +34,9 @@ class AgentEvalDatasetLoaderTest {
         assertThat(dataset.annotationMethod()).isEqualTo("AI_ASSISTED_HUMAN_CURATED");
         assertThat(dataset.reviewStatus()).isEqualTo("PENDING_DOMAIN_REVIEW");
         assertThat(summary.totalCases()).isEqualTo(15);
-        assertThat(summary.splitCounts()).containsKeys("DEV", "TEST");
+        assertThat(summary.splitCounts()).containsKeys("DEV", "DEMO_TEST");
+        assertThat(summary.hiddenTestReady()).isFalse();
+        assertThat(summary.hiddenTestDatasetHash()).isNull();
         assertThat(summary.riskLevelCounts()).containsKeys("低风险", "中风险", "高风险");
     }
 
@@ -61,9 +63,9 @@ class AgentEvalDatasetLoaderTest {
     }
 
     @Test
-    void testSplitContainsHardNegativeAndCriticalSanctionCases() {
+    void demoTestSplitContainsHardNegativeAndCriticalSanctionCases() {
         AgentEvalDataset dataset = loader.load();
-        var testCases = dataset.cases().stream().filter(c -> "TEST".equals(c.split())).toList();
+        var testCases = dataset.cases().stream().filter(c -> "DEMO_TEST".equals(c.split())).toList();
 
         assertThat(testCases).extracting(AgentEvalDataset.AgentEvalCase::scenario)
                 .contains("FALSE_POSITIVE_NAME_MATCH", "LEGITIMATE_NIGHT_ACTIVITY",
@@ -132,7 +134,7 @@ class AgentEvalDatasetLoaderTest {
 
     @Test
     void testInputsAndFixturesDoNotLeakExpectedCodes() {
-        loader.load().cases().stream().filter(c -> "TEST".equals(c.split())).forEach(evalCase -> {
+        loader.load().cases().stream().filter(c -> "DEMO_TEST".equals(c.split())).forEach(evalCase -> {
             String exposed = String.join(" ", evalCase.input().caseDescription(),
                     evalCase.toolFixture().transactionResult(), evalCase.toolFixture().corporateResult(),
                     evalCase.toolFixture().sanctionResult(), evalCase.toolFixture().legalResult());

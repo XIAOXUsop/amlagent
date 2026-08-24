@@ -59,7 +59,7 @@ class AgentEvalReportPrivacyTest {
         );
         CaseResult unsafeCase = new CaseResult(
                 "AE-PRIVACY", "privacy-regression", "SCHEMA_INVALID", ERROR_CANARY,
-                List.of("RISK_LEVEL_INVALID"), "\u4f4e\u98ce\u9669", NARRATIVE_CANARY,
+                List.of("RISK_LEVEL_INVALID", "EVIDENCE_ID_NOT_IN_SNAPSHOT:" + ID_CANARY), "\u4f4e\u98ce\u9669", NARRATIVE_CANARY,
                 false, NARRATIVE_CANARY, false, true, true, true,
                 List.of("SANCTION_LEVEL_1"),
                 List.of("NO_SANCTION_HIT", ILLEGAL_FINDING_CANARY),
@@ -67,6 +67,7 @@ class AgentEvalReportPrivacyTest {
                 List.of("MANUAL_REVIEW", ILLEGAL_ACTION_CANARY),
                 List.of(ILLEGAL_ACTION_CANARY), List.of(ILLEGAL_ACTION_CANARY),
                 List.of("EV-1"), List.of(), List.of("FABRICATED_SANCTION_HIT"),
+                List.of("transactionProfile", "corporateProfile", "checkSanctions", "searchLegal"),
                 List.of(knownTrace, unknownTrace), List.of(UNKNOWN_TOOL_CANARY),
                 1, 0,
                 List.of(new ForbiddenCheck("FABRICATED_SANCTION_HIT", "VIOLATION", NARRATIVE_CANARY)),
@@ -78,7 +79,9 @@ class AgentEvalReportPrivacyTest {
                 "COMPLETED_WITH_ERRORS", ERROR_CANARY, LocalDateTime.of(2026, 8, 12, 12, 0),
                 41, 1, 1, 0, 1, 0, null, 0, null,
                 "UNSCORABLE_EXCLUDED", null, null, null, null, null, null,
-                null, null, null, null, null, null, null, List.of(unsafeCase)
+                null, null, null, null, null, null, null,
+                new AgentEvalReport.EfficiencyGate(10_000, 6_000, 12_000, 7_000L, false, false),
+                List.of(unsafeCase)
         );
 
         AgentEvalReport safeReport = unsafeReport.withoutSensitiveDetails();
@@ -91,6 +94,8 @@ class AgentEvalReportPrivacyTest {
         assertThat(safeReport.invalidReason()).isEqualTo("[OMITTED]");
         CaseResult safeCase = safeReport.cases().getFirst();
         assertThat(safeCase.invalidReason()).isEqualTo("[OMITTED]");
+        assertThat(safeCase.schemaViolations())
+                .containsExactly("RISK_LEVEL_INVALID", "EVIDENCE_ID_NOT_IN_SNAPSHOT");
         assertThat(safeCase.actualRawRisk()).isEqualTo("[INVALID]");
         assertThat(safeCase.finalRisk()).isEqualTo("[INVALID]");
         assertThat(safeCase.report().riskLevel()).isEqualTo("[INVALID]");

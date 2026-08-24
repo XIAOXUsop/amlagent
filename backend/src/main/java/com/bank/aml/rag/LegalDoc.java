@@ -13,6 +13,16 @@ public record LegalDoc(
         /** 条款编号，如 第三十二条 */
         String articleNumber,
         /** 命中条文/片段原文 */
-        String content
+        String content,
+        LegalEvidenceMetadata metadata
 ) {
+    public LegalDoc {
+        metadata = metadata == null ? LegalEvidenceMetadata.publicLegal() : metadata;
+    }
+
+    public LegalDoc(String evidenceId, String title, String documentNumber,
+                    String articleNumber, String content) {
+        this(evidenceId, title, documentNumber, articleNumber, content,
+                LegalEvidenceMetadata.publicLegal());
+    }
 }

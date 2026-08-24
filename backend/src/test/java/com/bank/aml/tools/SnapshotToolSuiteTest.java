@@ -33,7 +33,7 @@ class SnapshotToolSuiteTest {
     private SnapshotToolSuite suite() {
         InvestigationSnapshot snapshot = new InvestigationSnapshot(
                 "case-1-v1", 1L, 1, Instant.parse("2026-06-30T00:00:00Z"),
-                CUSTOMER, List.of(TXN), List.of(SHAREHOLDING), List.of(SANCTION), List.of(),
+                CUSTOMER, List.of(TXN), List.of(SHAREHOLDING), List.of(SANCTION), List.of(), java.util.Map.of(),
                 List.of("大额交易", "客户尽职调查"),
                 mock(RiskContext.class), "v1", "digest");
         return new SnapshotToolSuite(snapshot);
@@ -55,17 +55,29 @@ class SnapshotToolSuiteTest {
     }
 
     @Test
-    void checkSanctionsRequiresBothNameAndIdCardMatch() {
+    void checkSanctionsUsesOnlyTheSnapshotBoundCustomerReference() {
         SnapshotToolSuite tools = suite();
 
-        // 姓名正确但证件号错误：应拒绝（制裁场景要求两个可信字段都匹配）
-        assertThatThrownBy(() -> tools.checkSanctions("张伟", "999999999999999999"))
+        assertThatThrownBy(() -> tools.checkSanctions("C999"))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("不匹配");
 
-        // 姓名与证件号都正确：应返回命中结果
-        String result = tools.checkSanctions("张伟", "110101198506123456");
+        String result = tools.checkSanctions("C001");
         assertThat(result).contains("黑名单命中结果");
+        assertThat(result).contains("一级制裁名单")
+                .doesNotContain("ZHANG WEI", "张伟", "110101198506123456", "OFAC SDN");
+    }
+
+    @Test
+    void transactionAndCorporateResultsMinimizePartyIdentityData() {
+        SnapshotToolSuite tools = suite();
+
+        assertThat(tools.transactionProfile("C001"))
+                .contains("去重交易对手数量")
+                .doesNotContain("贸易客户A");
+        assertThat(tools.corporateProfile("C001"))
+                .contains("主体-1")
+                .doesNotContain("张伟");
     }
 
     @Test
@@ -81,6 +93,7 @@ class SnapshotToolSuiteTest {
         List<ToolExecutionTrace> traces = tools.traces();
         assertThat(traces).hasSize(2);
         assertThat(traces.get(0).success()).isTrue();
+        assertThat(traces.get(0).resultDigest()).hasSize(16);
         assertThat(traces.get(1).argumentValid()).isFalse();
         assertThat(traces.get(1).errorCode()).isEqualTo("ARGUMENT_VALIDATION_FAILED");
     }

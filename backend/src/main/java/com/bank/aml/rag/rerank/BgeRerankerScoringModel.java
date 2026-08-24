@@ -94,13 +94,73 @@ public class BgeRerankerScoringModel implements ScoringModel {
         return available;
     }
 
+    /** 供缓存身份使用；失败计数或熔断状态变化时，禁止把降级结果写入旧的精排缓存。 */
+    public String runtimeIdentity() {
+        return available + "-f" + consecutiveFailures.get();
+    }
+
     @Override
     public Response<List<Double>> scoreAll(List<TextSegment> segments, String query) {
-        List<Double> scores = new ArrayList<>();
-        for (TextSegment segment : segments) {
-            scores.add(crossScore(query, segment.text()));
+        if (segments.isEmpty()) return Response.from(List.of());
+        // 同一查询的候选一次批量执行 ONNX，避免逐条 session.run 的固定开销。
+        if (available) return Response.from(tryScoreBatch(query, segments));
+        List<Double> degraded = new ArrayList<>();
+        for (TextSegment segment : segments) degraded.add(crossScore(query, segment.text()));
+        return Response.from(degraded);
+    }
+
+    private List<Double> tryScoreBatch(String query, List<TextSegment> segments) {
+        if (session == null || tokenizer == null || env == null) tryReload();
+        if (session == null || tokenizer == null || env == null) {
+            return java.util.Collections.nCopies(segments.size(), 0.0);
         }
-        return Response.from(scores);
+        try {
+            List<Encoding> encodings = new ArrayList<>(segments.size());
+            for (TextSegment segment : segments) {
+                Encoding encoding = tokenizer.encode(query, segment.text(), true, false);
+                encodings.add(encoding);
+            }
+            List<Integer> order = java.util.stream.IntStream.range(0, encodings.size()).boxed()
+                    .sorted(java.util.Comparator.comparingInt(i -> encodings.get(i).getIds().length)).toList();
+            Double[] orderedScores = new Double[encodings.size()];
+            final int microBatchSize = 4;
+            for (int start = 0; start < order.size(); start += microBatchSize) {
+                List<Integer> batch = order.subList(start, Math.min(start + microBatchSize, order.size()));
+                int batchMaxLength = batch.stream().mapToInt(i -> encodings.get(i).getIds().length).max().orElse(1);
+                long[][] ids = new long[batch.size()][batchMaxLength];
+                long[][] masks = new long[batch.size()][batchMaxLength];
+                for (int i = 0; i < batch.size(); i++) {
+                    Encoding encoding = encodings.get(batch.get(i));
+                    System.arraycopy(encoding.getIds(), 0, ids[i], 0, encoding.getIds().length);
+                    System.arraycopy(encoding.getAttentionMask(), 0, masks[i], 0, encoding.getAttentionMask().length);
+                }
+                try (OnnxTensor inputIds = OnnxTensor.createTensor(env, ids);
+                     OnnxTensor attentionMask = OnnxTensor.createTensor(env, masks)) {
+                    Map<String, OnnxTensor> inputs = Map.of("input_ids", inputIds, "attention_mask", attentionMask);
+                    try (OrtSession.Result result = session.run(inputs)) {
+                        float[][] logits = (float[][]) result.get(0).getValue();
+                        if (logits.length != batch.size()) throw new IllegalStateException("rerank 批量输出数量不一致");
+                        for (int i = 0; i < logits.length; i++) {
+                            if (logits[i].length == 0 || !Float.isFinite(logits[i][0])) {
+                                throw new IllegalStateException("rerank 返回非有限分数");
+                            }
+                            orderedScores[batch.get(i)] = (double) logits[i][0];
+                        }
+                    }
+                }
+            }
+            consecutiveFailures.set(0);
+            return java.util.Arrays.asList(orderedScores);
+        } catch (Exception e) {
+            if (consecutiveFailures.incrementAndGet() >= FAILURE_THRESHOLD) {
+                available = false;
+                circuitOpenedAt = System.currentTimeMillis();
+                log.error("rerank 批量打分连续失败 {} 次，触发熔断降级", FAILURE_THRESHOLD);
+            } else {
+                log.warn("rerank 批量打分失败，返回 0：{}", e.getMessage());
+            }
+            return java.util.Collections.nCopies(segments.size(), 0.0);
+        }
     }
 
     private double crossScore(String query, String document) {

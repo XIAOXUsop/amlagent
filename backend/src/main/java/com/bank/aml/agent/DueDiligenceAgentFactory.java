@@ -24,14 +24,19 @@ public class DueDiligenceAgentFactory {
     /** 创建 Agent 并返回工具套件，供工作流读取工具调用轨迹 */
     public AgentWithTools createWithTraces(InvestigationSnapshot snapshot) {
         SnapshotToolSuite tools = new SnapshotToolSuite(snapshot);
-        DueDiligenceAgent agent = AiServices.builder(DueDiligenceAgent.class)
+        DueDiligenceAgent agent = build(chatModel, tools);
+        return new AgentWithTools(agent, tools);
+    }
+
+    /** 生产与离线评测共享的 Agent 构建策略，防止工具并发和轮次上限发生配置漂移。 */
+    public static DueDiligenceAgent build(ChatModel chatModel, Object tools) {
+        return AiServices.builder(DueDiligenceAgent.class)
                 .chatModel(chatModel)
                 .tools(tools)
                 .executeToolsConcurrently()
-                // 循环防护：限制工具调用最大轮次，防止 Agent 无限循环
-                .maxToolCallingRoundTrips(5)
+                // 两轮工具采集/纠错后仍需允许模型生成最终结构化结果；低于 3 会把合法收尾误判为循环。
+                .maxToolCallingRoundTrips(3)
                 .build();
-        return new AgentWithTools(agent, tools);
     }
 
     public record AgentWithTools(DueDiligenceAgent agent, SnapshotToolSuite tools) {

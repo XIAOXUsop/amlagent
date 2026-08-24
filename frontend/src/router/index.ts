@@ -25,6 +25,17 @@ const router = createRouter({
       component: () => import('../views/EvalDashboard.vue'),
       meta: { roles: ['ADMIN'] },
     },
+    {
+      path: '/customers',
+      component: () => import('../views/CustomerAdminView.vue'),
+      meta: { roles: ['ADMIN'] },
+    },
+    {
+      path: '/customers/:id',
+      component: () => import('../views/CustomerDetailView.vue'),
+      props: (route) => ({ customerId: Number(route.params.id) }),
+      meta: { roles: ['ADMIN'] },
+    },
   ],
 })
 

@@ -22,8 +22,15 @@ public final class SanctionTool {
             return "未命中制裁黑名单（OFAC / 国内名单）。";
         }
         String body = distinct.stream()
-                .map(s -> String.format("- 命中[%s]：%s（风险等级：%d级），%s", s.listType(), s.name(), s.severity(), s.detail()))
+                .map(s -> String.format("- 名单类别：%s；风险等级：%d级；匹配状态：后端身份要素筛查已确认",
+                        controlledCategory(s.severity()), s.severity()))
                 .collect(Collectors.joining("\n"));
         return "黑名单命中结果：\n" + body + "\n注意：命中一级制裁名单必须强制标记为高危险并转人工处理。";
+    }
+
+    private static String controlledCategory(int severity) {
+        if (severity == 1) return "一级制裁名单";
+        if (severity >= 2) return "其他关注名单";
+        return "等级异常的待复核名单";
     }
 }

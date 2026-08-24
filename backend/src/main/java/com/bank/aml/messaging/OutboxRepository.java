@@ -2,6 +2,7 @@ package com.bank.aml.messaging;
 
 import com.bank.aml.messaging.OutboxEvent.OutboxStatus;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
@@ -24,7 +25,8 @@ public interface OutboxRepository extends JpaRepository<OutboxEvent, Long> {
     List<OutboxEvent> findPublishable(@Param("pending") OutboxStatus pending,
                                       @Param("publishing") OutboxStatus publishing,
                                       @Param("now") LocalDateTime now,
-                                      @Param("staleBefore") LocalDateTime staleBefore);
+                                      @Param("staleBefore") LocalDateTime staleBefore,
+                                      Pageable pageable);
 
     /**
      * 原子抢占：仅 PENDING 可抢占；陈旧 PUBLISHING（崩溃残留）可重新抢占。
@@ -34,7 +36,8 @@ public interface OutboxRepository extends JpaRepository<OutboxEvent, Long> {
     @Transactional
     @Query("""
             UPDATE OutboxEvent e
-            SET e.status = :publishing, e.publishedAt = :now
+            SET e.status = :publishing, e.publishedAt = :now,
+                e.claimOwner = :claimOwner, e.claimVersion = e.claimVersion + 1
             WHERE e.id = :id AND (
                 e.status = :pending
                 OR (e.status = :publishing AND e.publishedAt <= :staleBefore))
@@ -42,6 +45,7 @@ public interface OutboxRepository extends JpaRepository<OutboxEvent, Long> {
     int claimPublishing(@Param("id") Long id,
                         @Param("publishing") OutboxStatus publishing,
                         @Param("pending") OutboxStatus pending,
+                        @Param("claimOwner") String claimOwner,
                         @Param("now") LocalDateTime now,
                         @Param("staleBefore") LocalDateTime staleBefore);
 
@@ -52,10 +56,13 @@ public interface OutboxRepository extends JpaRepository<OutboxEvent, Long> {
             UPDATE OutboxEvent e
             SET e.status = :published, e.publishedAt = :now
             WHERE e.id = :id AND e.status = :publishing
+              AND e.claimOwner = :claimOwner AND e.claimVersion = :claimVersion
             """)
     int markPublished(@Param("id") Long id,
                       @Param("published") OutboxStatus published,
                       @Param("publishing") OutboxStatus publishing,
+                      @Param("claimOwner") String claimOwner,
+                      @Param("claimVersion") long claimVersion,
                       @Param("now") LocalDateTime now);
 
     /** XADD 失败：释放抢占并回退 PENDING + 指数退避（下次轮询重试） */
@@ -65,10 +72,13 @@ public interface OutboxRepository extends JpaRepository<OutboxEvent, Long> {
             UPDATE OutboxEvent e
             SET e.status = :pending, e.retryCount = :retryCount, e.nextRetryAt = :nextRetryAt
             WHERE e.id = :id AND e.status = :publishing
+              AND e.claimOwner = :claimOwner AND e.claimVersion = :claimVersion
             """)
     int releaseClaim(@Param("id") Long id,
                      @Param("pending") OutboxStatus pending,
                      @Param("publishing") OutboxStatus publishing,
+                     @Param("claimOwner") String claimOwner,
+                     @Param("claimVersion") long claimVersion,
                      @Param("retryCount") int retryCount,
                      @Param("nextRetryAt") LocalDateTime nextRetryAt);
 
@@ -79,10 +89,13 @@ public interface OutboxRepository extends JpaRepository<OutboxEvent, Long> {
             UPDATE OutboxEvent e
             SET e.status = :dead, e.retryCount = :retryCount
             WHERE e.id = :id AND e.status = :publishing
+              AND e.claimOwner = :claimOwner AND e.claimVersion = :claimVersion
             """)
     int failDead(@Param("id") Long id,
                  @Param("dead") OutboxStatus dead,
                  @Param("publishing") OutboxStatus publishing,
+                 @Param("claimOwner") String claimOwner,
+                 @Param("claimVersion") long claimVersion,
                  @Param("retryCount") int retryCount);
 
     boolean existsByIdempotencyKey(String idempotencyKey);

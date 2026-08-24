@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { createCase, fmtDateTime, listCases, listCaseStats, listCustomers, processCase, type CaseItem, type CaseStats, type Customer } from '../api/client'
+import { createCase, fmtDateTime, listCases, listCaseStats, listCustomers, processCase, retryCase, type CaseItem, type CaseStats, type Customer } from '../api/client'
 import { riskMeta, statusMeta } from '../constants/case'
 import { Plus, Refresh, Search } from '@element-plus/icons-vue'
 
@@ -91,10 +91,15 @@ async function handleCreate() {
 async function handleProcess(row: CaseItem) {
   processingId.value = row.id
   try {
-    await processCase(row.id)
+    if (row.status === 'FAILED') {
+      await retryCase(row.id)
+      ElMessage.success('已重新入队，正在执行')
+    } else {
+      await processCase(row.id)
+    }
     emit('open-case', row.id)
   } catch {
-    ElMessage.error('触发尽调失败')
+    ElMessage.error(row.status === 'FAILED' ? '重试失败，请稍后重试' : '触发尽调失败')
   } finally {
     processingId.value = null
   }
@@ -108,6 +113,10 @@ function srcTag(row: CaseItem) {
 
 <template>
   <div class="dashboard">
+    <header class="page-intro">
+      <h2>工单</h2>
+      <p>创建预警、跟踪 Agent 调查进度，并进入人工处置。</p>
+    </header>
     <!-- 态势概览 -->
     <div class="overview card">
       <div class="ov-total">
@@ -190,20 +199,22 @@ function srcTag(row: CaseItem) {
         </el-table-column>
         <el-table-column label="操作" width="170" fixed="right">
           <template #default="{ row }">
-            <el-button size="small" @click="emit('open-case', row.id)">
-              <el-icon><Search /></el-icon>
-              <span>查看</span>
-            </el-button>
-            <el-button
-              v-if="row.status === 'PENDING' || row.status === 'FAILED'"
-              size="small"
-              type="primary"
-              :loading="processingId === row.id"
-              @click="handleProcess(row as CaseItem)"
-            >
-              <el-icon v-if="processingId !== row.id"><Refresh /></el-icon>
-              <span>{{ processingId === row.id ? '处理中' : '处理' }}</span>
-            </el-button>
+            <div class="row-actions">
+              <el-button size="small" @click="emit('open-case', row.id)">
+                <el-icon><Search /></el-icon>
+                <span>查看</span>
+              </el-button>
+              <el-button
+                v-if="row.status === 'PENDING' || row.status === 'FAILED'"
+                size="small"
+                type="primary"
+                :loading="processingId === row.id"
+                @click="handleProcess(row as CaseItem)"
+              >
+                <el-icon v-if="processingId !== row.id"><Refresh /></el-icon>
+                <span>{{ processingId === row.id ? (row.status === 'FAILED' ? '重试中' : '处理中') : (row.status === 'FAILED' ? '重试' : '处理') }}</span>
+              </el-button>
+            </div>
           </template>
         </el-table-column>
         <template #empty>
@@ -229,14 +240,14 @@ function srcTag(row: CaseItem) {
 .dashboard {
   display: flex;
   flex-direction: column;
-  gap: 18px;
+  gap: 0;
 }
 
 /* 态势概览 */
 .overview {
   display: flex;
   align-items: stretch;
-  gap: 28px;
+  gap: 0;
 }
 
 .ov-total {
@@ -257,7 +268,7 @@ function srcTag(row: CaseItem) {
 .ov-total b {
   font-size: 38px;
   font-weight: 650;
-  color: var(--gold);
+  color: var(--text);
   line-height: 1.1;
   margin: 4px 0;
 }
@@ -271,17 +282,17 @@ function srcTag(row: CaseItem) {
   flex: 1;
   display: grid;
   grid-template-columns: repeat(4, 1fr);
-  gap: 14px;
+  gap: 0;
 }
 
 .ov-cell {
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 14px;
-  background: rgba(11, 18, 32, 0.42);
-  border: 1px solid var(--line-faint);
-  border-radius: 8px;
+  padding: 12px 20px;
+  background: transparent;
+  border-left: 1px solid var(--line);
+  border-radius: 0;
 }
 
 .ov-cell .dot {
@@ -292,7 +303,7 @@ function srcTag(row: CaseItem) {
 }
 
 .ov-cell .dot.pulse {
-  animation: pulse 1.6s ease-in-out infinite;
+  animation: none;
 }
 
 .ov-cell div {
@@ -401,8 +412,8 @@ function srcTag(row: CaseItem) {
 .src {
   font-family: var(--font-mono);
   font-size: 11px;
-  color: var(--gold);
-  background: rgba(201, 169, 97, 0.1);
+  color: var(--text-dim);
+  background: #f8fafc;
   border: 1px solid var(--line);
   padding: 2px 8px;
   border-radius: 6px;

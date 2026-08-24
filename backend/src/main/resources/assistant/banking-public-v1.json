@@ -1,0 +1,65 @@
+{
+  "version": "banking-public-cn-2026.08",
+  "documents": [
+    {
+      "id": "KB-DEPOSIT-INSURANCE-CN-001",
+      "type": "BANKING_PUBLIC",
+      "title": "存款保险基本规则",
+      "summary": "中国存款保险实行限额偿付。同一存款人在同一家投保机构的被保险存款本金和利息合并计算，现行最高偿付限额为人民币50万元；具体是否属于被保险存款仍需按条例核验。",
+      "source": "国家行政法规库·存款保险条例",
+      "sourceUrl": "https://xzfg.moj.gov.cn/front/law/detail?LawID=419",
+      "effectiveFrom": "2015-05-01",
+      "keywords": ["存款", "存款保险", "偿付", "50万", "五十万", "储蓄"]
+    },
+    {
+      "id": "KB-AML-LAW-CN-2025-001",
+      "type": "AML_LEGAL",
+      "title": "风险为本的反洗钱管理",
+      "summary": "金融机构应建立健全反洗钱内部控制制度，依风险状况采取相应措施。AI 输出只能作为调查线索，客户风险分类和后续处置必须结合有效证据并由有权限人员复核。",
+      "source": "中国人民银行·反洗钱监管公开信息",
+      "sourceUrl": "https://www.pbc.gov.cn/tiaofasi/144941/144957/5863650/index.html",
+      "effectiveFrom": "2025-12-01",
+      "keywords": ["反洗钱", "风险为本", "风险等级", "内部控制", "人工复核"]
+    },
+    {
+      "id": "KB-KYC-CN-2025-001",
+      "type": "AML_LEGAL",
+      "title": "客户尽职调查与记录保存",
+      "summary": "金融机构应按规定识别并核实客户身份，了解客户及其交易背景和风险状况，并妥善保存客户身份资料及交易记录。具体措施、触发条件和保存期限应以届时有效规则为准。",
+      "source": "中国人民银行·金融机构客户尽职调查和客户身份资料及交易记录保存管理办法",
+      "sourceUrl": "https://www.pbc.gov.cn/zhengwugongkai/attachDir/2025/12/2025122909264498909.pdf",
+      "effectiveFrom": "2026-01-01",
+      "keywords": ["客户尽调", "尽职调查", "KYC", "身份识别", "交易背景", "记录保存"]
+    },
+    {
+      "id": "KB-SUSPICIOUS-REPORT-CN-2025-001",
+      "type": "AML_LEGAL",
+      "title": "大额与可疑交易监测",
+      "summary": "金融机构负有大额交易和可疑交易监测、分析及报告义务。单一异常指标不等于已经认定洗钱，应结合客户画像、交易背景、资金路径和持续行为形成可解释判断。",
+      "source": "中国人民银行令〔2025〕第10号",
+      "sourceUrl": "https://www.pbc.gov.cn/tiaofasi/144941/144957/5863650/index.html",
+      "effectiveFrom": "2025-12-01",
+      "keywords": ["大额交易", "可疑交易", "交易监测", "洗钱", "异常交易", "资金路径"]
+    },
+    {
+      "id": "KB-PAYMENT-DD-CN-001",
+      "type": "BANKING_PUBLIC",
+      "title": "支付业务持续尽职调查",
+      "summary": "支付业务经营者应持续识别并核实用户身份，了解交易背景和风险状况并采取相应风险管理措施。客户分析需要区分事实、风险信号和最终合规结论。",
+      "source": "中国人民银行·非银行支付机构监督管理条例",
+      "sourceUrl": "https://www.pbc.gov.cn/tiaofasi/144941/144953/5174993/index.html",
+      "effectiveFrom": "2024-05-01",
+      "keywords": ["支付", "支付机构", "用户尽调", "交易背景", "风险管理"]
+    },
+    {
+      "id": "KB-UBO-RISK-CN-001",
+      "type": "AML_LEGAL",
+      "title": "受益所有人风险分析原则",
+      "summary": "识别受益所有人时应关注直接和间接控制关系。复杂层级、代持或信托安排属于需要进一步核验的风险信号，但不能仅凭结构复杂直接作出违法结论。",
+      "source": "中国人民银行·客户尽职调查监管公开规则",
+      "sourceUrl": "https://www.pbc.gov.cn/zhengwugongkai/attachDir/2025/12/2025122909264498909.pdf",
+      "effectiveFrom": "2026-01-01",
+      "keywords": ["受益所有人", "UBO", "股权", "控制关系", "信托", "代持"]
+    }
+  ]
+}

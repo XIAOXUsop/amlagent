@@ -8,13 +8,13 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 
 /**
- * 共享线程池配置：心跳调度器 + 流式摘要执行器。
+ * 共享线程池配置：心跳调度器 + 确定性最终报告流执行器。
  * <p>均使用有界线程池，避免公共 ForkJoinPool；线程设为守护线程，随应用退出回收。
  */
 @Configuration
 public class HeartbeatExecutorConfig {
 
-    @Bean(destroyMethod = "shutdown")
+    @Bean(name = {"heartbeatExecutor", "taskScheduler"}, destroyMethod = "shutdown")
     public ScheduledExecutorService heartbeatExecutor() {
         return Executors.newScheduledThreadPool(2, r -> {
             Thread t = new Thread(r, "aml-heartbeat");
@@ -23,7 +23,7 @@ public class HeartbeatExecutorConfig {
         });
     }
 
-    /** 流式摘要执行器：有界线程池，避免摘要任务占用 Worker/公共 ForkJoinPool */
+    /** 最终报告流执行器：不调用模型，有界线程池避免推送任务占用 Worker/公共 ForkJoinPool。 */
     @Bean(destroyMethod = "shutdown")
     public ExecutorService summaryExecutor() {
         return Executors.newFixedThreadPool(2, r -> {

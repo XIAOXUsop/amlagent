@@ -6,6 +6,7 @@ import com.bank.aml.common.exception.RetryableWorkflowException;
 import com.bank.aml.datasource.entity.CaseEntity;
 import com.bank.aml.datasource.repository.CaseRepository;
 import com.bank.aml.service.DueDiligenceService;
+import com.bank.aml.service.WorkflowEventService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.data.redis.connection.stream.MapRecord;
@@ -42,12 +43,14 @@ public class WorkflowMessageHandler {
     private final WorkerIdentity workerIdentity;
     private final ScheduledExecutorService heartbeatExecutor;
     private final StreamConsumptionTracker consumptionTracker;
+    private final WorkflowEventService workflowEventService;
 
     public WorkflowMessageHandler(CaseRepository caseRepository, DueDiligenceService dueDiligenceService,
                                   WorkflowCommandService workflowCommandService,
                                   StringRedisTemplate redisTemplate, QueueProperties props,
                                   WorkerIdentity workerIdentity, ScheduledExecutorService heartbeatExecutor,
-                                  StreamConsumptionTracker consumptionTracker) {
+                                  StreamConsumptionTracker consumptionTracker,
+                                  WorkflowEventService workflowEventService) {
         this.caseRepository = caseRepository;
         this.dueDiligenceService = dueDiligenceService;
         this.workflowCommandService = workflowCommandService;
@@ -56,6 +59,7 @@ public class WorkflowMessageHandler {
         this.workerIdentity = workerIdentity;
         this.heartbeatExecutor = heartbeatExecutor;
         this.consumptionTracker = consumptionTracker;
+        this.workflowEventService = workflowEventService;
     }
 
     public void onMessage(MapRecord<String, String, String> record) {
@@ -113,7 +117,7 @@ public class WorkflowMessageHandler {
             } catch (Exception ignored) {
                 // 心跳失败不影响主流程
             }
-        }, 30, 30, TimeUnit.SECONDS);
+        }, props.getHeartbeatSeconds(), props.getHeartbeatSeconds(), TimeUnit.SECONDS);
         try {
             dueDiligenceService.process(caseId, worker, executionVersion, lease);
             ack(record);
@@ -136,7 +140,10 @@ public class WorkflowMessageHandler {
         int retry = (c == null ? 0 : c.getRetryCount()) + 1;
         if (retry >= props.getMaxRetry()) {
             // 死信走 Outbox：RUNNING → FAILED 与死信事件同事务，不直接写 Redis
-            workflowCommandService.markDeadLetter(caseId, worker, executionVersion, retry, message);
+            boolean failed = workflowCommandService.markDeadLetter(caseId, worker, executionVersion, retry, message);
+            if (failed) {
+                workflowEventService.complete(caseId, CaseStatus.FAILED);
+            }
             ack(record);
             log.error("工单重试超限进死信 caseId={} retry={}", caseId, retry);
         } else {
@@ -161,8 +168,11 @@ public class WorkflowMessageHandler {
 
     private void markFailed(Long caseId, String worker, int executionVersion, String code, String message) {
         CaseEntity c = caseRepository.findById(caseId).orElse(null);
-        caseRepository.failCase(caseId, CaseStatus.FAILED,
+        int updated = caseRepository.failCase(caseId, CaseStatus.FAILED,
                 c == null ? 0 : c.getRetryCount(), code, message, worker, executionVersion);
+        if (updated == 1) {
+            workflowEventService.complete(caseId, CaseStatus.FAILED);
+        }
     }
 
     private void ack(MapRecord<String, String, String> record) {

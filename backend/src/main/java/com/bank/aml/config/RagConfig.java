@@ -33,7 +33,11 @@ public class RagConfig {
 
     /** 本地 embedding 模型：all-MiniLM-L6-v2，384 维，离线可用 */
     @Bean
-    public EmbeddingModel embeddingModel() {
+    public EmbeddingModel embeddingModel(RagProperties props) {
+        if (!"all-MiniLM-L6-v2".equalsIgnoreCase(props.getEmbedding().getModel())
+                || props.getPg().getDimensions() != 384) {
+            throw new IllegalStateException("当前构建仅绑定 all-MiniLM-L6-v2/384 维；切换模型必须同时提供对应 EmbeddingModel Bean，禁止只改 Manifest 配置");
+        }
         return new AllMiniLmL6V2EmbeddingModel();
     }
 

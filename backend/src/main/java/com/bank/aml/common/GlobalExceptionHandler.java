@@ -4,6 +4,13 @@ import com.bank.aml.common.exception.NonRetryableWorkflowException;
 import com.bank.aml.common.exception.RetryableWorkflowException;
 import com.bank.aml.common.exception.TooManyRequestsException;
 import com.bank.aml.common.exception.WorkflowStateConflictException;
+import com.bank.aml.common.exception.CustomerNotFoundException;
+import com.bank.aml.assistant.application.AssistantDisabledException;
+import com.bank.aml.assistant.application.AssistantRateLimitException;
+import com.bank.aml.assistant.application.ConversationBusyException;
+import com.bank.aml.assistant.application.ConversationNotFoundException;
+import com.bank.aml.assistant.application.ConversationStateException;
+import com.bank.aml.sanction.SanctionReviewConflictException;
 import jakarta.servlet.http.HttpServletRequest;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -54,6 +61,12 @@ public class GlobalExceptionHandler {
         return build(HttpStatus.CONFLICT, "WORKFLOW_STATE_CONFLICT", ex.getMessage(), req);
     }
 
+    @ExceptionHandler(SanctionReviewConflictException.class)
+    public ResponseEntity<ApiError> handleSanctionReviewConflict(SanctionReviewConflictException ex,
+                                                                 HttpServletRequest req) {
+        return build(HttpStatus.CONFLICT, "SANCTION_REVIEW_CONFLICT", ex.getMessage(), req);
+    }
+
     /** 登录/鉴权速率限制：429，客户端应停止重试并等待解锁 */
     @ExceptionHandler(TooManyRequestsException.class)
     public ResponseEntity<ApiError> handleRateLimited(TooManyRequestsException ex, HttpServletRequest req) {
@@ -92,6 +105,38 @@ public class GlobalExceptionHandler {
     public ResponseEntity<ApiError> handleUnknown(Exception ex, HttpServletRequest req) {
         log.error("未处理异常", ex);
         return build(HttpStatus.INTERNAL_SERVER_ERROR, "INTERNAL_ERROR", "服务器内部错误", req);
+    }
+
+    @ExceptionHandler(CustomerNotFoundException.class)
+    public ResponseEntity<ApiError> handleCustomerNotFound(CustomerNotFoundException ex, HttpServletRequest req) {
+        return build(HttpStatus.NOT_FOUND, "CUSTOMER_NOT_FOUND", "客户不存在", req);
+    }
+
+    @ExceptionHandler(AssistantDisabledException.class)
+    public ResponseEntity<ApiError> handleAssistantDisabled(AssistantDisabledException ex, HttpServletRequest req) {
+        return build(HttpStatus.PRECONDITION_FAILED, "ASSISTANT_DISABLED", ex.getMessage(), req);
+    }
+
+    @ExceptionHandler(ConversationNotFoundException.class)
+    public ResponseEntity<ApiError> handleConversationNotFound(ConversationNotFoundException ex,
+                                                               HttpServletRequest req) {
+        return build(HttpStatus.NOT_FOUND, "CONVERSATION_NOT_FOUND", "会话不存在", req);
+    }
+
+    @ExceptionHandler(ConversationBusyException.class)
+    public ResponseEntity<ApiError> handleConversationBusy(ConversationBusyException ex, HttpServletRequest req) {
+        return build(HttpStatus.CONFLICT, "CONVERSATION_BUSY", ex.getMessage(), req);
+    }
+
+    @ExceptionHandler(ConversationStateException.class)
+    public ResponseEntity<ApiError> handleConversationState(ConversationStateException ex, HttpServletRequest req) {
+        return build(HttpStatus.CONFLICT, ex.code(), ex.getMessage(), req);
+    }
+
+    @ExceptionHandler(AssistantRateLimitException.class)
+    public ResponseEntity<ApiError> handleAssistantRateLimit(AssistantRateLimitException ex,
+                                                             HttpServletRequest req) {
+        return build(HttpStatus.TOO_MANY_REQUESTS, "ASSISTANT_RATE_LIMITED", ex.getMessage(), req);
     }
 
     private ResponseEntity<ApiError> build(HttpStatus status, String code, String message, HttpServletRequest req) {

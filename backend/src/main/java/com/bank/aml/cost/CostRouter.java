@@ -5,9 +5,9 @@ import org.springframework.stereotype.Component;
 import java.util.List;
 
 /**
- * 成本路由：根据预警规则复杂度分级，决定是否需要调用 LLM。
- * <p>命中高风险特征关键词判 COMPLEX（需 LLM 深度推理）；否则 SIMPLE（可由规则引擎零成本处理）。
- * 这是 AI 应用成本控制的核心：能不用模型就不用模型。
+ * 成本路由：根据预警规则复杂度分级，决定是否附加确定性报告流。
+ * <p>预警规则来自请求侧，不能把其中的文字当作受信授权来跳过 Agent；
+ * 在引入服务端签名的路由元数据前，所有业务工单都必须执行主 Agent。</p>
  */
 @Component
 public class CostRouter {
@@ -21,7 +21,7 @@ public class CostRouter {
         SIMPLE, COMPLEX
     }
 
-    /** 明确路由决策：RULE_ONLY（零 LLM）、AGENT（仅主 Agent）、AGENT_WITH_SUMMARY（主 Agent + 流式摘要） */
+    /** RULE_ONLY 为兼容旧报告保留；当前生产路由不会返回该值。 */
     public enum Route {
         RULE_ONLY, AGENT, AGENT_WITH_SUMMARY
     }
@@ -39,18 +39,14 @@ public class CostRouter {
     }
 
     /**
-     * 路由决策：结合规则兜底开关与流式摘要开关。
+     * 路由决策：当前始终执行主 Agent；复杂工单可附加确定性报告流。
      * <ul>
-     *   <li>SIMPLE 且规则兜底启用 → RULE_ONLY（零 LLM 调用，含流式）；</li>
-     *   <li>COMPLEX 且流式摘要启用 → AGENT_WITH_SUMMARY；</li>
+     *   <li>COMPLEX 且报告流启用 → AGENT_WITH_SUMMARY（不会产生第二次模型调用）；</li>
      *   <li>其余 → AGENT（仅主 Agent）。</li>
      * </ul>
      */
     public Route route(String alertRule, boolean ruleFallbackEnabled, boolean summaryEnabled) {
         Complexity complexity = assess(alertRule);
-        if (ruleFallbackEnabled && complexity == Complexity.SIMPLE) {
-            return Route.RULE_ONLY;
-        }
         if (summaryEnabled && complexity == Complexity.COMPLEX) {
             return Route.AGENT_WITH_SUMMARY;
         }

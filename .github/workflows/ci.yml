@@ -32,8 +32,8 @@ jobs:
         run: |
           if grep -rInE \
             --exclude-dir=node_modules --exclude-dir=target --exclude-dir=.git \
-            --exclude='*.lock' --exclude='*.json' \
-            "(sk-[A-Za-z0-9]{20,}|AKIA[0-9A-Z]{16}|BEGIN (RSA|EC|OPENSSH) PRIVATE KEY|api[_-]?key[[:space:]]*[:=][[:space:]]*['\"][A-Za-z0-9]{20,})" \
+            --exclude='*.lock' \
+            "(sk-[A-Za-z0-9_-]{16,}|AKIA[0-9A-Z]{16}|BEGIN (RSA|EC|OPENSSH) PRIVATE KEY|api[_-]?key[[:space:]]*[:=][[:space:]]*['\"][A-Za-z0-9_-]{16,})" \
             . ; then
             echo "::error::检测到疑似密钥/私钥泄露"
             exit 1
@@ -55,6 +55,8 @@ jobs:
         run: cd frontend && npm ci
       - name: Run unit tests
         run: cd frontend && npm test
+      - name: Audit production dependencies
+        run: cd frontend && npm audit --omit=dev --audit-level=high --registry=https://registry.npmjs.org
       - name: Build
         run: cd frontend && npm run build
 
@@ -104,7 +106,7 @@ jobs:
           distribution: 'temurin'
           cache: maven
       - name: Run integration tests
-        run: cd backend && ./mvnw test -Dgroups=integration
+        run: cd backend && ./mvnw -Pintegration-test test
         env:
           AML_RAG_RERANK_ENABLED: 'false'
 
@@ -132,6 +134,17 @@ jobs:
           - 6379:6379
         options: >-
           --health-cmd "redis-cli ping"
+          --health-interval 10s --health-timeout 5s --health-retries 5
+      pgvector:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: aml
+          POSTGRES_PASSWORD: aml123456
+          POSTGRES_DB: aml_rag
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd "pg_isready -U aml -d aml_rag"
           --health-interval 10s --health-timeout 5s --health-retries 5
     steps:
       - uses: actions/checkout@v4

@@ -8,4 +8,6 @@ public interface ToolExecutionTraceRepository extends JpaRepository<ToolExecutio
 
     /** 按执行版本倒序（最近执行在前）、同一执行内按调用序号正序返回某个工单的工具调用轨迹 */
     List<ToolExecutionTraceEntity> findByCaseIdOrderByExecutionVersionDescSequenceNoAsc(Long caseId);
+
+    List<ToolExecutionTraceEntity> findByCaseIdAndExecutionVersionOrderBySequenceNoAsc(Long caseId, int executionVersion);
 }

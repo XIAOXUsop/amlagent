@@ -2,20 +2,26 @@
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import {
   fmtDateTime,
+  getCaseDossier,
   getCase,
   listLogs,
-    listToolTraces,
+  listToolTraces,
   parseReport,
   processCase,
   retryCase,
+  reviewSanctionCandidate,
+  screenSanctions,
   subscribeCase,
   type CaseItem,
   type DueDiligenceReport,
-    type ToolTrace,
+  type SanctionScreeningResult,
+  type SanctionCandidateMatch,
+  type ToolTrace,
   type WorkflowEvent,
 } from '../api/client'
 import { riskMeta, statusMeta, TERMINAL_STATUSES } from '../constants/case'
-import { Back, RefreshRight, VideoPlay } from '@element-plus/icons-vue'
+import { Back, Download, RefreshRight, VideoPlay } from '@element-plus/icons-vue'
+import { currentUser } from '../auth'
 
 const props = defineProps<{ caseId: number }>()
 const emit = defineEmits<{ (e: 'back'): void }>()
@@ -26,11 +32,15 @@ const loadError = ref(false)
 const detailLoading = ref(true)
 const logs = ref<{ stage: string; content: string; at: string }[]>([])
 const toolTraces = ref<ToolTrace[]>([])
+const sanctionScreening = ref<SanctionScreeningResult | null>(null)
+const screeningLoading = ref(false)
+const dossierLoading = ref(false)
+const reviewingFingerprint = ref('')
 const doneKeys = ref<Set<string>>(new Set())
 const currentKey = ref('')
 const logOpen = ref<string[]>(['log'])
 const streamingText = ref('')
-const sseState = ref<'connecting' | 'open' | 'reconnecting'>('connecting')
+const sseState = ref<'connecting' | 'open' | 'reconnecting' | 'closed'>('connecting')
 
 let unsubscribe: (() => void) | null = null
 let refreshTimer: number | null = null
@@ -106,7 +116,8 @@ async function connect() {
   doneKeys.value = new Set()
   currentKey.value = ''
   streamingText.value = ''
-    toolTraces.value = []
+  toolTraces.value = []
+  sanctionScreening.value = null
   sseState.value = 'connecting'
   detailLoading.value = true
 
@@ -149,15 +160,29 @@ async function connect() {
     }
   }
 
+  try {
+    const traces = await listToolTraces(props.caseId)
+    if (seq !== connectSeq) return
+    toolTraces.value = traces
+  } catch {
+    // 工具轨迹加载失败不影响主流程（日志/报告仍可查看）
+    if (seq !== connectSeq) return
+    toolTraces.value = []
+  }
+
+  if (caseItem.value) {
+    screeningLoading.value = true
     try {
-      const traces = await listToolTraces(props.caseId)
+      const screening = await screenSanctions(caseItem.value.customerId)
       if (seq !== connectSeq) return
-      toolTraces.value = traces
+      sanctionScreening.value = screening
     } catch {
-      // 工具轨迹加载失败不影响主流程（日志/报告仍可查看）
       if (seq !== connectSeq) return
-      toolTraces.value = []
+      sanctionScreening.value = null
+    } finally {
+      if (seq === connectSeq) screeningLoading.value = false
     }
+  }
 }
 
 // 同一组件实例在 /cases/1 → /cases/2 间复用（浏览器前进/后退）时重建订阅，避免展示旧工单数据
@@ -196,8 +221,83 @@ async function handleProcess() {
   }
 }
 
-const canRetry = computed(() => caseItem.value && ['HOLD', 'FAILED'].includes(caseItem.value.status))
-const canProcess = computed(() => caseItem.value && ['PENDING', 'FAILED'].includes(caseItem.value.status))
+async function handleDossierDownload() {
+  dossierLoading.value = true
+  try {
+    const dossier = await getCaseDossier(props.caseId)
+    const blob = new Blob([JSON.stringify(dossier, null, 2)], { type: 'application/json;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const anchor = document.createElement('a')
+    anchor.href = url
+    anchor.download = `aml-case-${props.caseId}-dossier.json`
+    document.body.appendChild(anchor)
+    anchor.click()
+    anchor.remove()
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000)
+    ElMessage.success(`调查档案已导出，完整性摘要 ${dossier.contentHash.slice(0, 12)}…`)
+  } catch {
+    ElMessage.error('调查档案导出失败，请稍后重试')
+  } finally {
+    dossierLoading.value = false
+  }
+}
+
+function screeningTagType(decision: string): 'danger' | 'warning' | 'info' {
+  if (decision === 'CONFIRMED') return 'danger'
+  if (decision === 'REVIEW_REQUIRED') return 'warning'
+  return 'info'
+}
+
+function screeningDecisionText(decision: string): string {
+  if (decision === 'CONFIRMED') return '确定命中'
+  if (decision === 'REVIEW_REQUIRED') return '待人工核验'
+  return '已排除'
+}
+
+const canRetry = computed(() => caseItem.value && caseItem.value.status === 'FAILED')
+const canProcess = computed(() => caseItem.value && caseItem.value.status === 'PENDING')
+const canReviewSanctions = computed(() => ['REVIEWER', 'ADMIN'].includes(currentUser.value?.role ?? ''))
+
+async function handleCandidateReview(
+  candidate: SanctionCandidateMatch,
+  decision: 'CONFIRM' | 'DISMISS' | 'REQUEST_MORE_INFO',
+) {
+  const actionLabel = decision === 'CONFIRM' ? '确认命中' : decision === 'DISMISS' ? '排除候选' : '要求补充材料'
+  try {
+    const { value } = await ElMessageBox.prompt(
+      `将“${candidate.candidateName}”标记为：${actionLabel}`,
+      '制裁候选人工核验',
+      {
+        confirmButtonText: '提交核验',
+        cancelButtonText: '取消',
+        inputPlaceholder: '请填写判断依据（必填）',
+        inputValidator: (text: string) => {
+          if (!text?.trim()) return '人工核验必须填写判断依据'
+          if (text && text.length > 500) return '核验意见最多 500 字'
+          return true
+        },
+      },
+    )
+    reviewingFingerprint.value = candidate.candidateFingerprint
+    sanctionScreening.value = await reviewSanctionCandidate(caseItem.value!.customerId, {
+      candidateFingerprint: candidate.candidateFingerprint,
+      decision,
+      comment: value?.trim() ?? '',
+      expectedRevision: candidate.reviewRevision,
+    })
+    ElMessage.success('候选核验决定已保存')
+  } catch (error: any) {
+    if (error === 'cancel' || error === 'close') return
+    if (error?.response?.status === 409) {
+      ElMessage.warning('候选已被其他复核人更新，正在刷新最新结果')
+      sanctionScreening.value = await screenSanctions(caseItem.value!.customerId)
+    } else {
+      ElMessage.error('候选核验提交失败，请稍后重试')
+    }
+  } finally {
+    reviewingFingerprint.value = ''
+  }
+}
 
 function isDone(key: string): boolean {
   return doneKeys.value.has(key)
@@ -238,6 +338,10 @@ function snapPrefix(id: string | null): string {
         <span>返回列表</span>
       </el-button>
       <div class="bar-right">
+        <el-button size="small" :loading="dossierLoading" @click="handleDossierDownload">
+          <el-icon><Download /></el-icon>
+          <span>导出调查档案</span>
+        </el-button>
         <el-button v-if="canProcess" size="small" type="primary" @click="handleProcess">
           <el-icon><VideoPlay /></el-icon>
           <span>处理</span>
@@ -258,6 +362,59 @@ function snapPrefix(id: string | null): string {
           {{ report.riskLevel }}
         </span>
       </div>
+    </div>
+
+    <div class="card">
+      <h3 class="card-title screening-title">
+        可解释制裁筛查
+        <el-tag v-if="sanctionScreening" size="small"
+          :type="sanctionScreening.status === 'CONFIRMED_MATCH' ? 'danger' : sanctionScreening.status === 'REVIEW_REQUIRED' ? 'warning' : 'success'">
+          {{ sanctionScreening.status === 'CONFIRMED_MATCH' ? '存在确定命中' : sanctionScreening.status === 'REVIEW_REQUIRED' ? '需要人工核验' : '未发现命中' }}
+        </el-tag>
+      </h3>
+      <div v-if="screeningLoading" class="log-empty">正在核验名单候选…</div>
+      <div v-else-if="!sanctionScreening" class="log-empty">筛查服务暂不可用，不影响已归档的尽调报告。</div>
+      <template v-else>
+        <div class="screening-meta">
+          数据源 {{ sanctionScreening.sourceSystem }} / {{ sanctionScreening.sourceVersion }} ·
+          {{ fmtDateTime(sanctionScreening.screenedAt) }}
+        </div>
+        <div v-if="sanctionScreening.candidates.length === 0" class="screening-empty">未召回同名或同证件号候选</div>
+        <div v-for="candidate in sanctionScreening.candidates" :key="`${candidate.listType}-${candidate.candidateName}`" class="candidate-row">
+          <div class="candidate-score" :class="`score-${candidate.decision.toLowerCase()}`">{{ candidate.score }}</div>
+          <div class="candidate-main">
+            <div class="candidate-head">
+              <strong>{{ candidate.candidateName }}</strong>
+              <el-tag size="small" :type="screeningTagType(candidate.decision)" effect="plain">
+                {{ screeningDecisionText(candidate.decision) }}
+              </el-tag>
+              <span class="candidate-list">{{ candidate.listType }} · 级别 {{ candidate.severity }}</span>
+            </div>
+            <div class="candidate-explain">{{ candidate.explanation }}</div>
+            <div v-if="candidate.reviewDecision" class="candidate-review">
+              <strong>人工核验：</strong>
+              {{ candidate.reviewDecision === 'CONFIRM' ? '确认命中' : candidate.reviewDecision === 'DISMISS' ? '已排除' : '等待补充材料' }}
+              · v{{ candidate.reviewRevision }} · {{ candidate.reviewedBy }} · {{ fmtDateTime(candidate.reviewedAt) }}
+              <span v-if="candidate.reviewComment">（{{ candidate.reviewComment }}）</span>
+            </div>
+            <div class="candidate-foot">
+              <span>身份标识 {{ candidate.identityMasked }}</span>
+              <span v-for="code in candidate.reasonCodes" :key="code" class="code-chip info">{{ code }}</span>
+            </div>
+            <div v-if="canReviewSanctions" class="candidate-actions">
+              <el-button size="small" type="danger" plain
+                :loading="reviewingFingerprint === candidate.candidateFingerprint"
+                @click="handleCandidateReview(candidate, 'CONFIRM')">确认命中</el-button>
+              <el-button size="small" type="success" plain
+                :disabled="!!reviewingFingerprint"
+                @click="handleCandidateReview(candidate, 'DISMISS')">排除候选</el-button>
+              <el-button size="small" type="warning" plain
+                :disabled="!!reviewingFingerprint"
+                @click="handleCandidateReview(candidate, 'REQUEST_MORE_INFO')">补充材料</el-button>
+            </div>
+          </div>
+        </div>
+      </template>
     </div>
 
     <div class="card">
@@ -296,7 +453,7 @@ function snapPrefix(id: string | null): string {
         Agent 工作流
         <span class="sse-indicator" :class="sseState">
           <i class="sse-dot"></i>
-          <span>{{ sseState === 'open' ? '实时连接' : sseState === 'reconnecting' ? '连接中断，正在重连…' : '正在连接…' }}</span>
+          <span>{{ sseState === 'open' ? '实时连接' : sseState === 'reconnecting' ? '连接中断，正在重连…' : sseState === 'closed' ? '流程已结束' : '正在连接…' }}</span>
         </span>
       </h3>
       <div class="flow">
@@ -437,7 +594,7 @@ function snapPrefix(id: string | null): string {
 .detail {
   display: flex;
   flex-direction: column;
-  gap: 18px;
+  gap: 0;
 }
 
 /* 加载态 / 错误态 */
@@ -484,7 +641,8 @@ function snapPrefix(id: string | null): string {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  margin-bottom: 2px;
+  margin-bottom: 0;
+  padding-bottom: 22px;
 }
 
 .bar-right {
@@ -493,6 +651,46 @@ function snapPrefix(id: string | null): string {
   align-items: center;
 }
 
+.screening-title { display: flex; align-items: center; gap: 10px; }
+.screening-meta { color: var(--text-faint); font-size: 12px; margin-bottom: 10px; }
+.screening-empty { color: var(--risk-low); font-size: 13px; padding: 10px 0; }
+.candidate-row {
+  display: flex;
+  gap: 14px;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--line-faint);
+}
+.candidate-row:last-child { border-bottom: none; }
+.candidate-score {
+  width: 44px;
+  height: 44px;
+  flex: 0 0 44px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  font-family: var(--font-mono);
+  font-weight: 700;
+  border: 1px solid var(--line);
+}
+.score-confirmed { color: var(--risk-high); background: rgba(196, 61, 75, 0.12); }
+.score-review_required { color: var(--risk-mid); background: rgba(224, 162, 58, 0.12); }
+.score-dismissed { color: var(--text-faint); background: rgba(124, 139, 163, 0.08); }
+.candidate-main { flex: 1; min-width: 0; }
+.candidate-head { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.candidate-list { color: var(--text-faint); font-size: 12px; }
+.candidate-explain { color: var(--text-dim); font-size: 13px; margin: 7px 0; line-height: 1.6; }
+.candidate-review {
+  color: var(--text-dim);
+  font-size: 12px;
+  line-height: 1.6;
+  margin: 7px 0;
+  padding: 7px 9px;
+  border-left: 2px solid var(--gold);
+  background: #f8fafc;
+}
+.candidate-foot { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; color: var(--text-faint); font-size: 11px; }
+.candidate-actions { display: flex; gap: 6px; margin-top: 10px; flex-wrap: wrap; }
+
 .rk {
   font-size: 12px;
   font-weight: 600;
@@ -500,12 +698,12 @@ function snapPrefix(id: string | null): string {
   border-radius: 999px;
   display: inline-block;
 }
-.rk-high { color: #c43d4b; background: rgba(196, 61, 75, 0.14); border: 1px solid rgba(196, 61, 75, 0.35); }
-.rk-mid { color: #e0a23a; background: rgba(224, 162, 58, 0.14); border: 1px solid rgba(224, 162, 58, 0.35); }
-.rk-low { color: #2fa37f; background: rgba(47, 163, 127, 0.14); border: 1px solid rgba(47, 163, 127, 0.35); }
+.rk-high { color: var(--risk-high); background: #fef3f2; border: 1px solid #fecdca; }
+.rk-mid { color: var(--risk-mid); background: #fffaeb; border: 1px solid #fedf89; }
+.rk-low { color: var(--risk-low); background: #ecfdf3; border: 1px solid #abefc6; }
 
 .snap, .time, .mono { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
-.snap { color: var(--gold); }
+.snap { color: var(--text-dim); }
 .time { color: var(--text-dim); font-size: 12px; }
 
 .src {
@@ -515,8 +713,8 @@ function snapPrefix(id: string | null): string {
   border-radius: 6px;
   border: 1px solid var(--line);
 }
-.src-agent { color: var(--gold); background: rgba(201, 169, 97, 0.1); }
-.src-rule { color: var(--risk-mid); background: rgba(224, 162, 58, 0.1); }
+.src-agent { color: var(--text-dim); background: #f8fafc; }
+.src-rule { color: var(--risk-mid); background: #fffaeb; }
 
 /* 工作流 */
 .sse-indicator {
@@ -568,8 +766,8 @@ function snapPrefix(id: string | null): string {
   height: 34px;
   margin: 0 auto 8px;
   border-radius: 50%;
-  border: 2px solid #2b3a57;
-  background: var(--bg-panel);
+  border: 1px solid var(--line-strong);
+  background: #ffffff;
   color: var(--text-faint);
   font-size: 13px;
   display: flex;
@@ -583,7 +781,7 @@ function snapPrefix(id: string | null): string {
 .flow-node.active .node-circle {
   border-color: var(--gold);
   color: var(--gold);
-  box-shadow: 0 0 0 4px rgba(201, 169, 97, 0.15), 0 0 16px rgba(201, 169, 97, 0.25);
+  box-shadow: 0 0 0 3px #dbeafe;
   animation: nodepulse 1.4s ease-in-out infinite;
 }
 
@@ -617,7 +815,7 @@ function snapPrefix(id: string | null): string {
   left: 50%;
   width: 100%;
   height: 2px;
-  background: #24314a;
+  background: var(--line);
   z-index: 1;
 }
 .node-link.done { background: rgba(47, 163, 127, 0.5); }
@@ -655,7 +853,7 @@ function snapPrefix(id: string | null): string {
   width: 110px;
   flex-shrink: 0;
   font-weight: 600;
-  color: var(--gold);
+  color: var(--text-dim);
   font-size: 13px;
   padding-top: 2px;
   letter-spacing: 0.02em;
@@ -680,7 +878,7 @@ function snapPrefix(id: string | null): string {
   border-radius: 6px;
   border: 1px solid var(--line);
   color: var(--text-dim);
-  background: rgba(11, 18, 32, 0.4);
+  background: #f8fafc;
 }
 .code-chip.warn { color: var(--risk-mid); border-color: rgba(224, 162, 58, 0.3); }
 .code-chip.danger { color: var(--risk-high); border-color: rgba(196, 61, 75, 0.3); }
@@ -698,7 +896,7 @@ function snapPrefix(id: string | null): string {
   margin: 0;
   white-space: pre-wrap;
   word-break: break-all;
-  background: rgba(11, 18, 32, 0.5);
+  background: #f8fafc;
   border: 1px solid var(--line-faint);
   border-radius: 6px;
   padding: 10px 12px;
@@ -715,7 +913,7 @@ function snapPrefix(id: string | null): string {
 .ev-chip {
   font-size: 12px;
   color: var(--text-dim);
-  background: rgba(11, 18, 32, 0.5);
+  background: #f8fafc;
   border: 1px solid var(--line);
   padding: 3px 10px;
   border-radius: 6px;
@@ -729,7 +927,7 @@ function snapPrefix(id: string | null): string {
   word-break: break-all;
 }
 .cursor {
-  color: var(--gold);
+  color: var(--risk-info);
   animation: blink 1s step-end infinite;
 }
 @keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0; } }
