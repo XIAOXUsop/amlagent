@@ -17,38 +17,48 @@ class EnterpriseLegalRetrieverTest {
     private final EnterpriseLegalRetriever retriever = new EnterpriseLegalRetriever(
             searcher, versions, mock(MetricsRecorder.class), 4);
 
-    @Test
-    void abstainsWhenNearestVectorIsLexicallyUnrelated() {
-        when(searcher.search(org.mockito.ArgumentMatchers.any(RetrievalRequest.class), org.mockito.ArgumentMatchers.eq(12))).thenReturn(List.of(
-                doc("LEGAL-1", "高风险客户应核实资金来源", Set.of("PUBLIC_LEGAL"))));
+    private SearchHit supportHit(LegalDoc doc, double rerankScore) {
+        return SearchHit.of(doc).reranked(1, rerankScore);
+    }
 
-        RetrievalResponse response = retriever.retrieve(request("明天上海是否下雨", Set.of("PUBLIC_LEGAL")));
+    @Test
+    void abstainsWhenNearestEvidenceHasLowSupportProbability() {
+        when(searcher.searchScored(org.mockito.ArgumentMatchers.any(RetrievalRequest.class),
+                org.mockito.ArgumentMatchers.eq(12))).thenReturn(List.of(
+                supportHit(doc("LEGAL-1", "高风险客户应核实资金来源", Set.of("PUBLIC_LEGAL")), -5.0)));
+
+        RetrievalResponse response = retriever.retrieve(request("高风险客户资金来源", Set.of("PUBLIC_LEGAL")));
 
         assertThat(response.status()).isEqualTo(RetrievalResponse.Status.NO_RELEVANT_EVIDENCE);
+        assertThat(response.support()).isEqualTo(EvidenceSupport.NO_RELEVANT_EVIDENCE);
         assertThat(response.hits()).isEmpty();
     }
 
     @Test
     void accessScopeIsEnforcedBeforeEvidenceIsReturned() {
-        when(searcher.search(org.mockito.ArgumentMatchers.any(RetrievalRequest.class), org.mockito.ArgumentMatchers.eq(12))).thenReturn(List.of(
-                doc("LEGAL-1", "高风险客户应深入了解财产和资金来源", Set.of("AML_INTERNAL"))));
+        when(searcher.searchScored(org.mockito.ArgumentMatchers.any(RetrievalRequest.class),
+                org.mockito.ArgumentMatchers.eq(12))).thenReturn(List.of(
+                supportHit(doc("LEGAL-1", "高风险客户应深入了解财产和资金来源", Set.of("AML_INTERNAL")), 3.0)));
 
         RetrievalResponse response = retriever.retrieve(request("高风险客户资金来源", Set.of("PUBLIC_LEGAL")));
 
-        assertThat(response.status()).isEqualTo(RetrievalResponse.Status.ACCESS_DENIED);
+        assertThat(response.status()).isEqualTo(RetrievalResponse.Status.NO_RELEVANT_EVIDENCE);
+        assertThat(response.support()).isEqualTo(EvidenceSupport.EVIDENCE_ACCESS_DENIED);
         assertThat(response.hits()).isEmpty();
     }
 
     @Test
-    void returnsSupportedOnlyAfterAuthorizationAndRelevanceGates() {
-        when(searcher.search(org.mockito.ArgumentMatchers.any(RetrievalRequest.class), org.mockito.ArgumentMatchers.eq(12))).thenReturn(List.of(
-                doc("LEGAL-1", "高风险客户应深入了解财产和资金来源", Set.of("PUBLIC_LEGAL")),
-                doc("LEGAL-2", "强化尽职调查应当核验客户资金来源", Set.of("PUBLIC_LEGAL"))));
+    void returnsSupportedOnlyAfterAuthorizationAndSupportGates() {
+        when(searcher.searchScored(org.mockito.ArgumentMatchers.any(RetrievalRequest.class),
+                org.mockito.ArgumentMatchers.eq(12))).thenReturn(List.of(
+                supportHit(doc("LEGAL-1", "高风险客户应深入了解财产和资金来源", Set.of("PUBLIC_LEGAL")), 3.0),
+                supportHit(doc("LEGAL-2", "强化尽职调查应当核验客户资金来源", Set.of("PUBLIC_LEGAL")), 2.0)));
 
         RetrievalResponse response = retriever.retrieve(request("高风险客户资金来源", Set.of("PUBLIC_LEGAL")));
 
         assertThat(response.status()).isEqualTo(RetrievalResponse.Status.SUPPORTED);
-        assertThat(response.hits()).hasSize(2).allMatch(hit -> hit.relevanceScore() >= 0.04);
+        assertThat(response.support()).isEqualTo(EvidenceSupport.SUPPORTED);
+        assertThat(response.hits()).hasSize(2).allMatch(hit -> hit.relevanceScore() >= 0.75);
     }
 
     @Test
@@ -57,11 +67,13 @@ class EnterpriseLegalRetrieverTest {
                 "高风险客户应核验资金来源", new LegalEvidenceMetadata("DOC-1", "强化尽调", "CN",
                 java.time.LocalDate.of(2020, 1, 1), java.time.LocalDate.of(2024, 12, 31),
                 Set.of("PUBLIC_LEGAL"), "digest", "index-v1", "law.md", "TRUSTED"));
-        when(searcher.search(org.mockito.ArgumentMatchers.any(RetrievalRequest.class), org.mockito.ArgumentMatchers.eq(12))).thenReturn(List.of(expired));
+        when(searcher.searchScored(org.mockito.ArgumentMatchers.any(RetrievalRequest.class),
+                org.mockito.ArgumentMatchers.eq(12))).thenReturn(List.of(SearchHit.of(expired)));
 
         RetrievalResponse response = retriever.retrieve(request("高风险客户资金来源", Set.of("PUBLIC_LEGAL")));
 
         assertThat(response.status()).isEqualTo(RetrievalResponse.Status.NO_RELEVANT_EVIDENCE);
+        assertThat(response.support()).isEqualTo(EvidenceSupport.EVIDENCE_EXPIRED);
     }
 
     @Test
@@ -69,13 +81,40 @@ class EnterpriseLegalRetrieverTest {
         LegalDoc malformed = new LegalDoc("LEGAL-1", "客户尽职调查办法", "文号", "第四条",
                 "高风险客户应核验资金来源", new LegalEvidenceMetadata("", "", "", null, null,
                 Set.of(), "", "", "", ""));
-        when(searcher.search(org.mockito.ArgumentMatchers.any(RetrievalRequest.class), org.mockito.ArgumentMatchers.eq(12)))
-                .thenReturn(List.of(malformed));
+        when(searcher.searchScored(org.mockito.ArgumentMatchers.any(RetrievalRequest.class),
+                org.mockito.ArgumentMatchers.eq(12))).thenReturn(List.of(SearchHit.of(malformed)));
 
         RetrievalResponse response = retriever.retrieve(request("高风险客户资金来源", Set.of("PUBLIC_LEGAL")));
 
         assertThat(malformed.metadata().securityStatus()).isEqualTo("UNTRUSTED_METADATA");
         assertThat(malformed.metadata().accessScopes()).containsExactly("QUARANTINED");
+        assertThat(response.status()).isEqualTo(RetrievalResponse.Status.NO_RELEVANT_EVIDENCE);
+        assertThat(response.support()).isEqualTo(EvidenceSupport.NO_RELEVANT_EVIDENCE);
+        assertThat(response.hits()).isEmpty();
+    }
+
+    @Test
+    void returnsInsufficientInsteadOfSupportingWeakAbsoluteEvidence() {
+        when(searcher.searchScored(org.mockito.ArgumentMatchers.any(RetrievalRequest.class),
+                org.mockito.ArgumentMatchers.eq(12))).thenReturn(List.of(
+                SearchHit.dense(1, 0.45, doc("LEGAL-1", "客户资料保存的一般说明", Set.of("PUBLIC_LEGAL")))));
+
+        RetrievalResponse response = retriever.retrieve(request("客户资料保存几年", Set.of("PUBLIC_LEGAL")));
+
+        assertThat(response.status()).isEqualTo(RetrievalResponse.Status.INSUFFICIENT_EVIDENCE);
+        assertThat(response.support()).isEqualTo(EvidenceSupport.WEAK_SUPPORT);
+    }
+
+    @Test
+    void appliesRequestMinRelevanceAsAbsoluteFloor() {
+        when(searcher.searchScored(org.mockito.ArgumentMatchers.any(RetrievalRequest.class),
+                org.mockito.ArgumentMatchers.eq(12))).thenReturn(List.of(
+                SearchHit.dense(1, 0.45, doc("LEGAL-1", "客户资料保存的一般说明", Set.of("PUBLIC_LEGAL")))));
+        RetrievalRequest strict = new RetrievalRequest("客户资料保存几年", "保存期限",
+                Instant.parse("2026-08-01T00:00:00Z"), "CN", Set.of("PUBLIC_LEGAL"), 3, 0.6);
+
+        RetrievalResponse response = retriever.retrieve(strict);
+
         assertThat(response.status()).isEqualTo(RetrievalResponse.Status.NO_RELEVANT_EVIDENCE);
         assertThat(response.hits()).isEmpty();
     }

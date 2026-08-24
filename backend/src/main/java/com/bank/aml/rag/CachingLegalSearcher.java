@@ -15,15 +15,17 @@ import java.time.Duration;
 import java.util.List;
 
 /**
- * RAG 检索缓存：装饰混合检索，用 Redis 缓存相同查询的检索结果，
+ * RAG 检索缓存：装饰召回+精排搜索，用 Redis 缓存相同查询的检索结果（含各阶段分数 SearchHit），
  * 避免重复 embedding 与向量检索，降低 LLM 应用的计算与延迟成本。
+ * <p>评测/门禁通过 {@link CacheMode#BYPASS_READ_WRITE} 显式绕过，不读写生产缓存。</p>
  */
 @Component
 @Primary
 public class CachingLegalSearcher implements LegalDocumentSearcher {
 
     private static final Logger log = LoggerFactory.getLogger(CachingLegalSearcher.class);
-    private static final String KEY_PREFIX = "legal:cache:v11:";
+    private static final String KEY_PREFIX = "legal:cache:v13:";
+    private static final String SCORED_MARKER = "scored:";
 
     private final ReRankingLegalSearcher delegate;
     private final StringRedisTemplate redisTemplate;
@@ -66,60 +68,119 @@ public class CachingLegalSearcher implements LegalDocumentSearcher {
 
     @Override
     public List<LegalDoc> search(String query, int topK) {
-        return cached(query, topK, "public", () -> delegate.search(query, topK));
+        return cached(query, topK, "public", CacheMode.NORMAL, indexVersions.activeVersion(),
+                () -> delegate.search(query, topK));
+    }
+
+    @Override
+    public List<SearchHit> searchScored(RetrievalRequest request, int topK) {
+        String contract = request.jurisdiction() + "|" + request.accessScopes().stream().sorted().toList()
+                + "|" + request.asOfTime().atZone(java.time.ZoneOffset.UTC).toLocalDate();
+        String version = indexVersions.versionFor(request);
+        return cachedScored(request.query(), topK, contract, request.cacheMode(), version,
+                () -> delegate.searchScored(request, topK));
     }
 
     @Override
     public List<LegalDoc> search(RetrievalRequest request, int topK) {
-        String contract = request.jurisdiction() + "|" + request.accessScopes().stream().sorted().toList()
-                + "|" + request.asOfTime().atZone(java.time.ZoneOffset.UTC).toLocalDate();
-        return cached(request.query(), topK, contract, () -> delegate.search(request, topK));
+        return searchScored(request, topK).stream().map(SearchHit::document).toList();
     }
 
-    private List<LegalDoc> cached(String query, int topK, String contract,
+    private List<LegalDoc> cached(String query, int topK, String contract, CacheMode mode, String version,
                                   java.util.function.Supplier<List<LegalDoc>> loader) {
-        String key = cacheKey(query + "|" + contract, topK);
-        String cached = null;
-        try {
-            cached = redisTemplate.opsForValue().get(key);
-        } catch (Exception e) {
-            log.warn("RAG 缓存读取失败，降级为直接检索：{}", e.getMessage());
+        // 评测/门禁显式绕过缓存：不读不写，避免评测流量污染或命中生产缓存。
+        if (mode == CacheMode.BYPASS_READ_WRITE) {
+            List<LegalDoc> result = loader.get();
+            metrics.ragCacheMiss();
+            return result;
         }
+        String key = cacheKey(query + "|" + contract, topK, version);
+        String cached = read(key);
         if (cached != null) {
             try {
-                metrics.ragCacheHit();
-                return deserialize(cached);
+                return deserialize(cached, new TypeReference<List<LegalDoc>>() {});
             } catch (Exception e) {
-                // 坏缓存：删除坏 Key 后重检，避免后续请求反复命中损坏数据
-                log.warn("RAG 缓存反序列化失败，删除坏 Key 并降级重检：{}", e.getMessage());
-                try {
-                    redisTemplate.delete(key);
-                } catch (Exception ignored) {
-                    // 删除失败不影响重检
-                }
+                delete(key);
             }
         }
-
         List<LegalDoc> result = loader.get();
         metrics.ragCacheMiss();
+        if (mode == CacheMode.NORMAL) write(key, serialize(result), query + "|" + contract, topK, version);
+        return result;
+    }
+
+    private List<SearchHit> cachedScored(String query, int topK, String contract, CacheMode mode, String version,
+                                         java.util.function.Supplier<List<SearchHit>> loader) {
+        if (mode == CacheMode.BYPASS_READ_WRITE) {
+            List<SearchHit> result = loader.get();
+            metrics.ragCacheMiss();
+            return result;
+        }
+        String key = cacheKeyScored(query + "|" + contract, topK, version);
+        String body = read(key);
+        if (body != null) {
+            try {
+                metrics.ragCacheHit();
+                return deserialize(body, new TypeReference<List<SearchHit>>() {});
+            } catch (Exception e) {
+                log.warn("RAG SearchHit 缓存反序列化失败，删除坏 Key：{}", e.getMessage());
+                delete(key);
+            }
+        }
+        List<SearchHit> result = loader.get();
+        metrics.ragCacheMiss();
+        if (mode == CacheMode.NORMAL) {
+            try {
+                String identityAfterLoad = cacheKeyScored(query + "|" + contract, topK, version);
+                if (key.equals(identityAfterLoad)) {
+                    redisTemplate.opsForValue().set(key, serialize(result), Duration.ofMinutes(ttlMinutes));
+                }
+            } catch (Exception e) {
+                log.warn("RAG SearchHit 缓存写入失败，忽略：{}", e.getMessage());
+            }
+        }
+        return result;
+    }
+
+    private String read(String key) {
         try {
-            String identityAfterLoad = cacheKey(query + "|" + contract, topK);
+            return redisTemplate.opsForValue().get(key);
+        } catch (Exception e) {
+            log.warn("RAG 缓存读取失败，降级为直接检索：{}", e.getMessage());
+            return null;
+        }
+    }
+
+    private void delete(String key) {
+        try {
+            redisTemplate.delete(key);
+        } catch (Exception ignored) {
+            // 删除失败不影响重检
+        }
+    }
+
+    private void write(String key, String json, String query, int topK, String version) {
+        try {
+            String identityAfterLoad = cacheKey(query, topK, version);
             if (key.equals(identityAfterLoad)) {
-                redisTemplate.opsForValue().set(key, serialize(result), Duration.ofMinutes(ttlMinutes));
+                redisTemplate.opsForValue().set(key, json, Duration.ofMinutes(ttlMinutes));
             } else {
                 log.warn("RAG 检索期间管线身份发生变化，跳过缓存写入");
             }
         } catch (Exception e) {
             log.warn("RAG 缓存写入失败，忽略：{}", e.getMessage());
         }
-        return result;
     }
 
     // 缓存 key 版本化：语料/embedding/reranker 版本从配置读取，变更时自动失效
-    private String cacheKey(String query, int topK) {
+    private String cacheKey(String query, int topK, String version) {
         String hash = sha256(query);
-        return KEY_PREFIX + indexVersions.activeVersion() + ":" + embeddingModel + ":" + rerankerVersion + ":" + pipelineVersion
+        return KEY_PREFIX + version + ":" + embeddingModel + ":" + rerankerVersion + ":" + pipelineVersion
                 + ":" + delegate.pipelineIdentity() + ":" + hash + ":" + topK;
+    }
+
+    private String cacheKeyScored(String query, int topK, String version) {
+        return cacheKey(query, topK, version) + ":" + SCORED_MARKER;
     }
 
     private String sha256(String value) {
@@ -131,18 +192,17 @@ public class CachingLegalSearcher implements LegalDocumentSearcher {
         }
     }
 
-    private String serialize(List<LegalDoc> docs) {
+    private String serialize(Object payload) {
         try {
-            return objectMapper.writeValueAsString(docs);
+            return objectMapper.writeValueAsString(payload);
         } catch (Exception e) {
             throw new RuntimeException("法规缓存序列化失败", e);
         }
     }
 
-    private List<LegalDoc> deserialize(String json) {
+    private <T> T deserialize(String json, TypeReference<T> type) {
         try {
-            return objectMapper.readValue(json, new TypeReference<List<LegalDoc>>() {
-            });
+            return objectMapper.readValue(json, type);
         } catch (Exception e) {
             throw new RuntimeException("法规缓存反序列化失败", e);
         }

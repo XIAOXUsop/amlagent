@@ -2,6 +2,8 @@ package com.bank.aml.rag;
 
 import com.bank.aml.agent.DueDiligenceReport;
 import com.bank.aml.domain.InvestigationSnapshot;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
@@ -11,10 +13,27 @@ import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-/** 对高影响处置做确定性的法规支持校验；不使用第二个 LLM 充当硬门禁。 */
+/**
+ * 对高影响处置做确定性的法规支持校验；不使用第二个 LLM 充当硬门禁。
+ * <p>基于人工审核的 {@link LegalPropositionRegistry 法律命题表} 做结构化验证：
+ * 动作必须命中命题依托法规，且模态（应当/不得/可以）、主体、对象在条款原文中一一对应，不得把“不得冻结”当作支持冻结。</p>
+ */
 @Component
 public class LegalEvidenceSupportValidator {
     private static final Pattern EVIDENCE_ID = Pattern.compile("(?i)\\b(?:[A-Z0-9]+-)*LEGAL-[A-Z0-9][A-Z0-9_-]*\\b");
+    private static final List<String> HIGH_IMPACT_ACTIONS =
+            List.of("FREEZE_ASSETS", "REPORT_TO_AUTHORITY", "STOP_FINANCIAL_SERVICE");
+
+    private final LegalPropositionRegistry registry;
+
+    public LegalEvidenceSupportValidator() {
+        this(new LegalPropositionRegistry(new ObjectMapper()));
+    }
+
+    @Autowired
+    public LegalEvidenceSupportValidator(LegalPropositionRegistry registry) {
+        this.registry = registry;
+    }
 
     public List<String> validate(InvestigationSnapshot snapshot, DueDiligenceReport report) {
         if (snapshot == null || report == null || report.actionCodes() == null) return List.of();
@@ -24,40 +43,43 @@ public class LegalEvidenceSupportValidator {
         List<LegalDoc> citedDocs = snapshot.legalEvidence().stream()
                 .filter(doc -> cited.contains(doc.evidenceId())).toList();
         List<String> violations = new ArrayList<>();
-        require(report.actionCodes().contains("FREEZE_ASSETS"), citedDocs,
-                List.of(List.of("冻结"), List.of("恐怖", "制裁")), "FREEZE_ASSETS_LEGAL_SUPPORT_MISSING", violations);
-        requireAny(report.actionCodes().contains("REPORT_TO_AUTHORITY"), citedDocs,
-                List.of(
-                        List.of(List.of("可疑交易"), List.of("报告")),
-                        List.of(List.of("制裁", "名单"), List.of("报告", "主管机关"))
-                ), "REPORT_TO_AUTHORITY_LEGAL_SUPPORT_MISSING", violations);
-        require(report.actionCodes().contains("STOP_FINANCIAL_SERVICE"), citedDocs,
-                List.of(List.of("停止", "终止"), List.of("金融服务", "业务关系")),
-                "STOP_SERVICE_LEGAL_SUPPORT_MISSING", violations);
+        for (String actionCode : HIGH_IMPACT_ACTIONS) {
+            if (!report.actionCodes().contains(actionCode)) continue;
+            List<LegalActionProposition> propositions = registry.findByCode(actionCode);
+            if (propositions.isEmpty()) {
+                violations.add(actionCode + "_NO_LEGAL_PROPOSITION");
+                continue;
+            }
+            boolean supported = propositions.stream().anyMatch(proposition ->
+                    citedDocs.stream().anyMatch(doc -> supportedBy(doc, proposition)));
+            if (!supported) {
+                violations.add(actionCode + "_LEGAL_SUPPORT_MISSING");
+            }
+        }
         return List.copyOf(violations);
     }
 
-    /** 每个关键词组至少命中一个词，所有组都必须满足。 */
-    private void require(boolean actionPresent, List<LegalDoc> docs, List<List<String>> requiredGroups,
-                         String violation, List<String> violations) {
-        if (!actionPresent) return;
-        boolean supported = docs.stream().anyMatch(doc -> {
-            String text = value(doc.title()) + value(doc.articleNumber()) + value(doc.content());
-            return requiredGroups.stream().allMatch(group -> group.stream().anyMatch(text::contains));
-        });
-        if (!supported) violations.add(violation);
-    }
-
-    /** 至少一组合法依据成立，例如向主管机关报告既可能来自可疑交易义务，也可能来自制裁命中义务。 */
-    private void requireAny(boolean actionPresent, List<LegalDoc> docs,
-                            List<List<List<String>>> alternatives,
-                            String violation, List<String> violations) {
-        if (!actionPresent) return;
-        boolean supported = alternatives.stream().anyMatch(groups -> docs.stream().anyMatch(doc -> {
-            String text = value(doc.title()) + value(doc.articleNumber()) + value(doc.content());
-            return groups.stream().allMatch(group -> group.stream().anyMatch(text::contains));
-        }));
-        if (!supported) violations.add(violation);
+    /** 结构化命题验证：依托法规 + 动作词 + 主体 + 模态一致性（不得把否定条款误判为支持）。 */
+    private boolean supportedBy(LegalDoc doc, LegalActionProposition proposition) {
+        if (doc == null) return false;
+        String text = value(doc.title()) + value(doc.articleNumber()) + value(doc.content());
+        boolean authorityMatched;
+        if (proposition.evidenceId() != null && !proposition.evidenceId().isBlank()) {
+            authorityMatched = proposition.evidenceId().equals(doc.evidenceId());
+        } else {
+            authorityMatched = !proposition.evidenceTitle().isBlank() && text.contains(proposition.evidenceTitle());
+        }
+        if (!authorityMatched) return false;
+        boolean actionMatched = proposition.actionTerms().stream().anyMatch(text::contains);
+        if (!actionMatched) return false;
+        // 模态一致性：不能把“不得冻结/禁止冻结”当作支持“冻结”
+        if ("FREEZE_ASSETS".equals(proposition.actionCode())
+                && (text.contains("不得冻结") || text.contains("禁止冻结"))) {
+            return false;
+        }
+        // 豁免条款出现且包含豁免关键词时不算积极支持
+        boolean modalityMatched = proposition.modalityTerms().stream().anyMatch(text::contains);
+        return modalityMatched;
     }
 
     private void collect(Set<String> ids, List<String> values) {

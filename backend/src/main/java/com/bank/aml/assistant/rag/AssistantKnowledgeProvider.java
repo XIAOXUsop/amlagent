@@ -3,6 +3,8 @@ package com.bank.aml.assistant.rag;
 import com.bank.aml.assistant.domain.AssistantEvidence;
 import com.bank.aml.assistant.guard.AssistantIntent;
 import com.bank.aml.rag.EnterpriseLegalRetriever;
+import com.bank.aml.rag.EvidenceSupport;
+import com.bank.aml.rag.LegalDoc;
 import com.bank.aml.rag.RetrievalRequest;
 import com.bank.aml.rag.RetrievalResponse;
 import org.slf4j.Logger;
@@ -14,8 +16,9 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Set;
+import java.util.UUID;
 
-/** 两级知识召回：受控公开基线 + 企业法规索引；结果在模型调用前冻结进 run 快照。 */
+/** 两级知识召回：受控公开基线 + 企业法规索引；结果在模型调用前冻结进 run 快照，并携带检索元数据。 */
 @Component
 public class AssistantKnowledgeProvider {
     private static final Logger log = LoggerFactory.getLogger(AssistantKnowledgeProvider.class);
@@ -34,6 +37,9 @@ public class AssistantKnowledgeProvider {
 
         String indexVersion = "unavailable";
         RetrievalResponse.Status status = RetrievalResponse.Status.INDEX_UNAVAILABLE;
+        String traceId = "rag-" + UUID.randomUUID().toString().replace("-", "").substring(0, 16);
+        Double topSupportProbability = null;
+        List<String> rejectedReasons = new ArrayList<>();
         try {
             RetrievalResponse response = legalRetriever.retrieve(new RetrievalRequest(
                     query, topic(intent), asOfTime, "CN", Set.of("PUBLIC_LEGAL"), 4, 0.08));
@@ -48,12 +54,30 @@ public class AssistantKnowledgeProvider {
                         compact(document.title(), 160), summary,
                         compact(document.documentNumber(), 160) + " | enterprise-index:" + indexVersion));
             }
+            if (response.traces() != null && !response.traces().isEmpty()
+                    && response.traces().getFirst().supportProbability() != null) {
+                topSupportProbability = response.traces().getFirst().supportProbability();
+            }
+            rejectedReasons.addAll(rejectedReasons(response));
         } catch (RuntimeException exception) {
             // 动态索引不可用时降级到经过审核的公开基线；不把内部异常或查询内容写入日志。
             log.warn("AI 小助企业法规索引降级 type={}", exception.getClass().getSimpleName());
+            rejectedReasons.add("法规索引暂不可用");
         }
         return new KnowledgeBundle(catalog.version() + "+" + safe(indexVersion), status,
-                new ArrayList<>(evidence.values()));
+                new ArrayList<>(evidence.values()), topSupportProbability, rejectedReasons, traceId);
+    }
+
+    private List<String> rejectedReasons(RetrievalResponse response) {
+        EvidenceSupport support = response.support();
+        if (support == null) return List.of();
+        return switch (support) {
+            case SUPPORTED, WEAK_SUPPORT -> List.of();
+            case NO_RELEVANT_EVIDENCE -> List.of("无足够相关法规证据");
+            case EVIDENCE_EXPIRED -> List.of("命中法规已失效");
+            case EVIDENCE_ACCESS_DENIED -> List.of("命中法规超出当前访问范围");
+            case EVIDENCE_CONFLICT -> List.of("命中条款存在规范冲突");
+        };
     }
 
     private String topic(AssistantIntent intent) {
@@ -72,7 +96,12 @@ public class AssistantKnowledgeProvider {
     private static String safe(String value) { return value == null || value.isBlank() ? "unavailable" : value; }
 
     public record KnowledgeBundle(String version, RetrievalResponse.Status retrievalStatus,
-                                  List<AssistantEvidence> evidence) {
-        public KnowledgeBundle { evidence = evidence == null ? List.of() : List.copyOf(evidence); }
+                                  List<AssistantEvidence> evidence, Double topSupportProbability,
+                                  List<String> rejectedReasons, String traceId) {
+        public KnowledgeBundle {
+            evidence = evidence == null ? List.of() : List.copyOf(evidence);
+            rejectedReasons = rejectedReasons == null ? List.of() : List.copyOf(rejectedReasons);
+            traceId = traceId == null ? "" : traceId;
+        }
     }
 }

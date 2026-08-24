@@ -23,4 +23,12 @@ public class LegalCandidateIndexStore {
         if (version == null || !version.matches("[0-9a-f]{64}")) throw new IllegalArgumentException("非法候选索引版本");
         return jdbc.update("DELETE FROM " + table + " WHERE metadata::jsonb ->> 'corpusVersion' = ?", version);
     }
+
+    /** 候选索引落库条数，用于发布门禁的「索引完整性」校验。 */
+    public int candidateCount(String version) {
+        if (version == null || !version.matches("[0-9a-f]{64}")) throw new IllegalArgumentException("非法候选索引版本");
+        Integer count = jdbc.queryForObject(
+                "SELECT COUNT(*) FROM " + table + " WHERE metadata::jsonb ->> 'corpusVersion' = ?", Integer.class, version);
+        return count == null ? 0 : count;
+    }
 }

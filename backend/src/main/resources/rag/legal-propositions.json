@@ -1,0 +1,56 @@
+{
+  "propositions": [
+    {
+      "actionCode": "FREEZE_ASSETS",
+      "modality": "MUST",
+      "subject": "FINANCIAL_INSTITUTION",
+      "object": "LISTED_PERSON_ASSETS",
+      "conditions": ["TERRORIST_LIST_MATCH", "SANCTION_LIST_MATCH"],
+      "exceptions": ["AFTER_COMPETENT_AUTHORITY_ORDER"],
+      "evidenceTitle": "涉及恐怖活动资产冻结管理办法",
+      "evidenceId": "",
+      "effectiveFrom": "2014-05-01",
+      "actionTerms": ["冻结"],
+      "modalityTerms": ["应当", "必须", "立即"]
+    },
+    {
+      "actionCode": "REPORT_TO_AUTHORITY",
+      "modality": "MUST",
+      "subject": "FINANCIAL_INSTITUTION",
+      "object": "SUSPICIOUS_OR_UNUSUAL_TRANSACTION",
+      "conditions": ["SUSPICIOUS_TRANSACTION", "LARGE_TRANSACTION"],
+      "exceptions": [],
+      "evidenceTitle": "金融机构大额交易和可疑交易报告管理办法",
+      "evidenceId": "",
+      "effectiveFrom": "2017-07-01",
+      "actionTerms": ["报告"],
+      "modalityTerms": ["应当", "应当报告", "应当提交", "应当向"]
+    },
+    {
+      "actionCode": "REPORT_TO_AUTHORITY",
+      "modality": "MUST",
+      "subject": "FINANCIAL_INSTITUTION",
+      "object": "FREEZED_OR_SANCTIONED_PARTY",
+      "conditions": ["TERRORIST_LIST_MATCH", "SANCTION_LIST_MATCH", "FREEZE_APPLIED"],
+      "exceptions": [],
+      "evidenceTitle": "涉及恐怖活动资产冻结管理办法",
+      "evidenceId": "",
+      "effectiveFrom": "2014-05-01",
+      "actionTerms": ["报告", "报送"],
+      "modalityTerms": ["应当", "立即", "应当立即"]
+    },
+    {
+      "actionCode": "STOP_FINANCIAL_SERVICE",
+      "modality": "MUST",
+      "subject": "FINANCIAL_INSTITUTION",
+      "object": "FREEZED_ENTITY_SERVICE",
+      "conditions": ["FREEZE_APPLIED", "TERRORIST_LIST_MATCH"],
+      "exceptions": ["STATUTORY_EXEMPTION"],
+      "evidenceTitle": "涉及恐怖活动资产冻结管理办法",
+      "evidenceId": "",
+      "effectiveFrom": "2014-05-01",
+      "actionTerms": ["停止", "终止"],
+      "modalityTerms": ["应当", "立即", "不得"]
+    }
+  ]
+}

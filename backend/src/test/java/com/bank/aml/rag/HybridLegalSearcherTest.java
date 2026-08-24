@@ -5,6 +5,8 @@ import org.junit.jupiter.api.Test;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -27,8 +29,10 @@ class HybridLegalSearcherTest {
     void rerfFusionBoostsDocHitInBothRanks() {
         LegalDoc a = doc("A");
         LegalDoc b = doc("B"); // 仅在向量路命中
-        when(vector.search("q", 15)).thenReturn(List.of(a, b));
-        when(keyword.search("q", 15)).thenReturn(List.of(a));
+        when(vector.searchScored(any(RetrievalRequest.class), eq(15))).thenReturn(List.of(
+                SearchHit.dense(1, 0.9, a), SearchHit.dense(2, 0.8, b)));
+        when(keyword.searchScored(any(RetrievalRequest.class), eq(15)))
+                .thenReturn(List.of(SearchHit.lexical(3, 1.2, a, List.of("命中条号"))));
 
         List<LegalDoc> result = hybrid.search("q", 5);
 
@@ -41,11 +45,44 @@ class HybridLegalSearcherTest {
                 .contains("B");
     }
 
+    @Test
+    void preservesDenseAndLexicalScoresWhenSameEvidenceHitsBothChannels() {
+        LegalDoc a = doc("A");
+        when(vector.searchScored(any(RetrievalRequest.class), eq(15)))
+                .thenReturn(List.of(SearchHit.dense(1, 0.91, a)));
+        when(keyword.searchScored(any(RetrievalRequest.class), eq(15)))
+                .thenReturn(List.of(SearchHit.lexical(2, 4.5, a, List.of("命中标题"))));
+
+        SearchHit hit = hybrid.searchScored(new RetrievalRequest("q", "q", java.time.Instant.now(),
+                "CN", java.util.Set.of("PUBLIC_LEGAL"), 5, 0), 5).getFirst();
+
+        assertThat(hit.denseRank()).isEqualTo(1);
+        assertThat(hit.denseScore()).isEqualTo(0.91);
+        assertThat(hit.lexicalRank()).isEqualTo(2);
+        assertThat(hit.lexicalScore()).isEqualTo(4.5);
+        assertThat(hit.channels()).contains(RetrievalChannel.DENSE, RetrievalChannel.LEXICAL, RetrievalChannel.FUSION);
+        assertThat(hit.matchReasons()).contains("命中标题");
+    }
+
+    @Test
+    void strongFieldedLexicalMatchCanBeatDenseOnlyNoise() {
+        LegalDoc denseNoise = doc("DENSE-NOISE");
+        LegalDoc exact = doc("EXACT");
+        when(vector.searchScored(any(RetrievalRequest.class), eq(15))).thenReturn(List.of(
+                SearchHit.dense(1, 0.90, denseNoise), SearchHit.dense(8, 0.70, exact)));
+        when(keyword.searchScored(any(RetrievalRequest.class), eq(15))).thenReturn(List.of(
+                SearchHit.lexical(1, 12.0, exact, List.of("命中文号", "命中条号"))));
+
+        assertThat(hybrid.search("q", 5).getFirst().evidenceId()).isEqualTo("EXACT");
+    }
+
     /** 结果按 RRF 分数降序：向量路 rank 较高的排在 rank 较低之前 */
     @Test
     void resultsOrderedByDescendingRrfScore() {
-        when(vector.search("q", 15)).thenReturn(List.of(doc("A"), doc("B"), doc("C")));
-        when(keyword.search("q", 15)).thenReturn(List.of());
+        when(vector.searchScored(any(RetrievalRequest.class), eq(15))).thenReturn(List.of(
+                SearchHit.dense(1, 0.9, doc("A")), SearchHit.dense(2, 0.8, doc("B")),
+                SearchHit.dense(3, 0.7, doc("C"))));
+        when(keyword.searchScored(any(RetrievalRequest.class), eq(15))).thenReturn(List.of());
         List<LegalDoc> result = hybrid.search("q", 5);
         assertThat(result)
                 .extracting(LegalDoc::evidenceId)
@@ -55,8 +92,11 @@ class HybridLegalSearcherTest {
     /** topK 截断：只返回前 K 条 */
     @Test
     void returnsOnlyTopK() {
-        when(vector.search("q", 10)).thenReturn(List.of(doc("A"), doc("B"), doc("C"), doc("D"), doc("E")));
-        when(keyword.search("q", 10)).thenReturn(List.of());
+        when(vector.searchScored(any(RetrievalRequest.class), eq(10))).thenReturn(List.of(
+                SearchHit.dense(1, 0.9, doc("A")), SearchHit.dense(2, 0.8, doc("B")),
+                SearchHit.dense(3, 0.7, doc("C")), SearchHit.dense(4, 0.6, doc("D")),
+                SearchHit.dense(5, 0.5, doc("E"))));
+        when(keyword.searchScored(any(RetrievalRequest.class), eq(10))).thenReturn(List.of());
         List<LegalDoc> result = hybrid.search("q", 2);
         assertThat(result).hasSize(2);
     }
@@ -64,8 +104,10 @@ class HybridLegalSearcherTest {
     /** 无 evidenceId 的条目被跳过（不能作为可追溯证据） */
     @Test
     void skipsDocsWithoutEvidenceId() {
-        when(vector.search("q", 15)).thenReturn(List.of(doc("X"), new LegalDoc("", "无ID标题", null, null, "正文")));
-        when(keyword.search("q", 15)).thenReturn(List.of());
+        when(vector.searchScored(any(RetrievalRequest.class), eq(15))).thenReturn(List.of(
+                SearchHit.dense(1, 0.9, doc("X")),
+                SearchHit.dense(2, 0.8, new LegalDoc("", "无ID标题", null, null, "正文"))));
+        when(keyword.searchScored(any(RetrievalRequest.class), eq(15))).thenReturn(List.of());
         List<LegalDoc> result = hybrid.search("q", 5);
         assertThat(result).extracting(LegalDoc::evidenceId).containsExactly("X");
     }
@@ -73,8 +115,8 @@ class HybridLegalSearcherTest {
     /** 两路均无结果返回空列表 */
     @Test
     void noHitsReturnsEmpty() {
-        when(vector.search("q", 10)).thenReturn(List.of());
-        when(keyword.search("q", 10)).thenReturn(List.of());
+        when(vector.searchScored(any(RetrievalRequest.class), eq(10))).thenReturn(List.of());
+        when(keyword.searchScored(any(RetrievalRequest.class), eq(10))).thenReturn(List.of());
         assertThat(hybrid.search("q", 2)).isEmpty();
     }
 }

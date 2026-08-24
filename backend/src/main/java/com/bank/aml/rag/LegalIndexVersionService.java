@@ -2,6 +2,7 @@ package com.bank.aml.rag;
 
 import com.bank.aml.datasource.repository.LegalIndexStateRepository;
 import com.bank.aml.datasource.repository.RagIndexManifestRepository;
+import com.bank.aml.datasource.entity.LegalIndexStateEntity;
 import com.bank.aml.datasource.entity.RagIndexManifestEntity;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -24,6 +25,20 @@ public class LegalIndexVersionService implements LegalIndexVersionProvider {
     public String activeVersion() {
         return repository.findById("legal").map(s -> s.getActiveVersion() == null ? "" : s.getActiveVersion())
                 .orElse("");
+    }
+
+    /** 候选目标：优先返回正由本实例/本租约构建的版本，其次最近一个候选/评估中版本。 */
+    @Override
+    public String candidateVersion() {
+        return repository.findById("legal")
+                .map(LegalIndexStateEntity::getBuildingVersion)
+                .filter(v -> v != null && !v.isBlank())
+                .orElseGet(() -> {
+                    var evaluating = manifests.findByStatusOrderByUpdatedAtDesc("EVALUATING");
+                    if (!evaluating.isEmpty()) return evaluating.get(0).getIndexVersion();
+                    var candidate = manifests.findByStatusOrderByUpdatedAtDesc("CANDIDATE");
+                    return candidate.isEmpty() ? "" : candidate.get(0).getIndexVersion();
+                });
     }
 
     @Transactional
@@ -50,7 +65,7 @@ public class LegalIndexVersionService implements LegalIndexVersionProvider {
         entity.setEmbeddingModelHash(manifest.embeddingModelHash());
         entity.setEmbeddingDimensions(manifest.embeddingDimensions());
         entity.setDistanceMetric(manifest.distanceMetric());
-        entity.setStatus("CANDIDATE");
+        entity.setStatus("BUILDING");
         entity.setSegmentCount(0);
         entity.setCreatedAt(now);
         entity.setUpdatedAt(now);
@@ -63,7 +78,7 @@ public class LegalIndexVersionService implements LegalIndexVersionProvider {
     }
 
     @Transactional
-    public boolean activate(String version, String owner, int segmentCount) {
+    public boolean activate(String version, String owner, int segmentCount, String qualityReportJson) {
         LocalDateTime now = LocalDateTime.now();
         String oldActive = activeVersion();
         if (repository.activate(version, owner, segmentCount, now) != 1) return false;
@@ -79,13 +94,36 @@ public class LegalIndexVersionService implements LegalIndexVersionProvider {
                 .orElseThrow(() -> new IllegalStateException("索引 Manifest 不存在: " + version));
         active.setStatus("ACTIVE");
         active.setSegmentCount(segmentCount);
-        active.setQualityReportJson("{\"smokeSearch\":true,\"segmentCount\":" + segmentCount + "}");
+        active.setQualityReportJson(qualityReportJson == null ? "{}" : qualityReportJson);
         active.setActivatedAt(now);
         active.setRetiredAt(null);
         active.setFailureCode(null);
         active.setUpdatedAt(now);
         manifests.save(active);
         return true;
+    }
+
+    /**
+     * 推进候选索引发布状态机（BUILDING→SCANNING→EVALUATING→CANDIDATE）。仅当版本仍归构建租约
+     * 所有者时允许写入，防止旁路篡改；REJECTED 也通过本方法带失败说明写入。
+     */
+    @Transactional
+    public boolean markStatus(String version, String owner, String status, String qualityReportJson) {
+        return repository.findById("legal")
+                .filter(s -> version.equals(s.getBuildingVersion()) && owner.equals(s.getBuildOwner()))
+                .map(s -> manifests.findById(version).map(manifest -> {
+                    manifest.setStatus(status);
+                    if (qualityReportJson != null) manifest.setQualityReportJson(qualityReportJson);
+                    if ("REJECTED".equals(status)) {
+                        manifest.setFailureCode("PUBLICATION_GATE_REJECTED");
+                    } else {
+                        manifest.setFailureCode(null);
+                    }
+                    manifest.setUpdatedAt(LocalDateTime.now());
+                    manifests.save(manifest);
+                    return true;
+                }).orElse(false))
+                .orElse(false);
     }
 
     @Transactional
@@ -99,6 +137,15 @@ public class LegalIndexVersionService implements LegalIndexVersionProvider {
                 manifests.save(candidate);
             });
         }
+    }
+
+    /**
+     * 仅释放构建租约，不改写候选版本的终态。
+     * 用于发布门禁已经明确写入 REJECTED 的路径，避免通用失败清理把拒绝原因覆盖为 FAILED。
+     */
+    @Transactional
+    public boolean releaseLease(String version, String owner) {
+        return repository.releaseBuild(version, owner, LocalDateTime.now()) == 1;
     }
 
     /** 仅允许回滚到已成功发布过的 ACTIVE/RETIRED 版本。 */

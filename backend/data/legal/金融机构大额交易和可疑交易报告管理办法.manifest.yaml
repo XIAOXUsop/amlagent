@@ -1,0 +1,20 @@
+# 法律文档可信元数据（强制）。缺失或非法时该文档不进入候选索引。
+documentId: AML-REG-LARGE-2020
+title: 金融机构大额交易和可疑交易报告管理办法
+documentNumber: 中国人民银行令〔2016〕第3号（经中国人民银行令〔2025〕第10号修改）
+issuingAuthority: 中国人民银行
+jurisdiction: CN
+promulgatedAt: 2016-12-28
+effectiveFrom: 2017-07-01
+effectiveTo: null
+sourceUrl: https://www.pbc.gov.cn/tiaofasi/144941/144957/5863650/index.html
+sourceType: CURATED_SUMMARY
+accessScopes:
+  - PUBLIC_LEGAL
+reviewStatus: APPROVED
+reviewedBy: legal-domain-reviewer
+reviewedAt: 2026-08-01
+sourceSha256: bdc3c9216bf45d4588f384766534b19aaa03027aa6016ccbc142e74eead23f51
+supersedes: null
+parserVersion: legal-article-v3
+securityStatus: TRUSTED

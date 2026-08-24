@@ -172,9 +172,23 @@ aml:
     fusion:
       rrf-k: 60
       vector-weight: 1.0
+      lexical-score-bonus: ${AML_RAG_LEXICAL_SCORE_BONUS:0.08}
       keyword-weight: 1.2
-    chunker-version: legal-article-v2
-    metadata-schema-version: legal-metadata-v2
+    chunker-version: legal-article-v3
+    metadata-schema-version: legal-metadata-v3
+    publication-gate:
+      min-recall-at5: 90.0          # 候选 Recall@5 最低要求
+      min-ndcg-at5: 80.0            # 候选 nDCG@5 最低要求
+      max-recall-drop-vs-active-pp: 2.0   # 相对 active 的 Recall 回退上限（百分点）
+      min-abstention-accuracy: 95.0
+      min-no-answer-refusal-rate: 95.0
+      max-cold-p95-ms: 750.0        # 冷启动 P95 延迟上限（毫秒）
+    support:
+      calibration-method: ${AML_RAG_SUPPORT_CALIBRATION:platt}   # platt | isotonic
+      thresholds:
+        regulation-fact: 0.70       # DEV 校准边界；高风险处置仍使用更严格阈值
+        high-risk-disposal: 0.85    # 高风险处置依据阈值
+        general-knowledge: 0.65     # 一般金融知识阈值
     embedding:
       provider: langchain4j-onnx
       model: all-MiniLM-L6-v2
@@ -187,6 +201,15 @@ aml:
       enabled: true         # 召回后精排（bge-reranker 本地 cross-encoder）
       recall-size: 20       # 召回候选数
       model-dir: ${user.home}/.cache/aml-reranker/bge-reranker-base
+      download-enabled: ${AML_RAG_RERANK_DOWNLOAD:false}  # 生产用固定制品仓库，禁止运行时下载
+      max-concurrency: 2    # 推理并发信号量上限
+      queue-capacity: 8     # 推理队列容量
+      inference-timeout-ms: 10000
+      quota-timeout-ms: 2000
+      cooldown-ms: 60000    # 熔断冷却时间
+      failure-threshold: 10 # 连续失败熔断阈值
+      model-sha256: ""      # 制品发布后固定 model.onnx SHA-256
+      tokenizer-sha256: ""
     pg:
       url: jdbc:postgresql://localhost:5433/aml_rag
       username: ${PG_USER:aml}

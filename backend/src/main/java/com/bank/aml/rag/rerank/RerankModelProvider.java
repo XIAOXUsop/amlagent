@@ -21,9 +21,10 @@ import java.time.Duration;
 import java.util.HexFormat;
 
 /**
- * rerank 模型定位与下载：优先本地缓存，缺失时从国内镜像（hf-mirror）下载 bge-reranker-base。
+ * rerank 模型定位与校验：优先本地缓存（校验 SHA-256），缺失时仅在 {@code download-enabled=true} 时从
+ * 固定制品源下载。生产环境应把模型发布到制品仓库并关闭运行时下载。
  * <p>下载安全：写入 {@code .part} 临时文件，校验 HTTP 200 与（可选）SHA-256 后原子 move 到正式路径，
- * 避免残缺/损坏文件被误判为可用模型。下载失败返回 null，上层优雅降级为无 rerank。
+ * 避免残缺/损坏文件被误判为可用模型。下载失败返回 null，上层优雅降级为无 rerank。</p>
  */
 @Component
 public class RerankModelProvider {
@@ -34,14 +35,17 @@ public class RerankModelProvider {
     private final Path modelDir;
     private final String modelSha256;
     private final String tokenizerSha256;
+    private final boolean downloadEnabled;
 
     public RerankModelProvider(
             @Value("${aml.rag.rerank.model-dir:${user.home}/.cache/aml-reranker/bge-reranker-base}") String modelDir,
             @Value("${aml.rag.rerank.model-sha256:}") String modelSha256,
-            @Value("${aml.rag.rerank.tokenizer-sha256:}") String tokenizerSha256) {
+            @Value("${aml.rag.rerank.tokenizer-sha256:}") String tokenizerSha256,
+            @Value("${aml.rag.rerank.download-enabled:false}") boolean downloadEnabled) {
         this.modelDir = Path.of(modelDir);
         this.modelSha256 = modelSha256;
         this.tokenizerSha256 = tokenizerSha256;
+        this.downloadEnabled = downloadEnabled;
     }
 
     /** 返回包含 model.onnx 与 tokenizer.json 的目录；不可用或文件损坏时返回 null */
@@ -50,6 +54,10 @@ public class RerankModelProvider {
         Path tokenizer = modelDir.resolve("tokenizer.json");
         if (isComplete(onnx, modelSha256) && isComplete(tokenizer, tokenizerSha256)) {
             return modelDir;
+        }
+        if (!downloadEnabled) {
+            log.warn("rerank 模型文件缺失且已关闭运行时下载（download-enabled=false），降级为无 rerank");
+            return null;
         }
         try {
             Files.createDirectories(modelDir);

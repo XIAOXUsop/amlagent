@@ -12,6 +12,7 @@ import com.bank.aml.evaluation.EvalReportEntity;
 import com.bank.aml.evaluation.EvalReportRepository;
 import com.bank.aml.evaluation.RagEvaluator;
 import com.bank.aml.evaluation.RuleRegressionEvaluator;
+import com.bank.aml.evaluation.RetrievalPipeline;
 import com.bank.aml.risk.RiskRule;
 import com.bank.aml.risk.RiskRuleRepository;
 import com.fasterxml.jackson.core.JsonProcessingException;
@@ -82,6 +83,23 @@ public class EvaluationController {
     @PostMapping("/rag")
     public RagEvaluator.RagEvalReport rag() {
         return ragEvaluator.evaluate();
+    }
+
+    /** RAG 检索管线 A/B 评测：对比 dense/lexical/hybrid/hybrid+rerank（当前 effective 索引）。 */
+    @PostMapping("/rag/pipeline")
+    public RagEvaluator.RagEvalReport ragPipeline(@RequestParam(defaultValue = "HYBRID_RERANK") String name) {
+        try {
+            return ragEvaluator.evaluatePipeline(RetrievalPipeline.valueOf(name.trim().toUpperCase()));
+        } catch (IllegalArgumentException illegalPipeline) {
+            throw new IllegalArgumentException("未知检索管线：" + name
+                    + "（可选：DENSE/LEXICAL/HYBRID/HYBRID_RERANK）");
+        }
+    }
+
+    /** 对抗性评测集回归（>=150 条、16 类：越权/失效/投毒/伪造来源/敏感泄漏等 OWASP GenAI 风险）。 */
+    @PostMapping("/rag/adversarial")
+    public RagEvaluator.RagEvalReport ragAdversarial() {
+        return ragEvaluator.evaluateAdversarial();
     }
 
     /** 确定性规则回归：不调用 LLM，不代表真实 Agent 效果。 */

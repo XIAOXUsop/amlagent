@@ -59,7 +59,7 @@ class CustomerAssistantSnapshotFactoryTest {
                 "banking-v1+legal-v9", com.bank.aml.rag.RetrievalResponse.Status.SUPPORTED, List.of(
                 new com.bank.aml.assistant.domain.AssistantEvidence("KB-KYC-TEST-001",
                         com.bank.aml.assistant.domain.AssistantEvidence.EvidenceType.AML_LEGAL,
-                        "KYC", "尽职调查", "OFFICIAL"))));
+                        "KYC", "尽职调查", "OFFICIAL")), 0.9, List.of(), "rag-test-tax"));
         var factory = new CustomerAssistantSnapshotFactory(customers, data, riskFacts, index, knowledge);
         var snapshot = factory.create("run-1", conversation, "客户尽调", AssistantIntent.BANKING_KNOWLEDGE);
         transactions.clear();

@@ -5,6 +5,7 @@ import com.bank.aml.assistant.domain.AssistantDigests;
 import com.bank.aml.assistant.domain.AssistantEvidence;
 import com.bank.aml.assistant.domain.CustomerAssistantSnapshot;
 import com.bank.aml.assistant.domain.OwnershipRiskView;
+import com.bank.aml.assistant.domain.RetrievalStatusView;
 import com.bank.aml.assistant.domain.SanctionRiskView;
 import com.bank.aml.assistant.domain.TransactionRiskView;
 import com.bank.aml.assistant.persistence.entity.AssistantConversationEntity;
@@ -77,10 +78,19 @@ public class CustomerAssistantSnapshotFactory {
         evidence = List.copyOf(evidence);
         String digest = digest(customerView, transactionView, ownershipView, sanctionView, evidence);
         String indexVersion = safe(knowledgeBundle.version(), safe(legalIndexVersion.activeVersion(), "unavailable"));
+        RetrievalStatusView retrievalStatus = retrievalView(knowledgeBundle, question);
         return new CustomerAssistantSnapshot("assistant-" + runId, conversation.getId(), runId,
                 dataSource.asOfTime(), customerView, transactionView, ownershipView, sanctionView,
                 evidence, safe(dataSource.sourceSystem(), "UNKNOWN"), safe(dataSource.sourceVersion(), "unknown"),
-                indexVersion, digest);
+                indexVersion, retrievalStatus, digest);
+    }
+
+    private RetrievalStatusView retrievalView(com.bank.aml.assistant.rag.AssistantKnowledgeProvider.KnowledgeBundle bundle,
+                                              String question) {
+        if (bundle.retrievalStatus() == null) return RetrievalStatusView.NONE;
+        return new RetrievalStatusView(bundle.retrievalStatus().name(), bundle.topSupportProbability(),
+                safe(bundle.version(), "unavailable"), AssistantDigests.sha256(question),
+                bundle.rejectedReasons(), bundle.traceId());
     }
 
     private TransactionRiskView transactionView(List<TransactionRecord> transactions,

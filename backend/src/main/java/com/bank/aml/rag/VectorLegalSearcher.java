@@ -9,10 +9,11 @@ import dev.langchain4j.store.embedding.EmbeddingSearchResult;
 import dev.langchain4j.store.embedding.EmbeddingStore;
 import org.springframework.stereotype.Component;
 
+import java.util.ArrayList;
 import java.util.List;
 
 /**
- * 基于 PGVector 的向量法规语义召回。
+ * 基于 PGVector 的向量法规语义召回（DENSE 通道）。
  */
 @Component
 public class VectorLegalSearcher implements LegalDocumentSearcher {
@@ -20,28 +21,47 @@ public class VectorLegalSearcher implements LegalDocumentSearcher {
     private final EmbeddingModel embeddingModel;
     private final EmbeddingStore<TextSegment> embeddingStore;
     private final LegalIndexVersionProvider indexVersions;
+    private final QueryEmbeddingCache embeddingCache;
+    private final com.bank.aml.observability.MetricsRecorder metrics;
 
     public VectorLegalSearcher(EmbeddingModel embeddingModel, EmbeddingStore<TextSegment> embeddingStore,
                                LegalIndexVersionProvider indexVersions) {
+        this(embeddingModel, embeddingStore, indexVersions, null, null);
+    }
+
+    @org.springframework.beans.factory.annotation.Autowired
+    public VectorLegalSearcher(EmbeddingModel embeddingModel, EmbeddingStore<TextSegment> embeddingStore,
+                               LegalIndexVersionProvider indexVersions, QueryEmbeddingCache embeddingCache,
+                               com.bank.aml.observability.MetricsRecorder metrics) {
         this.embeddingModel = embeddingModel;
         this.embeddingStore = embeddingStore;
         this.indexVersions = indexVersions;
+        this.embeddingCache = embeddingCache;
+        this.metrics = metrics;
     }
 
     @Override
     public List<LegalDoc> search(String query, int topK) {
-        return searchInternal(query, topK, null);
+        return searchScoredInternal(query, topK, null).stream().map(SearchHit::document).toList();
     }
 
     @Override
     public List<LegalDoc> search(RetrievalRequest request, int topK) {
-        return searchInternal(request.query(), topK, request);
+        return searchScored(request, topK).stream().map(SearchHit::document).toList();
     }
 
-    private List<LegalDoc> searchInternal(String query, int topK, RetrievalRequest request) {
-        String version = indexVersions.activeVersion();
+    @Override
+    public List<SearchHit> searchScored(RetrievalRequest request, int topK) {
+        return searchScoredInternal(request.query(), topK, request);
+    }
+
+    private List<SearchHit> searchScoredInternal(String query, int topK, RetrievalRequest request) {
+        long started = System.nanoTime();
+        String version = indexVersions.versionFor(request);
         if (version.isBlank()) return List.of();
-        Embedding queryEmbedding = embeddingModel.embed(query).content();
+        Embedding queryEmbedding = embeddingCache == null
+                ? embeddingModel.embed(query).content()
+                : embeddingCache.getOrEmbed(query, version, embeddingModel, metrics);
         dev.langchain4j.store.embedding.filter.Filter filter =
                 dev.langchain4j.store.embedding.filter.MetadataFilterBuilder.metadataKey("corpusVersion").isEqualTo(version);
         if (request != null) {
@@ -61,18 +81,21 @@ public class VectorLegalSearcher implements LegalDocumentSearcher {
                         .maxResults(topK)
                         .filter(filter)
                         .build());
-        return result.matches().stream()
-                .map(m -> {
-                    TextSegment seg = m.embedded();
-                    Metadata md = seg.metadata();
-                    return new LegalDoc(
-                            value(md, "evidenceId"),
-                            value(md, "title"),
-                            value(md, "documentNumber"),
-                            value(md, "articleNumber"),
-                            seg.text(), metadata(md));
-                })
-                .toList();
+        List<SearchHit> docs = new ArrayList<>();
+        int rank = 1;
+        for (var match : result.matches()) {
+            TextSegment seg = match.embedded();
+            Metadata md = seg.metadata();
+            LegalDoc doc = new LegalDoc(
+                    value(md, "evidenceId"),
+                    value(md, "title"),
+                    value(md, "documentNumber"),
+                    value(md, "articleNumber"),
+                    seg.text(), metadata(md));
+            docs.add(SearchHit.dense(rank++, match.score(), doc));
+        }
+        RetrievalTimings.add("dense", elapsedMs(started));
+        return docs;
     }
 
     private LegalEvidenceMetadata metadata(Metadata md) {
@@ -107,5 +130,9 @@ public class VectorLegalSearcher implements LegalDocumentSearcher {
         if (value == null || value.isBlank()) return java.util.Set.of("QUARANTINED");
         return java.util.Arrays.stream(value.split(",")).map(String::trim).filter(v -> !v.isBlank())
                 .collect(java.util.stream.Collectors.toUnmodifiableSet());
+    }
+
+    private long elapsedMs(long started) {
+        return Math.max(0, (System.nanoTime() - started) / 1_000_000);
     }
 }

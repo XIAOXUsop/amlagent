@@ -15,10 +15,15 @@ import java.util.Set;
 public class RagEvalDatasetLoader {
 
     private static final String RESOURCE = "evaluation/rag-cases-v2.json";
+    private static final String ADVERSARIAL_RESOURCE = "evaluation/rag-cases-adversarial-v3.json";
+    private final ObjectMapper objectMapper;
     private final RagEvalDataset dataset;
     private final String datasetHash;
+    private volatile RagEvalDataset adversarialDataset;
+    private volatile String adversarialHash;
 
     public RagEvalDatasetLoader(ObjectMapper objectMapper) {
+        this.objectMapper = objectMapper;
         try (InputStream input = new ClassPathResource(RESOURCE).getInputStream()) {
             byte[] bytes = input.readAllBytes();
             this.dataset = objectMapper.readValue(bytes, RagEvalDataset.class);
@@ -35,6 +40,34 @@ public class RagEvalDatasetLoader {
 
     public String datasetHash() {
         return datasetHash;
+    }
+
+    /** 懒加载对抗性评测集（>=150 条、16 类），用于 OWASP GenAI 风险类别的回归测试。 */
+    public RagEvalDataset adversarialDataset() {
+        RagEvalDataset loaded = adversarialDataset;
+        if (loaded == null) {
+            synchronized (this) {
+                if (adversarialDataset == null) {
+                    try (InputStream input = new ClassPathResource(ADVERSARIAL_RESOURCE).getInputStream()) {
+                        byte[] bytes = input.readAllBytes();
+                        RagEvalDataset value = objectMapper.readValue(bytes, RagEvalDataset.class);
+                        validate(value);
+                        adversarialDataset = value;
+                        adversarialHash = HexFormat.of().formatHex(
+                                MessageDigest.getInstance("SHA-256").digest(bytes));
+                    } catch (Exception e) {
+                        throw new IllegalStateException("对抗性 RAG 评测数据集加载失败: " + ADVERSARIAL_RESOURCE, e);
+                    }
+                }
+                loaded = adversarialDataset;
+            }
+        }
+        return loaded;
+    }
+
+    public String adversarialHash() {
+        adversarialDataset();
+        return adversarialHash == null ? datasetHash : adversarialHash;
     }
 
     private void validate(RagEvalDataset value) {

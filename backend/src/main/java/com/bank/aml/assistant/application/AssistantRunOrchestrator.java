@@ -6,6 +6,8 @@ import com.bank.aml.assistant.agent.AssistantToolBudgetFallback;
 import com.bank.aml.assistant.agent.CustomerAssistantAgentFactory;
 import com.bank.aml.assistant.config.AssistantProperties;
 import com.bank.aml.assistant.domain.AssistantResultType;
+import com.bank.aml.assistant.domain.CustomerAssistantSnapshot;
+import com.bank.aml.assistant.domain.RetrievalStatusView;
 import com.bank.aml.assistant.guard.AssistantInputGuard;
 import com.bank.aml.assistant.guard.AssistantOutputGuard;
 import com.bank.aml.assistant.memory.AssistantHistoryLoader;
@@ -156,6 +158,7 @@ public class AssistantRunOrchestrator {
                 if (isToolRoundLimit(error) && toolTraces.stream().anyMatch(trace -> "SUCCESS".equals(trace.status()))) {
                     String fallback = AssistantToolBudgetFallback.create(snapshot, decision.intent());
                     fallback = AssistantEvidenceCitationAppender.appendMissing(fallback, toolTraces);
+                    fallback = withLegalDisclaimer(snapshot, fallback);
                     var fallbackValidation = outputGuard.validate(snapshot, fallback);
                     if (fallbackValidation.valid()) {
                         emitValidatedAnswer(runId, "\n\n" + fallback);
@@ -175,6 +178,7 @@ public class AssistantRunOrchestrator {
                 if (toolTraces.stream().anyMatch(trace -> "SUCCESS".equals(trace.status()))) {
                     String fallback = AssistantToolBudgetFallback.create(snapshot, decision.intent());
                     fallback = AssistantEvidenceCitationAppender.appendMissing(fallback, toolTraces);
+                    fallback = withLegalDisclaimer(snapshot, fallback);
                     var fallbackValidation = outputGuard.validate(snapshot, fallback);
                     if (fallbackValidation.valid()) {
                         log.warn("AI 小助模型输出未通过校验，已切换确定性只读回答 runId={} violations={}",
@@ -190,6 +194,7 @@ public class AssistantRunOrchestrator {
                 emitSafely(() -> events.failed(runId, "OUTPUT_BLOCKED"));
                 return;
             }
+            answer = withLegalDisclaimer(snapshot, answer);
             emitValidatedAnswer(runId, answer);
             state.complete(runId, answer, elapsedMs(started), toolTraces);
             emitSafely(() -> events.completed(runId, AssistantResultType.ANSWERED));
@@ -228,6 +233,20 @@ public class AssistantRunOrchestrator {
         try { emission.run(); } catch (RuntimeException exception) {
             log.warn("AI 小助实时事件写入失败 type={}", exception.getClass().getSimpleName());
         }
+    }
+
+    /**
+     * 法规检索依据不足（WEAK/拒答态）时，前置确定性降级声明：不给出确定法律结论。
+     */
+    private String withLegalDisclaimer(CustomerAssistantSnapshot snapshot, String answer) {
+        RetrievalStatusView status = snapshot.retrievalStatus();
+        if (status == null || !status.weak()) {
+            return answer;
+        }
+        String reason = status.rejectedReasons().isEmpty() ? ""
+                : "（" + String.join("；", status.rejectedReasons()) + "）";
+        return "当前知识库没有找到足够可靠的法规依据" + reason
+                + "，以下仅能提供客户事实分析，不能给出确定法律结论。\n\n" + answer;
     }
 
     /**

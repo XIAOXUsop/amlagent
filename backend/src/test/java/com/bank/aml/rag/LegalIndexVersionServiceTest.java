@@ -51,6 +51,17 @@ class LegalIndexVersionServiceTest {
         assertThat(target.getStatus()).isEqualTo("ACTIVE");
     }
 
+    @Test
+    void releasingRejectedLeaseDoesNotOverwriteManifestTerminalStatus() {
+        when(states.releaseBuild(org.mockito.ArgumentMatchers.eq("rejected"),
+                org.mockito.ArgumentMatchers.eq("owner"), org.mockito.ArgumentMatchers.any()))
+                .thenReturn(1);
+
+        assertThat(service.releaseLease("rejected", "owner")).isTrue();
+
+        verify(manifests, never()).findById("rejected");
+    }
+
     private RagIndexManifestEntity manifest(String version, String status, int segments) {
         RagIndexManifestEntity entity = new RagIndexManifestEntity();
         entity.setIndexVersion(version);

@@ -96,6 +96,51 @@ public class MetricsRecorder {
         registry.summary("aml_rag_returned_hits", "status", status).record(hitCount);
     }
 
+    /** 零命中：无任何证据命中（与总检索量配合计算 zero-hit rate） */
+    public void ragZeroHit() {
+        registry.counter("aml_rag_zero_hit_total").increment();
+    }
+
+    /** 拒答：未给出支持证据的检索（用于拒答率观测） */
+    public void ragAbstention(String status) {
+        registry.counter("aml_rag_abstention_total", "status", safeMetricTag(status, "UNKNOWN")).increment();
+    }
+
+    /** ACL 过滤条数（命中但访问范围不足被剔除） */
+    public void ragAclFiltered() {
+        registry.counter("aml_rag_acl_filtered_total").increment();
+    }
+
+    /** 失效法规过滤条数（命中但超出生效窗口被剔除） */
+    public void ragExpiredFiltered() {
+        registry.counter("aml_rag_expired_filtered_total").increment();
+    }
+
+    /** Reranker 降级/熔断次数 */
+    public void ragRerankerFallback() {
+        registry.counter("aml_rag_reranker_fallback_total").increment();
+    }
+
+    /** 候选与 active 命中的重合比例（0..1），用于发布门禁对比观测 */
+    public void ragCandidateActiveOverlap(double overlap) {
+        registry.gauge("aml_rag_candidate_active_overlap", Math.max(0.0, Math.min(1.0, overlap)));
+    }
+
+    /** 评测冷/热延迟（stage=cold|warm） */
+    public void ragLatency(String stage, double ms) {
+        registry.timer("aml_rag_latency_ms", "stage", safeMetricTag(stage, "unknown"))
+                .record(Duration.ofMillis((long) Math.max(0, ms)));
+    }
+
+    /** embedding 复用/重算计数（rate=reuse/(reuse+compute)） */
+    public void ragEmbeddingReuse() {
+        registry.counter("aml_rag_embedding_reuse_total").increment();
+    }
+
+    public void ragEmbeddingCompute() {
+        registry.counter("aml_rag_embedding_compute_total").increment();
+    }
+
     public void ragIndexBuild(String status, long durationMs, int segmentCount) {
         registry.counter("aml_rag_index_build_total", "status", status).increment();
         registry.timer("aml_rag_index_build_duration_seconds", "status", status)

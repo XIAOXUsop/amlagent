@@ -4,6 +4,7 @@ import com.bank.aml.assistant.domain.AssistantCustomerView;
 import com.bank.aml.assistant.domain.AssistantEvidence;
 import com.bank.aml.assistant.domain.CustomerAssistantSnapshot;
 import com.bank.aml.assistant.domain.OwnershipRiskView;
+import com.bank.aml.assistant.domain.RetrievalStatusView;
 import com.bank.aml.assistant.domain.SanctionRiskView;
 import com.bank.aml.assistant.domain.TransactionRiskView;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -83,6 +84,6 @@ class CustomerAssistantToolSuiteTest {
                 new TransactionRiskView(2, new BigDecimal("100.00"), new BigDecimal("50.00"),
                         0, 0, 0, 0, List.of("CNY"), List.of("中国大陆"), true),
                 new OwnershipRiskView(0, 0, List.of()), new SanctionRiskView(false, 0, 0, List.of()),
-                List.of(evidence, banking), "TEST", "v1", "legal-v1", "digest");
+                List.of(evidence, banking), "TEST", "v1", "legal-v1", RetrievalStatusView.NONE, "digest");
     }
 }

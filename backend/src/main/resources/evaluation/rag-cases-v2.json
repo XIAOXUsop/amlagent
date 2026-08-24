@@ -9,7 +9,7 @@
     {"id":"RAG-005","question":"可疑交易报告的提交时限是什么？","answerable":true,"expectedTitleContains":"大额交易和可疑交易报告","expectedContentContains":"合理时限"},
     {"id":"RAG-006","question":"对高风险客户强化尽调时是否需要了解财产与资金来源？","answerable":true,"expectedTitleContains":"客户尽职调查","expectedContentContains":"财产和资金来源"},
     {"id":"RAG-007","question":"企业股权多层嵌套且在境外注册时，受益所有人应如何核验？","answerable":true,"expectedTitleContains":"客户尽职调查","expectedContentContains":"多层嵌套"},
-    {"id":"RAG-008","question":"普通交易记录至少应保存几年？","answerable":true,"expectedTitleContains":"客户尽职调查","expectedContentContains":"至少5年"},
+    {"id":"RAG-008","question":"普通交易记录至少应保存几年？","answerable":true,"expectedTitleContains":"客户尽职调查","expectedContentContains":"至少保存10年"},
     {"id":"RAG-009","question":"客户命中恐怖活动人员名单后能否等待人工审批再冻结？","answerable":true,"expectedTitleContains":"恐怖活动资产冻结","expectedContentContains":"立即对相关资产采取冻结措施"},
     {"id":"RAG-010","question":"采取恐怖资产冻结措施后需要向哪些部门报告？","answerable":true,"expectedTitleContains":"恐怖活动资产冻结","expectedContentContains":"国务院有关部门"},
     {"id":"RAG-011","question":"名单比对应在哪些业务环节开展？","answerable":true,"expectedTitleContains":"恐怖活动资产冻结","expectedContentContains":"客户准入、日常交易监测"},

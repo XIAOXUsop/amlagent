@@ -101,6 +101,26 @@ class AssistantGuardTest {
                 .violations()).contains("EVIDENCE_NOT_IN_SNAPSHOT");
     }
 
+    @Test
+    void finalGuardRequiresStructuredClaimsForLegalConclusions() {
+        AssistantOutputGuard output = new AssistantOutputGuard(sensitive);
+
+        assertThat(output.validate(snapshot(), "金融机构应当立即报告可疑交易。")
+                .violations()).contains("LEGAL_CLAIM_MANIFEST_REQUIRED");
+        assertThat(output.validate(snapshot(), "金融机构需要保存交易记录10年。")
+                .violations()).contains("LEGAL_CLAIM_MANIFEST_REQUIRED");
+        assertThat(output.validate(snapshot(), "金融机构须在5个工作日内报送。")
+                .violations()).contains("LEGAL_CLAIM_MANIFEST_REQUIRED");
+        String wrongType = """
+                金融机构应当立即报告可疑交易。
+                ```json
+                {"claims":[{"claimId":"C1","type":"CUSTOMER_FACT","text":"普通事实","evidenceIds":[],"supportSpans":[]}]}
+                ```
+                """;
+        assertThat(output.validate(snapshot(), wrongType).violations()).contains("LEGAL_CLAIM_TYPE_REQUIRED");
+        assertThat(output.validate(snapshot(), "当前证据不足，建议人工复核。").valid()).isTrue();
+    }
+
     private CustomerAssistantSnapshot snapshot() {
         String id = "TRANSACTION_AGGREGATE:71b39e0804a17ef7cdc8508545810921059266fbc43fdb4446d90f10c235595b";
         return new CustomerAssistantSnapshot("s", "c", "r", Instant.EPOCH,
@@ -112,6 +132,6 @@ class AssistantGuardTest {
                                 "交易", "交易共2笔", "TEST/v1"),
                         new AssistantEvidence("KB-OFFICIAL-TEST-001", AssistantEvidence.EvidenceType.AML_LEGAL,
                                 "规则", "需要人工判断", "OFFICIAL")),
-                "TEST", "v1", "legal-v1", "digest");
+                "TEST", "v1", "legal-v1", com.bank.aml.assistant.domain.RetrievalStatusView.NONE, "digest");
     }
 }

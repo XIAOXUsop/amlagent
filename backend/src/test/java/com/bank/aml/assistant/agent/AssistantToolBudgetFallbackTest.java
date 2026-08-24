@@ -28,7 +28,8 @@ class AssistantToolBudgetFallbackTest {
                         50.83, 32.5, 105, 2, List.of("CNY", "USD"), List.of("中国大陆"), true),
                 new OwnershipRiskView(1, 1, List.of()), new SanctionRiskView(false, 0, 0, List.of()),
                 List.of(new AssistantEvidence(evidenceId, AssistantEvidence.EvidenceType.TRANSACTION_AGGREGATE,
-                        "交易聚合", "交易共120笔", "TEST/v1")), "TEST", "v1", "legal-v1", "digest");
+                        "交易聚合", "交易共120笔", "TEST/v1")), "TEST", "v1", "legal-v1",
+                com.bank.aml.assistant.domain.RetrievalStatusView.NONE, "digest");
 
         String answer = AssistantEvidenceCitationAppender.appendMissing(
                 AssistantToolBudgetFallback.create(snapshot, AssistantIntent.CUSTOMER_ANALYSIS),

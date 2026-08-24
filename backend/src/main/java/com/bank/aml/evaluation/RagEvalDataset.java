@@ -17,7 +17,11 @@ public record RagEvalDataset(
             String question,
             boolean answerable,
             String expectedTitleContains,
-            String expectedContentContains
+            String expectedContentContains,
+            String category
     ) {
+        public RagEvalCase {
+            category = category == null ? "" : category;
+        }
     }
 }

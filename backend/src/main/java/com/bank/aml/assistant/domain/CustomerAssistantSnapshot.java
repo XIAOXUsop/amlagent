@@ -17,6 +17,7 @@ public record CustomerAssistantSnapshot(
         String sourceSystem,
         String sourceVersion,
         String knowledgeIndexVersion,
+        RetrievalStatusView retrievalStatus,
         String sourceDigest
 ) {
     public CustomerAssistantSnapshot {

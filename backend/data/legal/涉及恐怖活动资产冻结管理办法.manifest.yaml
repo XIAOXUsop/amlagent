@@ -1,0 +1,20 @@
+# 法律文档可信元数据（强制）。缺失或非法时该文档不进入候选索引。
+documentId: AML-REG-FREEZE-2014
+title: 涉及恐怖活动资产冻结管理办法
+documentNumber: 中国人民银行、公安部、国家安全部令〔2014〕第1号
+issuingAuthority: 中国人民银行、公安部、国家安全部
+jurisdiction: CN
+promulgatedAt: 2014-01-10
+effectiveFrom: 2014-01-10
+effectiveTo: null
+sourceUrl: https://www.pbc.gov.cn/chubanwu/114566/114579/2164312/2812943/index.html
+sourceType: CURATED_SUMMARY
+accessScopes:
+  - PUBLIC_LEGAL
+reviewStatus: APPROVED
+reviewedBy: legal-domain-reviewer
+reviewedAt: 2026-08-01
+sourceSha256: d846a9f42578e398f83e7962614cdc72d893643c311fb15af63e8a244b41daf4
+supersedes: null
+parserVersion: legal-article-v3
+securityStatus: TRUSTED
