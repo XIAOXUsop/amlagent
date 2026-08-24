@@ -12,7 +12,7 @@ jobs:
     name: Unit & Rule Regression Tests
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Set up JDK 21
         uses: actions/setup-java@v4
         with:
@@ -27,7 +27,7 @@ jobs:
     name: Secret Scan
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Scan for secrets
         run: |
           if grep -rInE \
@@ -45,7 +45,7 @@ jobs:
     name: Frontend Test & Build
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
@@ -98,7 +98,7 @@ jobs:
           --health-cmd "redis-cli ping"
           --health-interval 10s --health-timeout 5s --health-retries 5
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Set up JDK 21
         uses: actions/setup-java@v4
         with:
@@ -147,7 +147,7 @@ jobs:
           --health-cmd "pg_isready -U aml -d aml_rag"
           --health-interval 10s --health-timeout 5s --health-retries 5
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Set up JDK 21
         uses: actions/setup-java@v4
         with:
