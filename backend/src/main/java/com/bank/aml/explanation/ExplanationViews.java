@@ -17,6 +17,7 @@ public final class ExplanationViews {
             Long hypothesisId,
             String policyCode,
             int draftRevision,
+            String draftJson,
             boolean hasCurrentSubmission,
             Long currentSubmissionId,
             ExplanationOutcome currentOutcome,
@@ -115,6 +116,42 @@ public final class ExplanationViews {
             List<UnitView> adoptedUnits,
             List<IssueView> openIssues,
             Map<String, String> unitOutcomes
+    ) {
+    }
+
+    /** 问题降级提案视图（A5-04 双人确认流程）。 */
+    public record IssueReviewView(
+            Long proposalId,
+            Long caseId,
+            Long issueId,
+            int proposalRevision,
+            IssueSeverity originalSeverity,
+            IssueSeverity proposedSeverity,
+            String reason,
+            String evidenceReference,
+            String proposedBy,
+            String proposedAt,
+            String status,
+            String confirmedBy,
+            String confirmedAt,
+            String rejectedReason
+    ) {
+    }
+
+    /**
+     * 定向核验建议（v3 计划 §7）：可解释的"下一步查什么"。
+     * 排序：来源/身份完整性 → 会改变决定的矛盾 → 决定关键未知 → 即将到期义务 → 补充背景。
+     */
+    public record NextActionView(
+            int priority,
+            String category,
+            String relatedClaimCode,
+            String relatedIssueKey,
+            String missingFact,
+            String suggestedSource,
+            String suggestedAction,
+            String whatItCanChange,
+            String alternative
     ) {
     }
 }

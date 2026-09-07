@@ -126,7 +126,7 @@ class CaseDossierServiceTest {
         CaseDossier second = service.export(7L);
 
         assertThat(first.contentHash()).hasSize(64).isEqualTo(second.contentHash());
-        assertThat(first.schemaVersion()).isEqualTo("1.6");
+        assertThat(first.schemaVersion()).isEqualTo("1.7");
         assertThat(first.content().reportParseStatus()).isEqualTo("VALID");
         assertThat(first.content().caseSummary().reviewDisposition()).isEqualTo("CONFIRM_SUSPICIOUS");
         assertThat(first.content().reviewHistory()).singleElement()

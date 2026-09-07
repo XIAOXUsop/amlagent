@@ -74,12 +74,16 @@ public class ExplanationWorkspaceService implements ExplanationReadinessPort {
     private final EvidenceArtifactVersionRepository artifactRepository;
     private final EvidenceVerificationEventRepository verificationRepository;
     private final ExplanationEvidenceUseRepository evidenceUseRepository;
+    private final ExplanationIssueReviewRepository issueReviewRepository;
+    private final com.bank.aml.security.UserAccountRepository userAccountRepository;
     private final AlertInvestigationCoverageRepository coverageRepository;
     private final InvestigationHypothesisRepository hypothesisRepository;
     private final com.bank.aml.investigation.AmlAlertRepository alertRepository;
     private final EnhancedDueDiligenceRequestRepository eddRepository;
     private final ExplanationPolicyCatalog policyCatalog;
     private final AuditOutboxService auditOutbox;
+    private final EvidenceSourcePort evidenceSourcePort;
+    private final com.bank.aml.datasource.CustomerDataPort customerDataPort;
     private final ObjectMapper objectMapper;
     private final Clock clock;
 
@@ -92,17 +96,22 @@ public class ExplanationWorkspaceService implements ExplanationReadinessPort {
                                        EvidenceArtifactVersionRepository artifactRepository,
                                        EvidenceVerificationEventRepository verificationRepository,
                                        ExplanationEvidenceUseRepository evidenceUseRepository,
+                                       ExplanationIssueReviewRepository issueReviewRepository,
+                                       com.bank.aml.security.UserAccountRepository userAccountRepository,
                                        AlertInvestigationCoverageRepository coverageRepository,
                                        InvestigationHypothesisRepository hypothesisRepository,
                                        com.bank.aml.investigation.AmlAlertRepository alertRepository,
                                        EnhancedDueDiligenceRequestRepository eddRepository,
                                        ExplanationPolicyCatalog policyCatalog,
                                        AuditOutboxService auditOutbox,
+                                       EvidenceSourcePort evidenceSourcePort,
+                                       com.bank.aml.datasource.CustomerDataPort customerDataPort,
                                        ObjectMapper objectMapper) {
         this(caseRepository, unitRepository, submissionRepository, issueRepository, basisRepository,
-                artifactRepository, verificationRepository, evidenceUseRepository, coverageRepository,
+                artifactRepository, verificationRepository, evidenceUseRepository, issueReviewRepository,
+                userAccountRepository, coverageRepository,
                 hypothesisRepository, alertRepository, eddRepository, policyCatalog, auditOutbox,
-                objectMapper, Clock.systemDefaultZone());
+                evidenceSourcePort, customerDataPort, objectMapper, Clock.systemDefaultZone());
     }
 
     ExplanationWorkspaceService(CaseRepository caseRepository,
@@ -113,12 +122,16 @@ public class ExplanationWorkspaceService implements ExplanationReadinessPort {
                                 EvidenceArtifactVersionRepository artifactRepository,
                                 EvidenceVerificationEventRepository verificationRepository,
                                 ExplanationEvidenceUseRepository evidenceUseRepository,
+                                ExplanationIssueReviewRepository issueReviewRepository,
+                                com.bank.aml.security.UserAccountRepository userAccountRepository,
                                 AlertInvestigationCoverageRepository coverageRepository,
                                 InvestigationHypothesisRepository hypothesisRepository,
                                 com.bank.aml.investigation.AmlAlertRepository alertRepository,
                                 EnhancedDueDiligenceRequestRepository eddRepository,
                                 ExplanationPolicyCatalog policyCatalog,
                                 AuditOutboxService auditOutbox,
+                                EvidenceSourcePort evidenceSourcePort,
+                                com.bank.aml.datasource.CustomerDataPort customerDataPort,
                                 ObjectMapper objectMapper,
                                 Clock clock) {
         this.caseRepository = caseRepository;
@@ -129,12 +142,16 @@ public class ExplanationWorkspaceService implements ExplanationReadinessPort {
         this.artifactRepository = artifactRepository;
         this.verificationRepository = verificationRepository;
         this.evidenceUseRepository = evidenceUseRepository;
+        this.issueReviewRepository = issueReviewRepository;
+        this.userAccountRepository = userAccountRepository;
         this.coverageRepository = coverageRepository;
         this.hypothesisRepository = hypothesisRepository;
         this.alertRepository = alertRepository;
         this.eddRepository = eddRepository;
         this.policyCatalog = policyCatalog;
         this.auditOutbox = auditOutbox;
+        this.evidenceSourcePort = evidenceSourcePort;
+        this.customerDataPort = customerDataPort;
         this.objectMapper = objectMapper;
         this.clock = clock;
     }
@@ -237,11 +254,15 @@ public class ExplanationWorkspaceService implements ExplanationReadinessPort {
 
     // ==================== 材料抓取与核验 ====================
 
-    /** 抓取受控材料：只接受已配置来源系统与不透明引用；登记 ≠ 已核验；新材料进入待分派清单。 */
+    /**
+     * 抓取受控材料（A5-01 修复）：来源内容与摘要由服务端 {@link EvidenceSourcePort} 真实取得；
+     * 调用方提交的 contentSha256 不再被接受为权威输入。来源不存在 → NOT_FOUND 记录，
+     * 来源暂不可用 → UNAVAILABLE 记录；二者都不能作为已核实依据形成结论。
+     * 手工声明（CUSTOMER_PROVIDED 等未接适配器的系统）保持"声明/待核验"，按 NOT_CHECKED 处理。
+     */
     @Transactional
     public ExplanationViews.EvidenceView captureEvidence(Long caseId, String sourceSystem,
-                                                         String sourceReference, String contentSha256,
-                                                         String claimedSha256, String actor) {
+                                                         String sourceReference, String actor) {
         requireCase(caseId);
         String system = upper(sourceSystem);
         if (!TRUSTED_SOURCE_SYSTEMS.contains(system)) {
@@ -251,12 +272,50 @@ public class ExplanationWorkspaceService implements ExplanationReadinessPort {
         if (!reference.matches("[A-Za-z0-9][A-Za-z0-9._:/-]{2,159}")) {
             throw new IllegalArgumentException("来源引用需为不透明记录编号（3 ~ 160 字符）");
         }
-        String actualHash = requireSha256(contentSha256, "实际取得内容哈希");
         String artifactKey = (system + ":" + reference).toLowerCase(Locale.ROOT);
-        var existing = artifactRepository.findTopByCaseIdAndArtifactKeyOrderByVersionDesc(caseId, artifactKey);
-        if (existing.isPresent()) {
-            // 同一来源重复抓取：返回既有版本（不产生新“独立核验”），由调用方决定是否核验。
-            return evidenceView(existing.get());
+        var existingOpt = artifactRepository.findTopByCaseIdAndArtifactKeyOrderByVersionDesc(caseId, artifactKey);
+        if (existingOpt.isPresent()) {
+            // 同源再次抓取（A5-01/TP-17）：同内容幂等返回既有版本；不同内容 → 追加新版本，
+            // 旧内容可回放；来源不可用/不存在 → 记录新版本状态，不覆盖旧版本。
+            EvidenceArtifactVersion existing = existingOpt.get();
+            var fetched = evidenceSourcePort.fetch(system, reference);
+            if (fetched.isPresent() && fetched.get().availability() == EvidenceSourcePort.Availability.RESOLVED) {
+                String newHash = fetched.get().contentSha256();
+                if (newHash.equals(existing.getContentSha256())) {
+                    return evidenceView(existing);
+                }
+                EvidenceArtifactVersion next = new EvidenceArtifactVersion();
+                next.setCaseId(caseId);
+                next.setArtifactKey(artifactKey);
+                next.setVersion(existing.getVersion() + 1);
+                next.setSourceSystem(system);
+                next.setSourceReference(reference);
+                next.setContentSha256(newHash);
+                next.setClaimedSha256(null);
+                next.setAvailability("RESOLVED");
+                next.setIntegrityStatus("NOT_CHECKED");
+                next.setSourceChain(system + "/" + reference + "@v" + next.getVersion());
+                next.setCapturedBy(actor);
+                next.setCapturedAt(LocalDateTime.now(clock));
+                EvidenceArtifactVersion savedNext = artifactRepository.save(next);
+                bumpEpoch(caseId, "ARTIFACT_CONTENT_CHANGED:" + artifactKey + ":v" + next.getVersion());
+                auditOutbox.enqueue("EXPLANATION_ARTIFACT:" + caseId + ":" + artifactKey + ":v"
+                                + next.getVersion(),
+                        actor, "EXPLANATION_ARTIFACT_CONTENT_CHANGED", "CASE", String.valueOf(caseId),
+                        "artifactKey=" + artifactKey + ",previousHash=" + existing.getContentSha256());
+                return evidenceView(savedNext);
+            }
+            // 来源不可用/不存在：保持旧版本可回放，只记录最新状态问题（幂等返回旧版本 + 刷新问题）。
+            if (fetched.isPresent()
+                    && fetched.get().availability() != EvidenceSourcePort.Availability.RESOLVED) {
+                ensureIssue(caseId, null, "SOURCE_UNAVAILABLE:" + artifactKey + ":v" + existing.getVersion(),
+                        IssueSeverity.DECISION_CRITICAL, null,
+                        "材料 " + artifactKey + " 最新抓取未取得内容（状态 "
+                                + fetched.get().availability() + "）；旧版本仍可回放，"
+                                + "以旧版本形成的采用结论需重新核验来源状态。",
+                        actor);
+            }
+            return evidenceView(existing);
         }
         EvidenceArtifactVersion artifact = new EvidenceArtifactVersion();
         artifact.setCaseId(caseId);
@@ -264,23 +323,39 @@ public class ExplanationWorkspaceService implements ExplanationReadinessPort {
         artifact.setVersion(1);
         artifact.setSourceSystem(system);
         artifact.setSourceReference(reference);
-        artifact.setContentSha256(actualHash);
-        artifact.setClaimedSha256(claimedSha256 == null || claimedSha256.isBlank()
-                ? null : requireSha256(claimedSha256, "来源声称哈希"));
-        artifact.setAvailability("RESOLVED");
-        boolean mismatch = artifact.getClaimedSha256() != null
-                && !artifact.getClaimedSha256().equals(actualHash);
-        artifact.setIntegrityStatus(artifact.getClaimedSha256() == null ? "NOT_CHECKED"
-                : (mismatch ? "MISMATCH" : "MATCH"));
         artifact.setSourceChain(system + "/" + reference + "@v1");
         artifact.setCapturedBy(actor);
         artifact.setCapturedAt(LocalDateTime.now(clock));
+        var fetched = evidenceSourcePort.fetch(system, reference);
+        if (fetched.isPresent()) {
+            EvidenceSourcePort.FetchedContent content = fetched.get();
+            if (content.availability() != EvidenceSourcePort.Availability.RESOLVED) {
+                // NOT_FOUND / UNAVAILABLE / FORBIDDEN：记录状态但不能作为已核实依据（A5-01）。
+                artifact.setContentSha256(null);
+                artifact.setClaimedSha256(null);
+                artifact.setAvailability(content.availability().name());
+                artifact.setIntegrityStatus("NOT_CHECKED");
+            } else {
+                artifact.setContentSha256(content.contentSha256());
+                artifact.setClaimedSha256(null);
+                artifact.setAvailability("RESOLVED");
+                artifact.setIntegrityStatus("NOT_CHECKED");
+            }
+        } else {
+            // 来源系统未接适配器（如 CUSTOMER_PROVIDED 手工登记）：声明/待核验，不是 RESOLVED。
+            artifact.setContentSha256(null);
+            artifact.setClaimedSha256(null);
+            artifact.setAvailability("NOT_FOUND");
+            artifact.setIntegrityStatus("NOT_CHECKED");
+        }
         EvidenceArtifactVersion saved = artifactRepository.save(artifact);
-        if (mismatch) {
-            // 内容与来源声称不一致：完整性/身份错误，阻断以该材料形成任何最终决定（V2-11）。
-            ensureIssue(caseId, null, "INTEGRITY:" + artifactKey + ":v1", IssueSeverity.INTEGRITY_BLOCKER,
-                    null, "材料 " + artifactKey + " 的实际内容哈希与来源声称不一致，不得作为已核实依据使用；"
-                            + "需更正来源后重新抓取。", actor);
+        // 来源不可用/不存在：登记问题提示人工，不得就此形成最终决定。
+        if (!"RESOLVED".equals(saved.getAvailability())) {
+            ensureIssue(caseId, null, "SOURCE_UNAVAILABLE:" + artifactKey + ":v1",
+                    IssueSeverity.DECISION_CRITICAL, null,
+                    "材料 " + artifactKey + " 未能从来源系统取得实际内容（状态 " + saved.getAvailability()
+                            + "）；不能作为已核实依据形成最终决定，需重试、换替代来源或说明处理责任。",
+                    actor);
         }
         // 新材料尚未关联单元：进入案件待分派事实清单（V2-12）。
         ensureIssue(caseId, null, "FACT_UNASSIGNED:" + artifactKey + ":v1", IssueSeverity.DECISION_CRITICAL,
@@ -289,7 +364,8 @@ public class ExplanationWorkspaceService implements ExplanationReadinessPort {
         bumpEpoch(caseId, "ARTIFACT_CAPTURED:" + artifactKey + ":v1");
         auditOutbox.enqueue("EXPLANATION_ARTIFACT:" + caseId + ":" + artifactKey + ":v1",
                 actor, "EXPLANATION_ARTIFACT_CAPTURED", "CASE", String.valueOf(caseId),
-                "artifactKey=" + artifactKey + ",integrity=" + saved.getIntegrityStatus());
+                "artifactKey=" + artifactKey + ",integrity=" + saved.getIntegrityStatus()
+                        + ",availability=" + saved.getAvailability());
         return evidenceView(saved);
     }
 
@@ -447,6 +523,12 @@ public class ExplanationWorkspaceService implements ExplanationReadinessPort {
         }
         unit.setPolicyCode(resolution.policyCode());
 
+        // 代付配方的缺口事实（如授权额度不足 / 部分订单未覆盖）在任何 outcome 下都要登记关键问题：
+        // 不因"多数金额已解释"吞掉缺口（TP-10/TP-11），也不自动变可疑。
+        if (ExplanationPolicyCatalog.GOODS_GROUP_PAYMENT_V1.equals(resolution.policyCode())) {
+            registerGroupPaymentGaps(caseEntity, unit, draft, actor);
+        }
+
         DraftSummary summary = validateDraftContent(caseEntity, unit, draft, applicability, resolution.policyCode());
 
         // 创建不可变提交
@@ -471,6 +553,13 @@ public class ExplanationWorkspaceService implements ExplanationReadinessPort {
         submission.setSubmittedBy(actor);
         submission.setSubmittedAt(LocalDateTime.now(clock));
         ExplanationSubmission saved = submissionRepository.save(submission);
+
+        // 同事务持久化依据使用记录（A5-05）：材料/问题引用 → explanation_evidence_use；
+        // 来源变更按本表反查受影响提交。无引用也写一条方向性记录，保证依赖链可查询。
+        persistEvidenceUses(caseId, saved.getId(), draft, summary);
+
+        // 同事务冻结核验依据版本（A5-01）：服务器可枚举交易集 + 范围摘要（可重算）。
+        persistVerificationBasis(caseEntity, saved, draft);
 
         // 当前指针 + 覆盖 + 假设汇总
         unit.setCurrentSubmissionId(saved.getId());
@@ -523,12 +612,16 @@ public class ExplanationWorkspaceService implements ExplanationReadinessPort {
 
     // ==================== 问题处置 ====================
 
-    /** 问题处置：解决 / 说明不相关 / 披露未解决；重要性降级需不同复核人确认（V2-19）。 */
+    /**
+     * 问题处置：解决 / 说明不相关 / 披露未解决。
+     * 重要性降级不再随处置一步完成（A5-04）：客户端传入的 confirmedBy 无权威意义；
+     * 降级必须通过 {@link #proposeDowngrade} + {@link #confirmDowngrade} 两步，
+     * 由另一位已认证 REVIEWER/ADMIN 在独立请求中确认。
+     */
     @Transactional
     public ExplanationViews.IssueView disposeIssue(Long caseId, Long issueId, int expectedRevision,
                                                    String disposition, String reason,
-                                                   String evidenceReference, String downgradeTo,
-                                                   String confirmedBy, String actor) {
+                                                   String evidenceReference, String actor) {
         CaseEntity caseEntity = requireLockedExplanationCase(caseId);
         ExplanationIssue issue = issueRepository.findByIdAndCaseId(issueId, caseId)
                 .orElseThrow(() -> new IllegalArgumentException("问题不存在：" + issueId));
@@ -577,25 +670,6 @@ public class ExplanationWorkspaceService implements ExplanationReadinessPort {
         }
         issue.setDisposition(normalized);
         issue.setDispositionReason(normalizedReason);
-        if (downgradeTo != null && !downgradeTo.isBlank()) {
-            IssueSeverity target = parseEnum(IssueSeverity.class, downgradeTo, "目标重要性");
-            if (target == IssueSeverity.INTEGRITY_BLOCKER
-                    || issue.getSeverity() == IssueSeverity.INTEGRITY_BLOCKER) {
-                throw new IllegalArgumentException("完整性/身份错误不允许降级");
-            }
-            if (rank(target) >= rank(issue.getSeverity())) {
-                throw new IllegalArgumentException("只能向更低重要性降级");
-            }
-            String confirmer = confirmedBy == null ? "" : confirmedBy.trim();
-            if (confirmer.isEmpty() || confirmer.equals(actor)) {
-                throw new IllegalArgumentException("重要性降级需与处理人不同的复核人确认（V2-19）");
-            }
-            if (normalizedReason.length() < 20) {
-                throw new IllegalArgumentException("降级需记录原等级、理由和引用（至少 20 个字符）");
-            }
-            issue.setSeverity(target);
-            issue.setConfirmedBy(confirmer);
-        }
         issue.setRevision(issue.getRevision() + 1);
         issue.setUpdatedAt(LocalDateTime.now(clock));
         ExplanationIssue saved = issueRepository.save(issue);
@@ -604,9 +678,326 @@ public class ExplanationWorkspaceService implements ExplanationReadinessPort {
         auditOutbox.enqueue("EXPLANATION_ISSUE:" + caseId + ":" + issueId + ":" + saved.getRevision(),
                 actor, "EXPLANATION_ISSUE_DISPOSITION", "CASE", String.valueOf(caseId),
                 "issueKey=" + saved.getIssueKey() + ",disposition=" + saved.getDisposition()
-                        + ",severity=" + saved.getSeverity()
-                        + (saved.getConfirmedBy() == null ? "" : ",confirmedBy=" + saved.getConfirmedBy()));
+                        + ",severity=" + saved.getSeverity());
         return issueView(saved);
+    }
+
+    /**
+     * 降级提案第一步（A5-04）：分析员提交拟议降级；不改变问题现状。
+     * 完整性问题不允许降级；提案记录原等级、理由与依据，等待独立复核人确认。
+     */
+    @Transactional
+    public ExplanationViews.IssueReviewView proposeDowngrade(Long caseId, Long issueId, int expectedRevision,
+                                                             String downgradeTo, String reason,
+                                                             String evidenceReference, String actor) {
+        CaseEntity caseEntity = requireLockedExplanationCase(caseId);
+        ExplanationIssue issue = issueRepository.findByIdAndCaseId(issueId, caseId)
+                .orElseThrow(() -> new IllegalArgumentException("问题不存在：" + issueId));
+        if (issue.getRevision() != expectedRevision) {
+            throw new InvestigationRevisionConflictException(
+                    InvestigationRevisionConflictException.TYPE_COVERAGE, issueId,
+                    issue.getRevision(),
+                    "问题已被他人处置（当前版本 " + issue.getRevision() + "），请刷新后重试");
+        }
+        IssueSeverity target = parseEnum(IssueSeverity.class, downgradeTo, "目标重要性");
+        if (target == IssueSeverity.INTEGRITY_BLOCKER || issue.getSeverity() == IssueSeverity.INTEGRITY_BLOCKER) {
+            throw new IllegalArgumentException("完整性/身份错误不允许降级");
+        }
+        if (rank(target) >= rank(issue.getSeverity())) {
+            throw new IllegalArgumentException("只能向更低重要性降级");
+        }
+        String normalizedReason = reason == null ? "" : reason.trim();
+        if (normalizedReason.length() < 20) {
+            throw new IllegalArgumentException("降级需记录原等级、理由和引用（至少 20 个字符）");
+        }
+        // 同一问题已有待确认提案时不得重复创建（确认或拒绝后再提）。
+        if (!issueReviewRepository.findByCaseIdAndStatusOrderByIdAsc(caseId, "PENDING").stream()
+                .filter(review -> review.getIssueId().equals(issueId)).toList().isEmpty()) {
+            throw new IllegalStateException("该问题已有待确认的降级提案；请等待确认或拒绝后重新提案");
+        }
+        ExplanationIssueReview review = new ExplanationIssueReview();
+        review.setCaseId(caseId);
+        review.setIssueId(issueId);
+        review.setProposalRevision(expectedRevision);
+        review.setIssueRevision(expectedRevision);
+        review.setOriginalSeverity(issue.getSeverity());
+        review.setProposedSeverity(target);
+        review.setReason(normalizedReason);
+        review.setEvidenceReference(evidenceReference == null || evidenceReference.isBlank()
+                ? null : evidenceReference.trim());
+        review.setProposedBy(actor);
+        review.setProposedAt(LocalDateTime.now(clock));
+        review.setStatus("PENDING");
+        ExplanationIssueReview saved = issueReviewRepository.save(review);
+        auditOutbox.enqueue("EXPLANATION_DOWNGRADE_PROPOSAL:" + caseId + ":" + issueId + ":" + saved.getId(),
+                actor, "EXPLANATION_ISSUE_DOWNGRADE_PROPOSED", "CASE", String.valueOf(caseId),
+                "issueId=" + issueId + ",from=" + issue.getSeverity() + ",to=" + target);
+        return issueReviewView(saved);
+    }
+
+    /**
+     * 降级确认第二步（A5-04）：另一位已认证 REVIEWER/ADMIN 独立确认。
+     * 确认人来自认证上下文与 UserAccountRepository 核对（角色与启用状态）；
+     * 不得是提案人；提案与问题版本必须与提案时一致；确认后问题等级才真正改变。
+     */
+    @Transactional
+    public ExplanationViews.IssueView confirmDowngrade(Long caseId, Long proposalId,
+                                                       int expectedProposalRevision, int expectedIssueRevision,
+                                                       String confirmNote, String reviewer) {
+        requireLockedExplanationCase(caseId);
+        ExplanationIssueReview review = issueReviewRepository.findByIdAndCaseId(proposalId, caseId)
+                .orElseThrow(() -> new IllegalArgumentException("降级提案不存在：" + proposalId));
+        if (!"PENDING".equals(review.getStatus())) {
+            throw new IllegalStateException("该提案已被处理（当前状态 " + review.getStatus() + "）");
+        }
+        if (review.getProposalRevision() != expectedProposalRevision) {
+            throw new InvestigationRevisionConflictException(
+                    InvestigationRevisionConflictException.TYPE_COVERAGE, proposalId, null,
+                    "提案已被他人处理，请刷新后重试");
+        }
+        // 独立复核人核对：认证身份必须存在、启用且具有 REVIEWER/ADMIN 角色（A5-04）。
+        String identity = reviewer == null ? "" : reviewer.trim();
+        com.bank.aml.security.UserAccount account = userAccountRepository.findByUsername(identity)
+                .filter(user -> user.isEnabled())
+                .filter(user -> java.util.Set.of("REVIEWER", "ADMIN").contains(user.getRole()))
+                .orElseThrow(() -> new IllegalArgumentException(
+                        "确认人必须为已启用的 REVIEWER/ADMIN 账户；当前身份无权确认降级"));
+        if (account.getUsername().equals(review.getProposedBy())) {
+            throw new IllegalArgumentException("降级提案人不能确认自己的提案（双人确认，A5-04）");
+        }
+        ExplanationIssue issue = issueRepository.findByIdAndCaseId(review.getIssueId(), caseId)
+                .orElseThrow(() -> new IllegalArgumentException("问题不存在：" + review.getIssueId()));
+        if (issue.getRevision() != expectedIssueRevision) {
+            throw new InvestigationRevisionConflictException(
+                    InvestigationRevisionConflictException.TYPE_COVERAGE, issue.getId(), null,
+                    "问题版本已变化（当前 " + issue.getRevision() + "），提案基于版本 "
+                            + expectedIssueRevision + "；请重新评估并另提提案");
+        }
+        // 确认身份由服务端写入：客户端不再具有指定 confirmedBy 的权威意义。
+        issue.setSeverity(review.getProposedSeverity());
+        issue.setConfirmedBy(account.getUsername());
+        issue.setRevision(issue.getRevision() + 1);
+        issue.setUpdatedAt(LocalDateTime.now(clock));
+        ExplanationIssue saved = issueRepository.save(issue);
+        review.setStatus("CONFIRMED");
+        review.setConfirmedBy(account.getUsername());
+        review.setConfirmedAt(LocalDateTime.now(clock));
+        review.setConfirmNote(confirmNote == null ? null : confirmNote.trim());
+        issueReviewRepository.save(review);
+        bumpEpoch(caseId, "ISSUE_DOWNGRADE_CONFIRMED:" + saved.getId() + ":" + saved.getSeverity());
+        auditOutbox.enqueue("EXPLANATION_DOWNGRADE_CONFIRMED:" + caseId + ":" + saved.getId(),
+                account.getUsername(), "EXPLANATION_ISSUE_DOWNGRADE_CONFIRMED", "CASE", String.valueOf(caseId),
+                "issueId=" + saved.getId() + ",severity=" + saved.getSeverity()
+                        + ",proposalId=" + proposalId);
+        return issueView(saved);
+    }
+
+    /** 拒绝降级提案：问题现状不变；记录拒绝理由与拒绝人。 */
+    @Transactional
+    public ExplanationViews.IssueReviewView rejectDowngrade(Long caseId, Long proposalId,
+                                                            int expectedProposalRevision,
+                                                            String rejectedReason, String reviewer) {
+        requireLockedExplanationCase(caseId);
+        ExplanationIssueReview review = issueReviewRepository.findByIdAndCaseId(proposalId, caseId)
+                .orElseThrow(() -> new IllegalArgumentException("降级提案不存在：" + proposalId));
+        if (!"PENDING".equals(review.getStatus())) {
+            throw new IllegalStateException("该提案已被处理（当前状态 " + review.getStatus() + "）");
+        }
+        if (review.getProposalRevision() != expectedProposalRevision) {
+            throw new InvestigationRevisionConflictException(
+                    InvestigationRevisionConflictException.TYPE_COVERAGE, proposalId, null,
+                    "提案已被他人处理，请刷新后重试");
+        }
+        String identity = reviewer == null ? "" : reviewer.trim();
+        com.bank.aml.security.UserAccount account = userAccountRepository.findByUsername(identity)
+                .filter(user -> user.isEnabled())
+                .filter(user -> java.util.Set.of("REVIEWER", "ADMIN").contains(user.getRole()))
+                .orElseThrow(() -> new IllegalArgumentException(
+                        "拒绝人必须为已启用的 REVIEWER/ADMIN 账户"));
+        if (account.getUsername().equals(review.getProposedBy())) {
+            throw new IllegalArgumentException("提案人不能处理自己的提案");
+        }
+        review.setStatus("REJECTED");
+        review.setRejectedReason(rejectedReason == null ? "" : rejectedReason.trim());
+        review.setConfirmedBy(account.getUsername());
+        review.setConfirmedAt(LocalDateTime.now(clock));
+        issueReviewRepository.save(review);
+        auditOutbox.enqueue("EXPLANATION_DOWNGRADE_REJECTED:" + caseId + ":" + proposalId,
+                account.getUsername(), "EXPLANATION_ISSUE_DOWNGRADE_REJECTED", "CASE", String.valueOf(caseId),
+                "issueId=" + review.getIssueId());
+        return issueReviewView(review);
+    }
+
+    // ==================== 定向核验建议（v3 计划 §7） ====================
+
+    /**
+     * 下一动作建议（S4）：可解释的规则排序，不训练风险分数。
+     * 排序：来源/身份完整性(1) → 会改变决定的矛盾(2) → 决定关键未知(3) →
+     * 即将到期义务(4) → 补充背景(5)。相同优先级先复用已取得且仍有效的资料。
+     */
+    @Transactional(readOnly = true)
+    public List<ExplanationViews.NextActionView> nextActions(Long caseId, Long unitId) {
+        CaseEntity caseEntity = requireCase(caseId);
+        AlertExplanationUnit unit = requireUnit(caseId, unitId);
+        List<ExplanationViews.NextActionView> actions = new ArrayList<>();
+        List<ExplanationIssue> issues = issueRepository.findByCaseIdAndUnitIdOrderByIdAsc(caseId, unitId);
+        List<ExplanationIssue> caseIssues = issueRepository.findByCaseIdOrderByIdAsc(caseId);
+
+        // 1. 完整性/身份错误：不能以被破坏的依据形成任何决定
+        for (ExplanationIssue issue : caseIssues) {
+            if (issue.getDisposition() == IssueDisposition.OPEN
+                    && issue.getSeverity() == IssueSeverity.INTEGRITY_BLOCKER) {
+                actions.add(new ExplanationViews.NextActionView(1, "INTEGRITY", null,
+                        issue.getIssueKey(), "可用的材料来源（当前完整性被破坏）",
+                        issue.getIssueKey().startsWith("INTEGRITY") ? "原来源系统" : "来源系统",
+                        "更正来源后重新抓取该材料，并记录更正原因",
+                        "决定能否以该材料形成任何结论",
+                        "来源系统更正后重新抓取；无替代来源则该材料退出依据"));
+            }
+        }
+        // 2. 已评估矛盾（CONTRADICTED claims）：会改变当前决定
+        JsonNode draft = unit.getDraftJson() == null ? null : parseQuiet(unit.getDraftJson());
+        if (draft != null && draft.get("claims") != null && draft.get("claims").isObject()) {
+            JsonNode claims = draft.get("claims");
+            for (String code : new String[]{"C1", "C2", "C3", "C4", "C5", "C6"}) {
+                JsonNode claim = claims.get(code);
+                if (claim == null || !claim.isObject()) {
+                    continue;
+                }
+                String status = text(claim, "status", "UNASSESSED");
+                if ("CONTRADICTED".equals(status)) {
+                    actions.add(new ExplanationViews.NextActionView(2, "CONTRADICTION", code,
+                            null, "矛盾的反向解释（客户或来源能否解释该矛盾）",
+                            "与矛盾事实直接相关的权威来源",
+                            "核对矛盾事实的身份与回复范围，要求客户回应矛盾；保留否认事实",
+                            "单元结论方向（EXPLAINED/SUSPICIOUS）",
+                            "无：矛盾必须由人工判断处理，不能用同源材料覆盖"));
+                } else if (("UNASSESSED".equals(status) || "UNRESOLVED".equals(status))
+                        && List.of("C1", "C2", "C3", "C4").contains(code)) {
+                    // 3. 决定关键未知：定向核验
+                    actions.add(new ExplanationViews.NextActionView(3, "CRITICAL_UNKNOWN", code,
+                            null, factQuestion(code), factSuggestedSource(code),
+                            factSuggestedAction(code),
+                            "该事实是否被支持（决定解释能否成立）",
+                            factAlternative(code)));
+                }
+            }
+            // 授权额度缺口
+            JsonNode authority = draft.get("authority");
+            if (authority != null && authority.isObject() && !text(authority, "limitAmount").isBlank()) {
+                try {
+                    java.math.BigDecimal limit = new java.math.BigDecimal(text(authority, "limitAmount"));
+                    java.math.BigDecimal covered = java.math.BigDecimal.ZERO;
+                    Map<String, java.math.BigDecimal> sourceAmounts = serverTransactionAmounts(caseEntity);
+                    JsonNode coveredTxs = authority.get("coveredTransactionIds");
+                    if (coveredTxs != null && coveredTxs.isArray()) {
+                        for (JsonNode tx : coveredTxs) {
+                            java.math.BigDecimal amount = sourceAmounts.get(tx.asText());
+                            if (amount != null) {
+                                covered = covered.add(amount);
+                            }
+                        }
+                    }
+                    if (limit.subtract(covered).compareTo(java.math.BigDecimal.ZERO) < 0) {
+                        actions.add(new ExplanationViews.NextActionView(3, "AUTHORITY_GAP", "C3",
+                                null, "超出授权额度的交易部分（缺口）",
+                                "买方授权追加记录或逐笔拆分授权",
+                                "针对超出部分询问授权追加或其他付款性质；不得重复核验已覆盖部分",
+                                "超出部分能否并入解释（TP-10：不得整笔解释成立）",
+                                "超限部分提交 UNRESOLVED，保留缺口供人工判断"));
+                    }
+                } catch (NumberFormatException ignored) {
+                    // 额度格式错误已在提交校验拒绝
+                }
+            }
+        }
+        // 4. OPEN 决策支持任务即将到期：提醒既有义务
+        for (EnhancedDueDiligenceRequest task : eddRepository
+                .findByCaseIdAndStatusOrderByIdAsc(caseId, EnhancedDueDiligenceStatus.OPEN)) {
+            if (task.getPurpose() == EddTaskPurpose.DECISION_SUPPORT && task.getDueAt() != null) {
+                long daysLeft = java.time.temporal.ChronoUnit.DAYS.between(
+                        LocalDate.now(clock), task.getDueAt().toLocalDate());
+                if (daysLeft <= 5) {
+                    actions.add(new ExplanationViews.NextActionView(4, "DUE_SOON", null,
+                            "EDD#" + task.getId(), "第 " + task.getRoundNo() + " 轮补件（"
+                            + task.getDueAt().toLocalDate() + " 到期）",
+                            "原补件要求中尚未提交的材料项",
+                            "跟进承办人（" + task.getAssignedTo() + "）或明确等待责任",
+                            "义务是否按时履行（逾期进入运营队列）",
+                            "复核人可撤销或调整任务（记录原因）"));
+                }
+            }
+        }
+        // 5. 案件级待分派事实
+        for (ExplanationIssue issue : caseIssues) {
+            if (issue.getUnitId() == null && issue.getDisposition() == IssueDisposition.OPEN
+                    && issue.getSeverity() == IssueSeverity.DECISION_CRITICAL) {
+                actions.add(new ExplanationViews.NextActionView(5, "UNASSIGNED_FACT", null,
+                        issue.getIssueKey(), "该事实与预警单元的关联（或不相关认定）",
+                        "事实来源对应的业务系统",
+                        "把事实关联到具体单元，或说明与本次决定不相关的理由",
+                        "案件能否形成最终决定（待分派清单必须为空）",
+                        "无：必须关联或说明，不能静默跳过"));
+            }
+        }
+        actions.sort(java.util.Comparator.comparingInt(ExplanationViews.NextActionView::priority));
+        return actions;
+    }
+
+    /** 重复补件提醒（v3 计划 §7）：同事实键（issueKey 去除轮次后缀）已出现 ≥2 次 OPEN→处置记录。 */
+    @Transactional(readOnly = true)
+    public boolean repeatedEvidenceRequest(Long caseId, Long unitId, String factKey) {
+        List<ExplanationIssue> issues = issueRepository.findByCaseIdAndUnitIdOrderByIdAsc(caseId, unitId);
+        long count = issues.stream()
+                .filter(issue -> issue.getIssueKey() != null
+                        && issue.getIssueKey().contains(factKey)
+                        && issue.getDisposition() != IssueDisposition.OPEN)
+                .count();
+        return count >= 2;
+    }
+
+    private static String factQuestion(String code) {
+        return switch (code) {
+            case "C1" -> "付款账户所属主体与合同买方是否同一法定主体（主体消歧）";
+            case "C2" -> "买方因哪项交付对卖方负有多少货款义务";
+            case "C3" -> "谁授权谁、向谁、付哪笔、多少、何时有效";
+            default -> "这两笔钱是否在授权范围内履行了授权所指义务";
+        };
+    }
+
+    private static String factSuggestedSource(String code) {
+        return switch (code) {
+            case "C1" -> "核心系统账户归属 + KYC 主体标识";
+            case "C2" -> "订单/履约/验收记录";
+            case "C3" -> "可定位的授权版本及独立来源确认";
+            default -> "权威流水与授权/订单的逐笔分配";
+        };
+    }
+
+    private static String factSuggestedAction(String code) {
+        return switch (code) {
+            case "C1" -> "查询付款账户所属主体，核对买方历史名称后再判断是否代付";
+            case "C2" -> "核对指定订单与交付记录，不泛要全部财务资料";
+            case "C3" -> "对授权的签发、范围、撤销状态做一次独立确认";
+            default -> "核对无法解释的具体交易与超限差额";
+        };
+    }
+
+    private static String factAlternative(String code) {
+        return switch (code) {
+            case "C1" -> "同名/简称/历史名称先做主体消歧；确认同一主体回到普通货款流程";
+            case "C2" -> "往来核对记录可作为替代（单独一张发票不能覆盖全部结论）";
+            case "C3" -> "预先核实渠道取得的买方确认（联系电话不能仅来自本次可疑材料）";
+            default -> "买方或收款方入账用途核对";
+        };
+    }
+
+    private JsonNode parseQuiet(String json) {
+        try {
+            return objectMapper.readTree(json);
+        } catch (Exception e) {
+            return null;
+        }
     }
 
     // ==================== 就绪与最终复核依据 ====================
@@ -618,15 +1009,43 @@ public class ExplanationWorkspaceService implements ExplanationReadinessPort {
         return evaluateReadiness(caseEntity, null);
     }
 
-    /** 最终复核前校验：决策表 + 令牌 + 实质贡献人自审限制。 */
+    /**
+     * 仅校验依据令牌（A5-07 顺序修复）：在案件锁内、任何任务变更之前调用；
+     * 用户提交时看到的令牌必须与当前案件事实一致。
+     */
     @Transactional(readOnly = true)
+    public void validateReviewBasisToken(Long caseId, String reviewBasisToken) {
+        String expectedToken = reviewBasisToken(caseId);
+        if (reviewBasisToken == null || !reviewBasisToken.trim().equals(expectedToken)) {
+            throw new InvestigationRevisionConflictException(
+                    InvestigationRevisionConflictException.TYPE_COVERAGE, caseId, null,
+                    "最终复核依据令牌已失效（案件事实在取号后已变化），请重新获取复核依据");
+        }
+    }
+
+    /**
+     * 最终复核前校验：决策表 + 令牌 + 实质贡献人自审限制。
+     * A5-06 修复：预付交期按注入 Clock 在最终事务内即时重评（不再读取提交时冻结的布尔值）；
+     * 交期已过且无交付/延期依据 → 恢复关键待核验问题并阻断排除。任务覆盖由
+     * {@link #validateObligationCoverage} 按当前 OPEN 任务逐义务检查。
+     * tokenAlreadyValidated=true 时跳过令牌比较（A5-07：本事务的接续变更会使 token 变化，
+     * 不拿变更前 token 与变更后事实作等值比较；令牌已在变更前由 validateReviewBasisToken 校验）。
+     */
     public void validateReadyForReview(CaseEntity caseEntity, ReviewDecision decision,
                                        String reviewer, String reviewBasisToken) {
+        validateReadyForReview(caseEntity, decision, reviewer, reviewBasisToken, false);
+    }
+
+    public void validateReadyForReview(CaseEntity caseEntity, ReviewDecision decision,
+                                       String reviewer, String reviewBasisToken,
+                                       boolean tokenAlreadyValidated) {
         if (decision == ReviewDecision.REQUEST_ENHANCED_DUE_DILIGENCE) {
             return;
         }
+        // 时间即时重评（A5-06）：预付交期在最终事务内按当前 Clock 重新评估。
+        reevaluatePrepayDue(caseEntity);
         // 义务接续已在同一事务内先行完成（ReviewService 先调用 transferObligations），
-        // 因此按“接续已安排”口径评估任务门槛；OPEN DECISION_SUPPORT 且无计划时仍被阻断。
+        // 因此按"接续已安排"口径评估任务门槛；OPEN DECISION_SUPPORT 且无计划时仍被阻断。
         InvestigationReadinessResult readiness = evaluateReadiness(caseEntity, reviewer, true);
         List<String> blockers = switch (decision) {
             case CONFIRM_SUSPICIOUS -> readiness.confirmBlockers();
@@ -636,11 +1055,49 @@ public class ExplanationWorkspaceService implements ExplanationReadinessPort {
         if (!blockers.isEmpty()) {
             throw new IllegalStateException("调查尚未满足最终处置条件：" + String.join("；", blockers));
         }
-        String expectedToken = reviewBasisToken(caseEntity.getId());
-        if (reviewBasisToken == null || !reviewBasisToken.trim().equals(expectedToken)) {
-            throw new InvestigationRevisionConflictException(
-                    InvestigationRevisionConflictException.TYPE_COVERAGE, caseEntity.getId(), null,
-                    "最终复核依据令牌已失效（案件事实在取号后已变化），请重新获取复核依据");
+        if (!tokenAlreadyValidated) {
+            String expectedToken = reviewBasisToken(caseEntity.getId());
+            if (reviewBasisToken == null || !reviewBasisToken.trim().equals(expectedToken)) {
+                throw new InvestigationRevisionConflictException(
+                        InvestigationRevisionConflictException.TYPE_COVERAGE, caseEntity.getId(), null,
+                        "最终复核依据令牌已失效（案件事实在取号后已变化），请重新获取复核依据");
+            }
+        }
+    }
+
+    /**
+     * A5-06：预付配方的交期在最终事务内即时重评。
+     * 交期已过且未提供交付/合理延期依据 → 恢复 DELIVERY_OVERDUE 关键问题并推进 epoch；
+     * 该问题随后阻断最终排除（不自动变可疑，由人工判断）。
+     */
+    private void reevaluatePrepayDue(CaseEntity caseEntity) {
+        for (AlertExplanationUnit unit : unitRepository.findByCaseIdOrderByIdAsc(caseEntity.getId())) {
+            if (unit.getCurrentSubmissionId() == null
+                    || !ExplanationPolicyCatalog.GOODS_PREPAY_V1.equals(unit.getPolicyCode())) {
+                continue;
+            }
+            ExplanationSubmission submission = submissionRepository
+                    .findById(unit.getCurrentSubmissionId()).orElse(null);
+            if (submission == null || submission.getState() != SubmissionState.CURRENT
+                    || !submission.isFollowupRequired()) {
+                continue;
+            }
+            try {
+                JsonNode draft = objectMapper.readTree(submission.getPayloadJson());
+                ExplanationPolicyCatalog.Applicability applicability = readApplicability(draft);
+                LocalDate today = LocalDate.now(clock);
+                if (!policyCatalog.deliveryNotYetDue(applicability, today)) {
+                    // 交期已过：恢复关键问题（幂等 ensureIssue），阻断最终排除直至人工解决。
+                    ensureIssue(caseEntity.getId(), unit.getId(), "DELIVERY_OVERDUE:" + unit.getId(),
+                            IssueSeverity.DECISION_CRITICAL, "Q3",
+                            "最终复核时重评：预付款约定交期已过且未提供交付或合理延期依据；"
+                                    + "不能继续按 NOT_YET_DUE 排除，需人工核验履约情况。",
+                            "system");
+                    bumpEpoch(caseEntity.getId(), "PREPAY_DUE_REEVALUATED:" + unit.getId());
+                }
+            } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
+                throw new IllegalStateException("提交 payload 损坏，不能评估交期：" + unit.getId(), e);
+            }
         }
     }
 
@@ -711,6 +1168,19 @@ public class ExplanationWorkspaceService implements ExplanationReadinessPort {
                         && issue.getSeverity() == IssueSeverity.INTEGRITY_BLOCKER);
         if (!adoptedFactsUsable) {
             general.add("存在未解决的完整性/身份错误（INTEGRITY_BLOCKER）：不得以被破坏的依据形成最终决定");
+        }
+        // 案件级待分派事实（unitId=null 的 DECISION_CRITICAL，如 FACT_UNASSIGNED / 反证）：
+        // 清单非空时不得形成任何最终决定（A5-03）；必须先完成关联或有依据的不相关认定。
+        List<ExplanationIssue> unassignedCritical = issues.stream()
+                .filter(issue -> issue.getUnitId() == null
+                        && issue.getDisposition() == IssueDisposition.OPEN
+                        && issue.getSeverity() == IssueSeverity.DECISION_CRITICAL)
+                .toList();
+        if (!unassignedCritical.isEmpty()) {
+            general.add("存在 " + unassignedCritical.size() + " 项案件级待分派关键事实（未关联预警单元）："
+                    + unassignedCritical.stream().map(ExplanationIssue::getIssueKey)
+                    .reduce((a, b) -> a + "、" + b).orElse("")
+                    + "；需先关联到具体预警单元或给出有依据的不相关认定，然后才能形成最终决定");
         }
         boolean policyApplicable = !units.isEmpty() && units.stream()
                 .allMatch(unit -> unit.getPolicyCode() != null);
@@ -791,6 +1261,151 @@ public class ExplanationWorkspaceService implements ExplanationReadinessPort {
     ) {
     }
 
+    /**
+     * 代付配方的事实约束（v3 计划 §6/§8；TP-06/TP-09）：
+     * 草稿中 claims 节声明 C1~C6 状态；EXPLAINED 要求 C1~C4 全部 SUPPORTED。
+     * C5/C6 允许 UNRESOLVED（保留未知）但不允许 CONTRADICTED（矛盾必须先处理）。
+     */
+    private void validateGroupPaymentClaims(CaseEntity caseEntity, JsonNode draft) {
+        JsonNode claims = draft.get("claims");
+        if (claims == null || !claims.isObject()) {
+            throw new IllegalArgumentException("集团代付配方需声明 C1~C6 事实（claims）");
+        }
+        for (String code : new String[]{"C1", "C2", "C3", "C4"}) {
+            JsonNode claim = claims.get(code);
+            if (claim == null || !claim.isObject()) {
+                throw new IllegalArgumentException("集团代付配方必须回答事实 " + code
+                        + "（C1~C4 不可整体跳过）");
+            }
+            String status = text(claim, "status", "UNASSESSED");
+            if (!Set.of("SUPPORTED", "CONTRADICTED", "UNRESOLVED", "NOT_APPLICABLE", "UNASSESSED")
+                    .contains(status)) {
+                throw new IllegalArgumentException("事实 " + code + " 状态不在允许范围：" + status);
+            }
+            if (!"SUPPORTED".equals(status)) {
+                throw new IllegalArgumentException("事实 " + code + " 状态为 " + status
+                        + "，不能建议 EXPLAINED；请先完成该事实的定向核验，"
+                        + "或提交 UNRESOLVED/SUSPICIOUS 保留判断");
+            }
+            String judgement = text(claim, "judgement");
+            if (judgement.length() < 10) {
+                throw new IllegalArgumentException("事实 " + code + " 的判断需至少 10 个字符"
+                        + "（为什么证据支持该事实）");
+            }
+        }
+        for (String code : new String[]{"C5", "C6"}) {
+            JsonNode claim = claims.get(code);
+            if (claim == null || !claim.isObject()) {
+                continue; // C5/C6 可省略（省略视为未评估，不阻断 EXPLAINED，由 Q5/Q6 承担）
+            }
+            String status = text(claim, "status", "UNASSESSED");
+            if ("CONTRADICTED".equals(status)) {
+                throw new IllegalArgumentException("事实 " + code + " 存在已评估矛盾（CONTRADICTED），"
+                        + "不能建议 EXPLAINED；需先处理矛盾或改判 SUSPICIOUS");
+            }
+        }
+        // 授权额度缺口（TP-10）：声明授权额度 < 已覆盖交易合计（按服务器来源金额）→
+        // 超出部分保留缺口，不得整笔解释成立。
+        JsonNode authority = draft.get("authority");
+        if (authority != null && authority.isObject()) {
+            String limitText = text(authority, "limitAmount");
+            if (!limitText.isBlank()) {
+                java.math.BigDecimal limit;
+                try {
+                    limit = new java.math.BigDecimal(limitText.trim());
+                } catch (NumberFormatException e) {
+                    throw new IllegalArgumentException("授权额度需为定点数字符串：" + limitText);
+                }
+                java.math.BigDecimal covered = java.math.BigDecimal.ZERO;
+                JsonNode coveredTxs = authority.get("coveredTransactionIds");
+                if (coveredTxs != null && coveredTxs.isArray()) {
+                    Map<String, java.math.BigDecimal> sourceAmounts = serverTransactionAmounts(caseEntity);
+                    for (JsonNode tx : coveredTxs) {
+                        java.math.BigDecimal amount = sourceAmounts.get(tx.asText());
+                        if (amount == null) {
+                            throw new IllegalArgumentException("授权覆盖的交易 " + tx.asText()
+                                    + " 不属于服务器冻结的交易来源集合");
+                        }
+                        covered = covered.add(amount);
+                    }
+                }
+                java.math.BigDecimal gap = limit.subtract(covered);
+                if (gap.compareTo(java.math.BigDecimal.ZERO) < 0) {
+                    throw new IllegalArgumentException("代付授权额度 " + limit.toPlainString()
+                            + " 低于已覆盖交易合计 " + covered.toPlainString() + "；超出部分 "
+                            + gap.negate().toPlainString() + " 保留缺口，不得整笔解释成立"
+                            + "（TP-10）；请提交 UNRESOLVED 并说明缺口处理安排");
+                }
+            }
+        }
+    }
+
+    /**
+     * 代付配方的缺口登记（TP-10/TP-11/TP-12 语义）：
+     * 授权额度不足、部分订单未被授权覆盖、授权状态 CONTRADICTED 等，
+     * 任何 outcome 下都产生 DECISION_CRITICAL 问题；不因多数金额已解释吞掉缺口。
+     */
+    private void registerGroupPaymentGaps(CaseEntity caseEntity, AlertExplanationUnit unit,
+                                          JsonNode draft, String actor) {
+        JsonNode claims = draft.get("claims");
+        if (claims == null || !claims.isObject()) {
+            return; // 缺 claims 已在 EXPLAINED 校验拒绝；非 EXPLAINED 提交保留问题路径
+        }
+        JsonNode c3 = claims.get("C3");
+        JsonNode c4 = claims.get("C4");
+        if (c3 != null && c3.isObject()) {
+            String status = text(c3, "status", "UNASSESSED");
+            if ("CONTRADICTED".equals(status) || "UNRESOLVED".equals(status) || "UNASSESSED".equals(status)) {
+                ensureIssue(caseEntity.getId(), unit.getId(),
+                        "GROUP_AUTHORITY:" + unit.getId(), IssueSeverity.DECISION_CRITICAL, "Q3",
+                        "代付授权事实（C3）状态为 " + status + "；不能整体解释成立，"
+                                + "需对授权签发、范围与撤销状态定向核验。", actor);
+            }
+        }
+        if (c4 != null && c4.isObject()) {
+            String status = text(c4, "status", "UNASSESSED");
+            if ("CONTRADICTED".equals(status) || "UNRESOLVED".equals(status) || "UNASSESSED".equals(status)) {
+                ensureIssue(caseEntity.getId(), unit.getId(),
+                        "GROUP_EXECUTION:" + unit.getId(), IssueSeverity.DECISION_CRITICAL, "Q4",
+                        "逐笔执行事实（C4）状态为 " + status + "；存在未被授权覆盖或无法解释的具体交易，"
+                                + "需逐笔核对分配。", actor);
+            }
+        }
+        // 授权额度缺口：声明授权额度 < 命中交易合计 → 缺口保留（TP-10）。
+        JsonNode authority = draft.get("authority");
+        if (authority != null && authority.isObject()) {
+            String limitText = text(authority, "limitAmount");
+            if (!limitText.isBlank()) {
+                try {
+                    java.math.BigDecimal limit = new java.math.BigDecimal(limitText);
+                    java.math.BigDecimal covered = java.math.BigDecimal.ZERO;
+                    JsonNode coveredTxs = authority.get("coveredTransactionIds");
+                    if (coveredTxs != null && coveredTxs.isArray()) {
+                        Map<String, java.math.BigDecimal> sourceAmounts =
+                                serverTransactionAmounts(caseEntity);
+                        for (JsonNode tx : coveredTxs) {
+                            java.math.BigDecimal amount = sourceAmounts.get(tx.asText());
+                            if (amount != null) {
+                                covered = covered.add(amount);
+                            }
+                        }
+                    }
+                    java.math.BigDecimal gap = limit.subtract(covered);
+                    if (gap.compareTo(java.math.BigDecimal.ZERO) < 0) {
+                        ensureIssue(caseEntity.getId(), unit.getId(),
+                                "AUTHORITY_LIMIT_EXCEEDED:" + unit.getId(), IssueSeverity.DECISION_CRITICAL,
+                                "Q4", "代付授权额度 " + limit.toPlainString()
+                                        + " 低于已覆盖交易合计 " + covered.toPlainString()
+                                        + "；超出部分 " + gap.negate().toPlainString()
+                                        + " 保留缺口，不得整笔解释成立。", actor);
+                    }
+                } catch (NumberFormatException e) {
+                    throw new IllegalArgumentException("授权额度需为定点数字符串：" + limitText);
+                }
+            }
+        }
+    }
+
     private DraftSummary validateDraftContent(CaseEntity caseEntity, AlertExplanationUnit unit,
                                               JsonNode draft,
                                               ExplanationPolicyCatalog.Applicability applicability,
@@ -856,6 +1471,27 @@ public class ExplanationWorkspaceService implements ExplanationReadinessPort {
                 throw new IllegalArgumentException("交易 " + tx + " 的订单/用途分配合计与交易金额不一致"
                         + "（声明 " + declared.toPlainString() + "，分配 " + sum.toPlainString()
                         + "）；差额必须为 0.00，费用/退款用独立调整项表达");
+            }
+        }
+
+        // 服务器冻结来源对账（A5-01/TP-04）：声明的命中交易必须存在于服务器可枚举的交易源集合，
+        // 且金额与权威来源一致；自编交易 ID / 金额自洽不能通过提交。
+        Map<String, java.math.BigDecimal> sourceAmounts = serverTransactionAmounts(caseEntity);
+        if (sourceAmounts.isEmpty()) {
+            throw new IllegalStateException("服务器无法枚举本客户的交易事实（来源数据缺失）；"
+                    + "不能以调用方自证的交易集合形成解释依据，需先修复来源数据同步");
+        }
+        for (String tx : uniqueReviewed) {
+            java.math.BigDecimal sourceAmount = sourceAmounts.get(tx);
+            if (sourceAmount == null) {
+                throw new IllegalArgumentException("命中交易 " + tx + " 不属于服务器冻结的交易来源集合；"
+                        + "自编交易 ID 不能作为解释依据");
+            }
+            java.math.BigDecimal declared2 = new java.math.BigDecimal(amountByTx.get(tx));
+            if (declared2.compareTo(sourceAmount) != 0) {
+                throw new IllegalArgumentException("交易 " + tx + " 的声明金额（" + declared2.toPlainString()
+                        + "）与服务器来源金额（" + sourceAmount.toPlainString() + "）不一致；"
+                        + "以来源金额为准，费用/退款用独立调整项表达");
             }
         }
 
@@ -957,11 +1593,28 @@ public class ExplanationWorkspaceService implements ExplanationReadinessPort {
             }
             suspicionBasisComplete = true;
         }
-        // EXPLAINED 约束：全部问题已回答（SATISFIED/NOT_APPLICABLE）且无关键未知
+        // EXPLAINED 约束：全部问题已回答（SATISFIED/NOT_APPLICABLE）且无关键未知（A5-02：逐题可采用条件）
         if (outcome == ExplanationOutcome.EXPLAINED) {
             if (criticalUnknown || openCritical) {
                 throw new IllegalArgumentException("存在关键未知或未解决的关键问题，不能建议 EXPLAINED；"
                         + "可选择 SUSPICIOUS（记录怀疑依据）或 UNRESOLVED（保留未知）");
+            }
+            // 逐题可采用条件：NOT_SATISFIED 表示该问题的核验未通过；解释成立要求全部问题
+            // SATISFIED 或具有明确理由与适用依据的 NOT_APPLICABLE（A5-02）。
+            for (String code : new String[]{"Q1", "Q2", "Q3", "Q4", "Q5", "Q6"}) {
+                JsonNode question = questions.get(code);
+                QuestionAssessment assessment = parseEnum(QuestionAssessment.class,
+                        text(question, "assessment"), "问题 " + code + " 评估");
+                if (assessment == QuestionAssessment.NOT_SATISFIED) {
+                    throw new IllegalArgumentException("问题 " + code + " 的核验结论为 NOT_SATISFIED，"
+                            + "不能建议 EXPLAINED；请先解决该问题（补充核验或修订判断），"
+                            + "或提交 UNRESOLVED 保留未知（NOT_SATISFIED 不会自动变成 SUSPICIOUS）");
+                }
+            }
+            // 代付配方（v3 计划 §6/§8）：C1~C4 必须全部 SUPPORTED；任何 CONTRADICTED/UNRESOLVED
+            // 阻断 EXPLAINED（TP-06/TP-09/TP-12）。部分授权（TP-10/TP-11）在金额/订单缺口中阻断。
+            if (ExplanationPolicyCatalog.GOODS_GROUP_PAYMENT_V1.equals(policyCode)) {
+                validateGroupPaymentClaims(caseEntity, draft);
             }
         }
         List<String> disclosed = stringList(draft, "disclosedUnknowns");
@@ -1140,7 +1793,7 @@ public class ExplanationWorkspaceService implements ExplanationReadinessPort {
                 .filter(issue -> issue.getDisposition() == IssueDisposition.OPEN)
                 .forEach(issue -> blockers.add(issue.getSeverity() + ":" + issue.getDescription()));
         return new ExplanationViews.UnitView(unit.getId(), unit.getAlertId(), alertLabel(alertOf(unit)),
-                unit.getHypothesisId(), unit.getPolicyCode(), unit.getDraftRevision(),
+                unit.getHypothesisId(), unit.getPolicyCode(), unit.getDraftRevision(), unit.getDraftJson(),
                 current != null, unit.getCurrentSubmissionId(),
                 current == null ? null : current.getOutcome(),
                 current != null && current.isCriticalUnknown(),
@@ -1164,6 +1817,15 @@ public class ExplanationWorkspaceService implements ExplanationReadinessPort {
                 issue.getSeverity(), issue.getQuestionCode(), issue.getTransactionIds(),
                 issue.getDescription(), issue.getDisposition(), issue.getDispositionReason(),
                 issue.getResolvedBy(), issue.getConfirmedBy(), issue.getRevision());
+    }
+
+    private ExplanationViews.IssueReviewView issueReviewView(ExplanationIssueReview review) {
+        return new ExplanationViews.IssueReviewView(review.getId(), review.getCaseId(), review.getIssueId(),
+                review.getProposalRevision(), review.getOriginalSeverity(), review.getProposedSeverity(),
+                review.getReason(), review.getEvidenceReference(), review.getProposedBy(),
+                String.valueOf(review.getProposedAt()), review.getStatus(), review.getConfirmedBy(),
+                review.getConfirmedAt() == null ? null : String.valueOf(review.getConfirmedAt()),
+                review.getRejectedReason());
     }
 
     private ExplanationViews.EvidenceView evidenceView(EvidenceArtifactVersion artifact) {
@@ -1249,7 +1911,8 @@ public class ExplanationWorkspaceService implements ExplanationReadinessPort {
                 bool(policy, "payerMatchesContractBuyer"),
                 bool(policy, "payeeMatchesContractSeller"),
                 text(policy, "contractNumber"),
-                text(policy, "deliveryDueDate"));
+                text(policy, "deliveryDueDate"),
+                text(policy, "groupRelationshipStatus"));
     }
 
     private String inputDigestOf(CaseEntity caseEntity, AlertExplanationUnit unit) {
@@ -1273,6 +1936,106 @@ public class ExplanationWorkspaceService implements ExplanationReadinessPort {
         return alertRepository.findByCaseIdOrderByOccurredAtAsc(caseId).stream()
                 .filter(alert -> alert.getStatus() == com.bank.aml.investigation.AlertStatus.LINKED)
                 .count();
+    }
+
+    /**
+     * 服务器冻结的交易来源集合（v3 计划 §9.1 / A5-01）：
+     * 以 CustomerDataPort 的 sourceRecordId 为键返回权威金额；来源身份缺失的交易不进入对账
+     * （显式未知优先于编造身份）。范围对账、授权额度与档案口径统一使用本集合。
+     */
+    private Map<String, java.math.BigDecimal> serverTransactionAmounts(CaseEntity caseEntity) {
+        Map<String, java.math.BigDecimal> amounts = new java.util.LinkedHashMap<>();
+        try {
+            for (com.bank.aml.domain.TransactionRecord transaction : customerDataPort
+                    .transactionsOf(caseEntity.getCustomerId())) {
+                if (transaction.sourceRecordId() == null || transaction.sourceRecordId().isBlank()) {
+                    continue;
+                }
+                amounts.putIfAbsent(transaction.sourceRecordId(), transaction.amount());
+            }
+        } catch (RuntimeException e) {
+            // 来源读取失败：返回空集合 → 调用方按"来源数据缺失"阻断，不静默降级为可解释。
+            return Map.of();
+        }
+        return amounts;
+    }
+
+    /** 同事务持久化材料/问题使用记录（A5-05）：来源变更按本表反查受影响提交。 */
+    private void persistEvidenceUses(Long caseId, Long submissionId, JsonNode draft, DraftSummary summary) {
+        JsonNode questions = draft.get("questions");
+        boolean wrote = false;
+        if (questions != null && questions.isObject()) {
+            for (String code : QUESTION_CODES) {
+                JsonNode question = questions.get(code);
+                if (question == null || !question.isObject()) {
+                    continue;
+                }
+                for (JsonNode artifactId : intList(question, "artifactVersionIds")) {
+                    ExplanationEvidenceUse use = new ExplanationEvidenceUse();
+                    use.setSubmissionId(submissionId);
+                    use.setCaseId(caseId);
+                    use.setQuestionCode(code);
+                    use.setArtifactVersionId(artifactId.asLong());
+                    use.setDirection(ExplanationEvidenceDirection.SUPPORTS_EXPLANATION);
+                    use.setLocation(text(question, "factLocation"));
+                    evidenceUseRepository.save(use);
+                    wrote = true;
+                }
+                for (JsonNode issueId : intList(question, "issueIds")) {
+                    ExplanationEvidenceUse use = new ExplanationEvidenceUse();
+                    use.setSubmissionId(submissionId);
+                    use.setCaseId(caseId);
+                    use.setQuestionCode(code);
+                    use.setVerificationEventId(null);
+                    use.setDirection(ExplanationEvidenceDirection.CHALLENGES_EXPLANATION);
+                    use.setNote("issue:" + issueId.asLong());
+                    evidenceUseRepository.save(use);
+                    wrote = true;
+                }
+            }
+        }
+        if (!wrote) {
+            // 无任何引用的提交也显式留痕（依赖链完整可查询），并阻断可解释结论：
+            // A5-01 要求关键事实有可定位来源；完全无引用的 EXPLAINED 已被六问题校验拒绝，
+            // 此处仅记录方向性记录保证反查表有行。
+            ExplanationEvidenceUse use = new ExplanationEvidenceUse();
+            use.setSubmissionId(submissionId);
+            use.setCaseId(caseId);
+            use.setQuestionCode("Q1");
+            use.setDirection(ExplanationEvidenceDirection.CONTEXT);
+            use.setNote("submission-without-referenced-evidence");
+            evidenceUseRepository.save(use);
+        }
+    }
+
+    /** 同事务冻结核验依据版本（A5-01）：服务器可枚举交易集 + 范围摘要（可重算）。 */
+    private void persistVerificationBasis(CaseEntity caseEntity, ExplanationSubmission submission,
+                                          JsonNode draft) {
+        int nextRevision = basisRepository.findTopByCaseIdOrderByBasisRevisionDesc(caseEntity.getId())
+                .map(VerificationBasis::getBasisRevision).orElse(0) + 1;
+        Map<String, java.math.BigDecimal> sourceAmounts = serverTransactionAmounts(caseEntity);
+        ObjectNode scopeJson = objectMapper.createObjectNode();
+        ObjectNode transactions = scopeJson.putObject("serverTransactions");
+        sourceAmounts.forEach((key, value) -> transactions.put(key, value.toPlainString()));
+        JsonNode scope = draft.get("scope");
+        List<String> reviewed = scope == null ? List.of() : stringList(scope, "reviewedTransactionIds");
+        scopeJson.putPOJO("declaredReviewed", objectMapper.valueToTree(reviewed));
+        scopeJson.put("submissionId", submission.getId());
+        scopeJson.put("outcome", submission.getOutcome().name());
+        String scopeJsonText = scopeJson.toString();
+        String scopeDigest = sha256Hex(scopeJsonText);
+        VerificationBasis basis = new VerificationBasis();
+        basis.setCaseId(caseEntity.getId());
+        basis.setBasisRevision(nextRevision);
+        basis.setScopeJson(scopeJsonText);
+        basis.setSourceCutoff(LocalDateTime.now(clock));
+        basis.setScopeDigest(scopeDigest);
+        basis.setBasisDigest(sha256Hex(scopeJsonText + "|" + submission.getInputDigest()));
+        basis.setCreatedBy(submission.getSubmittedBy());
+        basis.setCreatedAt(LocalDateTime.now(clock));
+        basisRepository.save(basis);
+        submission.setBasisId(basis.getId());
+        submissionRepository.save(submission);
     }
 
     private static String truncate(String value) {

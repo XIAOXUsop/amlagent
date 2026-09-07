@@ -92,6 +92,7 @@ class EnhancedDueDiligenceContinuationTest {
                 .thenReturn(List.of(openSupport));
         when(repository.findTopByCaseIdOrderByRoundNoDesc(CASE_ID))
                 .thenReturn(Optional.of(openSupport));
+        when(repository.findByIdAndCaseId(22L, CASE_ID)).thenReturn(Optional.of(openSupport));
 
         List<EnhancedDueDiligenceService.ContinuationTaskPlan> plans = List.of(
                 new EnhancedDueDiligenceService.ContinuationTaskPlan(22L, "analyst", "调查一组",
@@ -121,6 +122,64 @@ class EnhancedDueDiligenceContinuationTest {
                 plans, null))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("完成标准");
+    }
+
+    /** TP-21（A5-07）：无关接续计划（originRequestId 不存在）→ 拒绝；不得遍历取消全部 OPEN 任务。 */
+    @Test
+    void unrelatedPlanIsRejectedAndOtherTasksRemainOpen() {
+        var first = task(22L, 1, EddTaskPurpose.DECISION_SUPPORT, EnhancedDueDiligenceStatus.OPEN);
+        var second = task(23L, 2, EddTaskPurpose.DECISION_SUPPORT, EnhancedDueDiligenceStatus.OPEN);
+        when(repository.findByCaseIdAndStatusOrderByIdAsc(CASE_ID, EnhancedDueDiligenceStatus.OPEN))
+                .thenReturn(List.of(first, second));
+        when(repository.findByIdAndCaseId(999L, CASE_ID)).thenReturn(Optional.empty());
+        var plan = new EnhancedDueDiligenceService.ContinuationTaskPlan(999L, "analyst", "team-a",
+                LocalDateTime.now().plusDays(3), List.of("TRANSACTION_PURPOSE"),
+                "Verify a completely unrelated transaction purpose.", "{\"issueIds\":[]}");
+        assertThatThrownBy(() -> service.transferObligations(CASE_ID, "reviewer",
+                LocalDateTime.now(), List.of(plan), 88L))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("不存在或不属于本案件");
+        // 两个原任务都不被取消（逐项对应，不遍历取消）
+        assertThat(first.getStatus()).isEqualTo(EnhancedDueDiligenceStatus.OPEN);
+        assertThat(second.getStatus()).isEqualTo(EnhancedDueDiligenceStatus.OPEN);
+    }
+
+    /** TP-21：计划只覆盖一个原任务 → 只有被引用的任务被取消；未覆盖的保持 OPEN 阻断。 */
+    @Test
+    void partialCoverageOnlyCancelsReferencedOrigin() {
+        var first = task(22L, 1, EddTaskPurpose.DECISION_SUPPORT, EnhancedDueDiligenceStatus.OPEN);
+        var second = task(23L, 2, EddTaskPurpose.DECISION_SUPPORT, EnhancedDueDiligenceStatus.OPEN);
+        when(repository.findByCaseIdAndStatusOrderByIdAsc(CASE_ID, EnhancedDueDiligenceStatus.OPEN))
+                .thenReturn(List.of(first, second));
+        when(repository.findTopByCaseIdOrderByRoundNoDesc(CASE_ID)).thenReturn(Optional.of(first));
+        when(repository.findByIdAndCaseId(22L, CASE_ID)).thenReturn(Optional.of(first));
+        when(repository.findByIdAndCaseId(23L, CASE_ID)).thenReturn(Optional.of(second));
+        var plan = new EnhancedDueDiligenceService.ContinuationTaskPlan(22L, "analyst", "team-a",
+                LocalDateTime.now().plusDays(3), List.of("TRANSACTION_PURPOSE"),
+                "核验第一项义务：收款主体一致性，观察与方法已记录", "{\"issueIds\":[9]}");
+        service.transferObligations(CASE_ID, "reviewer", LocalDateTime.now(), List.of(plan), 88L);
+        // 只有被引用的 first 被取消；second 保持 OPEN（义务守恒）
+        assertThat(first.getStatus()).isEqualTo(EnhancedDueDiligenceStatus.CANCELLED);
+        assertThat(second.getStatus()).isEqualTo(EnhancedDueDiligenceStatus.OPEN);
+    }
+
+    /** 同一原任务被多个计划接替 → 拒绝。 */
+    @Test
+    void duplicateOriginReferenceIsRejected() {
+        var origin = task(22L, 1, EddTaskPurpose.DECISION_SUPPORT, EnhancedDueDiligenceStatus.OPEN);
+        when(repository.findByCaseIdAndStatusOrderByIdAsc(CASE_ID, EnhancedDueDiligenceStatus.OPEN))
+                .thenReturn(List.of(origin));
+        when(repository.findByIdAndCaseId(22L, CASE_ID)).thenReturn(Optional.of(origin));
+        var plan1 = new EnhancedDueDiligenceService.ContinuationTaskPlan(22L, "analyst", "team-a",
+                LocalDateTime.now().plusDays(3), List.of("TRANSACTION_PURPOSE"),
+                "核验第一项：收款主体一致性的完整记录", null);
+        var plan2 = new EnhancedDueDiligenceService.ContinuationTaskPlan(22L, "analyst", "team-b",
+                LocalDateTime.now().plusDays(4), List.of("SOURCE_OF_FUNDS"),
+                "核验第二项：资金来源的完整记录", null);
+        assertThatThrownBy(() -> service.transferObligations(CASE_ID, "reviewer",
+                LocalDateTime.now(), List.of(plan1, plan2), 88L))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("同一原任务被多个接续计划引用");
     }
 
     /** V2-17：父案 DONE 后，OPEN 的 CONTINUING_REVIEW 仍可提交材料；DECISION_SUPPORT 不行。 */
@@ -178,14 +237,51 @@ class EnhancedDueDiligenceContinuationTest {
                 EnhancedDueDiligenceStatus.SUBMITTED);
         submittedTask.setAssignedTo("analyst");
         when(repository.findByIdAndCaseId(21L, CASE_ID)).thenReturn(Optional.of(submittedTask));
-        when(repository.findById(21L)).thenReturn(Optional.of(submittedTask));
+        when(repository.findById(21L)).thenAnswer(inv -> {
+            submittedTask.setStatus(EnhancedDueDiligenceStatus.RESOLVED);
+            submittedTask.setResolvedBy("reviewer-b");
+            return Optional.of(submittedTask);
+        });
+        // 条件更新：版本与状态绑定，成功返回 1
+        when(repository.completeTask(eq(21L), eq(CASE_ID),
+                eq(EnhancedDueDiligenceStatus.SUBMITTED),
+                eq(EnhancedDueDiligenceStatus.RESOLVED),
+                eq(0), any(), eq("reviewer-b"), any())).thenReturn(1);
 
         EnhancedDueDiligenceView view = service.completeTask(CASE_ID, 21L, 0,
                 "复核确认：收款主体一致性核验完成，观察与限制已记录", "reviewer-b");
 
-        assertThat(submittedTask.getStatus()).isEqualTo(EnhancedDueDiligenceStatus.RESOLVED);
-        assertThat(submittedTask.getResolutionReason()).contains("核验完成");
+        assertThat(submittedTask.getResolvedBy()).isEqualTo("reviewer-b");
         assertThat(view).isNotNull();
+    }
+
+    /** A5-08：材料提交人不能自行完成核验；expectedRevision 参与条件更新。 */
+    @Test
+    void submitterCannotCompleteOwnTaskAndStaleRevisionIsRejected() {
+        EnhancedDueDiligenceRequest submittedTask = task(21L, 2, EddTaskPurpose.CONTINUING_REVIEW,
+                EnhancedDueDiligenceStatus.SUBMITTED);
+        submittedTask.setAssignedTo("analyst");
+        submittedTask.setRespondedBy("admin-a");
+        submittedTask.setRevision(5);
+        when(repository.findByIdAndCaseId(21L, CASE_ID)).thenReturn(Optional.of(submittedTask));
+
+        // 材料提交人自行完成 → 拒绝（ADMIN 兼具双权限同样禁止自审）
+        assertThatThrownBy(() -> service.completeTask(CASE_ID, 21L, 5, "I reviewed my own submission.", "admin-a"))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("不能自行完成核验");
+        // 旧版本（expectedRevision=0 vs 实际 5）→ 409 冲突
+        assertThatThrownBy(() -> service.completeTask(CASE_ID, 21L, 0, "复核确认：核验完成，依据已记录", "reviewer-b"))
+                .isInstanceOf(com.bank.aml.common.exception.InvestigationRevisionConflictException.class)
+                .hasMessageContaining("版本已变化");
+        // 竞争条件更新失败（另一位已抢先完成）→ 409
+        when(repository.completeTask(eq(21L), eq(CASE_ID),
+                eq(EnhancedDueDiligenceStatus.SUBMITTED),
+                eq(EnhancedDueDiligenceStatus.RESOLVED),
+                eq(5), any(), eq("reviewer-b"), any())).thenReturn(0);
+        assertThatThrownBy(() -> service.completeTask(CASE_ID, 21L, 5, "复核确认：核验完成，依据已记录", "reviewer-b"))
+                .isInstanceOf(com.bank.aml.common.exception.InvestigationRevisionConflictException.class)
+                .hasMessageContaining("已被他人完成");
+        assertThat(submittedTask.getStatus()).isEqualTo(EnhancedDueDiligenceStatus.SUBMITTED);
     }
 
     private EnhancedDueDiligenceRequest task(Long id, int round, EddTaskPurpose purpose,

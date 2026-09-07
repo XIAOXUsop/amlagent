@@ -862,6 +862,7 @@ export interface ExplanationUnitView {
   hypothesisId: number | null
   policyCode: string | null
   draftRevision: number
+  draftJson: string | null
   hasCurrentSubmission: boolean
   currentSubmissionId: number | null
   currentOutcome: 'EXPLAINED' | 'SUSPICIOUS' | 'UNRESOLVED' | null
@@ -955,7 +956,7 @@ export async function getExplanationWorkspace(caseId: number): Promise<Explanati
 
 export async function captureExplanationEvidence(
   caseId: number,
-  body: { sourceSystem: string; sourceReference: string; contentSha256: string; claimedSha256?: string },
+  body: { sourceSystem: string; sourceReference: string },
 ): Promise<ExplanationEvidenceView> {
   return (await api.post(`/cases/${caseId}/investigation/evidence/captures`, body)).data
 }
@@ -989,9 +990,61 @@ export async function amendExplanationUnit(
 
 export async function disposeExplanationIssue(
   caseId: number, issueId: number,
-  body: { expectedRevision: number; disposition: string; reason: string; evidenceReference?: string; downgradeTo?: string; confirmedBy?: string },
+  body: { expectedRevision: number; disposition: string; reason: string; evidenceReference?: string },
 ): Promise<ExplanationIssueView> {
   return (await api.post(`/cases/${caseId}/investigation/issues/${issueId}/dispositions`, body)).data
+}
+
+/** 降级提案第一步（A5-04）：分析员提交拟议降级，等待独立复核人确认。 */
+export async function proposeIssueDowngrade(
+  caseId: number, issueId: number,
+  body: { expectedRevision: number; downgradeTo: string; reason: string; evidenceReference?: string },
+) {
+  return (await api.post(`/cases/${caseId}/investigation/issues/${issueId}/downgrade-proposals`, body)).data
+}
+
+/** 降级确认第二步（A5-04）：另一位 REVIEWER/ADMIN 独立确认。 */
+export async function confirmIssueDowngrade(
+  caseId: number, proposalId: number,
+  body: { expectedProposalRevision: number; expectedIssueRevision: number; confirmNote?: string },
+) {
+  return (await api.post(`/cases/${caseId}/investigation/downgrade-proposals/${proposalId}/confirmations`, body)).data
+}
+
+/** 拒绝降级提案。 */
+export async function rejectIssueDowngrade(
+  caseId: number, proposalId: number,
+  body: { expectedProposalRevision: number; rejectedReason: string },
+) {
+  return (await api.post(`/cases/${caseId}/investigation/downgrade-proposals/${proposalId}/rejections`, body)).data
+}
+
+/** 定向核验建议（v3 §7）：下一动作按优先级排序。 */
+export interface ExplanationNextActionView {
+  priority: number
+  category: string
+  relatedClaimCode: string | null
+  relatedIssueKey: string | null
+  missingFact: string
+  suggestedSource: string
+  suggestedAction: string
+  whatItCanChange: string
+  alternative: string
+}
+
+export async function fetchUnitNextActions(
+  caseId: number, unitId: number,
+): Promise<ExplanationNextActionView[]> {
+  return (await api.get(`/cases/${caseId}/investigation/units/${unitId}/next-actions`)).data
+}
+
+/** 重复补件提醒：同事实键已有 ≥2 条处置记录。 */
+export async function checkRepeatedEvidence(
+  caseId: number, unitId: number, factKey: string,
+): Promise<{ repeated: boolean }> {
+  return (await api.get(`/cases/${caseId}/investigation/units/${unitId}/repeated-evidence`, {
+    params: { factKey },
+  })).data
 }
 
 export async function proposeExplanationEdd(

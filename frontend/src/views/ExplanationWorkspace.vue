@@ -9,7 +9,9 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   amendExplanationUnit, captureExplanationEvidence, disposeExplanationIssue,
   getExplanationWorkspace, saveExplanationDraft, submitExplanationUnit,
+  proposeIssueDowngrade, fetchUnitNextActions,
   type ExplanationIssueView, type ExplanationUnitView, type ExplanationWorkspaceView,
+  type ExplanationNextActionView,
 } from '../api/client'
 import {
   dispositionText, isExplanationRevisionConflict, outcomeText, outcomeTagType,
@@ -23,8 +25,9 @@ const loading = ref(false)
 const actionUnitId = ref<number | null>(null)
 const expandedDraft = ref<number | null>(null)
 
-const draftText = ref('')
-const draftRevision = ref(0)
+// 草稿按 caseId/unitId 隔离（A5-09）：跨单元编辑不再串稿；
+// 打开编辑时优先恢复服务端草稿（draftJson），本地未保存内容保留。
+const drafts = ref<Record<number, { text: string; revision: number }>>({})
 
 const explainCounts = computed(() => {
   const units = workspace.value?.units ?? []
@@ -51,37 +54,64 @@ onMounted(reload)
 
 function openDraft(unit: ExplanationUnitView) {
   expandedDraft.value = unit.unitId
+  const local = drafts.value[unit.unitId]
+  // 服务端草稿优先恢复；仅当本地存在未保存内容时提示差异（冲突时保留本地并展示服务器版本）。
+  const serverDraft = unit.draftJson ?? ''
+  const initial = local?.text && local.text.trim().length > 0 ? local.text : serverDraft
+  const serverChanged = local?.text && local.text.trim() !== serverDraft.trim() && serverDraft.length > 0
   ElMessageBox.prompt(
-    '粘贴/编辑六问题草稿 JSON（policy/scope/questions/outcome）；页面提供结构化编辑前的演示入口。'
-      + '\n提示：结论由服务端按配方与核验约束校验，前端不做门禁判断。',
+    (serverChanged
+      ? `注意：服务器上已有草稿（版本 ${unit.draftRevision}），下方显示你的本地未保存内容。\n`
+      : '粘贴/编辑六问题草稿 JSON（policy/scope/questions/outcome）；页面提供结构化编辑前的演示入口。\n')
+      + '提示：结论由服务端按配方与核验约束校验，前端不做门禁判断。',
     `编辑预警 ${unit.externalAlertId ?? unit.alertId} 的解释草稿`,
     {
       inputType: 'textarea',
-      inputValue: draftText.value || '',
+      inputValue: initial,
       inputValidator: (text: string) => (text?.trim().length >= 10) || '草稿 JSON 至少 10 个字符',
     },
   ).then(({ value }) => {
-    draftText.value = value.trim()
+    drafts.value[unit.unitId] = { text: value.trim(), revision: unit.draftRevision }
   }).catch(() => undefined)
 }
 
 async function saveDraft(unit: ExplanationUnitView) {
-  if (draftText.value.trim().length < 10) {
-    ElMessage.warning('请先在“编辑草稿”中填写草稿 JSON')
+  const local = drafts.value[unit.unitId]
+  if (!local || local.text.trim().length < 10) {
+    ElMessage.warning('请先在"编辑草稿"中填写草稿 JSON')
     return
   }
   actionUnitId.value = unit.unitId
   try {
     const updated = await saveExplanationDraft(props.caseId, unit.unitId, {
       expectedDraftRevision: unit.draftRevision,
-      draftJson: draftText.value.trim(),
+      draftJson: local.text.trim(),
     })
-    draftRevision.value = updated.draftRevision
+    drafts.value[unit.unitId] = { text: local.text.trim(), revision: updated.draftRevision }
     ElMessage.success('草稿已保存（草稿不产生最终业务判断）')
     await reload()
   } catch (error: any) {
     if (isExplanationRevisionConflict(error)) {
-      ElMessage.warning('草稿已被他人更新，请刷新后重新打开编辑（你粘贴的内容仍在本页）')
+      await reload()
+      // 冲突：保留本地草稿并展示服务器版本，由用户明确确认后再保存。
+      const fresh = workspace.value?.units.find((item) => item.unitId === unit.unitId)
+      const localText = drafts.value[unit.unitId]?.text ?? ''
+      drafts.value[unit.unitId] = { text: localText, revision: fresh?.draftRevision ?? unit.draftRevision }
+      ElMessageBox.confirm(
+        `草稿已被他人更新（服务器版本 ${fresh?.draftRevision ?? '-'}）。\n你的本地内容已保留在编辑框中，`
+          + `服务器当前草稿：\n\n${fresh?.draftJson ?? '（空）'}`,
+        '草稿版本冲突',
+        { confirmButtonText: '以本地内容覆盖', cancelButtonText: '放弃本地，使用服务器版本', type: 'warning' },
+      ).then(() => {
+        ElMessage.info('已保留本地内容；请再次点击"保存草稿"提交')
+      }).catch(() => {
+        if (fresh?.draftJson) {
+          drafts.value[unit.unitId] = { text: fresh.draftJson, revision: fresh.draftRevision }
+        } else {
+          delete drafts.value[unit.unitId]
+        }
+        ElMessage.info('已放弃本地编辑，使用服务器版本')
+      })
     } else {
       ElMessage.error(error?.response?.data?.message ?? '草稿保存失败，请刷新后重试')
     }
@@ -161,18 +191,53 @@ async function disposeIssue(issue: ExplanationIssueView, disposition: IssueDispo
   }
 }
 
-const captureForm = ref({ sourceSystem: 'CORE_BANKING', sourceReference: '', contentSha256: '' })
+/** 降级提案（A5-04 两步流程第一步）：提案后等待另一位 REVIEWER/ADMIN 独立确认。 */
+async function proposeDowngrade(issue: ExplanationIssueView) {
+  try {
+    const { value } = await ElMessageBox.prompt(
+      '降级需另一位复核人独立确认后生效。请输入降级理由（原等级、理由与引用，至少 20 个字符；'
+        + '格式：理由 | 证据引用）',
+      `提案降级：${issue.issueKey}（${severityText[issue.severity]} → CONTEXT_GAP）`,
+      { inputType: 'textarea' },
+    )
+    const [reason, evidenceReference] = value.split('|').map((part) => part?.trim() ?? '')
+    await proposeIssueDowngrade(props.caseId, issue.issueId, {
+      expectedRevision: issue.revision,
+      downgradeTo: 'CONTEXT_GAP',
+      reason,
+      ...(evidenceReference ? { evidenceReference } : {}),
+    })
+    ElMessage.success('降级提案已提交；等待另一位 REVIEWER/ADMIN 在独立请求中确认')
+    await reload()
+  } catch (error: any) {
+    if (error !== 'cancel' && error !== 'close') {
+      ElMessage.error(error?.response?.data?.message ?? '降级提案失败')
+    }
+  }
+}
+
+const nextActions = ref<ExplanationNextActionView[]>([])
+const nextActionsUnitId = ref<number | null>(null)
+
+async function loadNextActions(unit: ExplanationUnitView) {
+  nextActionsUnitId.value = unit.unitId
+  try {
+    nextActions.value = await fetchUnitNextActions(props.caseId, unit.unitId)
+  } catch (error: any) {
+    ElMessage.error(error?.response?.data?.message ?? '核验建议获取失败')
+  }
+}
+
+const captureForm = ref({ sourceSystem: 'CORE_BANKING', sourceReference: '' })
 
 async function captureEvidence() {
   try {
     await captureExplanationEvidence(props.caseId, {
       sourceSystem: captureForm.value.sourceSystem,
       sourceReference: captureForm.value.sourceReference.trim(),
-      contentSha256: captureForm.value.contentSha256.trim(),
     })
-    ElMessage.success('材料已登记（登记 ≠ 已核验）；新材料进入待分派事实清单')
+    ElMessage.success('材料已由服务端抓取并计算摘要（登记 ≠ 已核验）；新材料进入待分派事实清单')
     captureForm.value.sourceReference = ''
-    captureForm.value.contentSha256 = ''
     await reload()
   } catch (error: any) {
     ElMessage.error(error?.response?.data?.message ?? '材料登记失败，请刷新后重试')
@@ -249,6 +314,18 @@ function questionFocus(policyCode: string | null): Record<string, string> {
             @click="submitUnit(unit)">提交单元结论</el-button>
           <el-button v-if="unit.hasCurrentSubmission" size="small" type="warning" plain
             :loading="actionUnitId === unit.unitId" @click="amend(unit)">修订</el-button>
+          <el-button size="small" plain @click="loadNextActions(unit)">核验建议</el-button>
+        </div>
+        <div v-if="nextActionsUnitId === unit.unitId && nextActions.length" class="next-actions">
+          <div class="muted" style="margin-bottom:4px">下一项会改变判断的动作（按优先级排序）：</div>
+          <div v-for="(action, idx) in nextActions" :key="idx" class="next-action-row">
+            <el-tag size="small" effect="plain" :type="action.priority <= 2 ? 'danger' : 'info'">
+              P{{ action.priority }}
+            </el-tag>
+            <strong>{{ action.missingFact }}</strong>
+            <span class="muted">→ {{ action.suggestedAction }}</span>
+            <span v-if="action.relatedClaimCode" class="code-chip info">{{ action.relatedClaimCode }}</span>
+          </div>
         </div>
         <div class="question-focus muted">
           <span v-for="code in QUESTION_CODES" :key="code" class="code-chip info">
@@ -269,6 +346,8 @@ function questionFocus(policyCode: string | null): Record<string, string> {
             @click="disposeIssue(issue, 'DISCLOSED_UNRESOLVED')">披露未解决</el-button>
           <el-button v-if="issue.severity !== 'INTEGRITY_BLOCKER'" size="small"
             @click="disposeIssue(issue, 'NOT_RELEVANT_WITH_REASON')">说明不相关</el-button>
+          <el-button v-if="issue.severity !== 'INTEGRITY_BLOCKER'" size="small" type="info" plain
+            @click="proposeDowngrade(issue)">提案降级</el-button>
         </template>
       </div>
 
@@ -279,11 +358,10 @@ function questionFocus(policyCode: string | null): Record<string, string> {
           <el-option label="物流平台" value="LOGISTICS_PLATFORM" />
           <el-option label="税务平台" value="TAX_PLATFORM" />
           <el-option label="KYC 平台" value="KYC_PLATFORM" />
+          <el-option label="文档管理" value="DOCUMENT_MANAGEMENT" />
         </el-select>
         <el-input v-model="captureForm.sourceReference" size="small" placeholder="不透明来源引用（如 TXN-DOC-001）"
           style="width: 240px" />
-        <el-input v-model="captureForm.contentSha256" size="small" placeholder="实际内容 SHA-256"
-          style="width: 320px" />
         <el-button size="small" type="primary" plain @click="captureEvidence">登记材料</el-button>
       </div>
       <div v-for="artifact in workspace.artifacts" :key="artifact.artifactVersionId" class="artifact-row muted">
@@ -306,5 +384,7 @@ function questionFocus(policyCode: string | null): Record<string, string> {
 .issue-desc { flex: 1; min-width: 240px; font-size: 13px; }
 .capture-bar { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
 .artifact-row { font-size: 12px; margin: 4px 0; }
+.next-actions { background: var(--el-fill-color-lighter, #f5f7fa); border-radius: 6px; padding: 8px 10px; margin: 6px 0; }
+.next-action-row { display: flex; align-items: center; gap: 8px; font-size: 13px; margin: 4px 0; flex-wrap: wrap; }
 .muted { color: var(--el-text-color-secondary, #909399); }
 </style>

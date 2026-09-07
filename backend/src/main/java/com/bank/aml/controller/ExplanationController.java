@@ -54,13 +54,13 @@ public class ExplanationController {
         return workspaceService.openWorkspace(caseId);
     }
 
-    /** 抓取受控材料（不透明来源引用 + 声称哈希）；登记 ≠ 已核验。 */
+    /** 抓取受控材料（来源内容与摘要由服务端真实取得，A5-01）；登记 ≠ 已核验。 */
     @PostMapping("/evidence/captures")
     @PreAuthorize("hasAnyRole('ANALYST','ADMIN')")
     public ExplanationViews.EvidenceView capture(@PathVariable Long caseId,
                                                  @RequestBody CaptureRequest request) {
         return workspaceService.captureEvidence(caseId, request.sourceSystem(), request.sourceReference(),
-                request.contentSha256(), request.claimedSha256(), operator());
+                operator());
     }
 
     /** 记录具体核验动作（方法、观察、限制、结果）。 */
@@ -104,7 +104,7 @@ public class ExplanationController {
         return workspaceService.amendUnit(caseId, unitId, request.currentSubmissionId(), operator());
     }
 
-    /** 问题处置：解决 / 说明不相关 / 披露未解决；重要性降级需不同复核人确认。 */
+    /** 问题处置：解决 / 说明不相关 / 披露未解决（降级不再随处置一步完成，A5-04）。 */
     @PostMapping("/issues/{issueId}/dispositions")
     @PreAuthorize("hasAnyRole('ANALYST','ADMIN')")
     public ExplanationViews.IssueView dispose(@PathVariable Long caseId, @PathVariable Long issueId,
@@ -113,8 +113,40 @@ public class ExplanationController {
             throw new IllegalArgumentException("处置理由包含不被允许的内容");
         }
         return workspaceService.disposeIssue(caseId, issueId, request.expectedRevision(),
-                request.disposition(), request.reason(), request.evidenceReference(),
-                request.downgradeTo(), request.confirmedBy(), operator());
+                request.disposition(), request.reason(), request.evidenceReference(), operator());
+    }
+
+    /** 降级提案第一步（A5-04）：分析员提交拟议降级，等待独立复核人确认。 */
+    @PostMapping("/issues/{issueId}/downgrade-proposals")
+    @PreAuthorize("hasAnyRole('ANALYST','ADMIN')")
+    public ExplanationViews.IssueReviewView proposeDowngrade(@PathVariable Long caseId,
+                                                             @PathVariable Long issueId,
+                                                             @RequestBody DowngradeProposalRequest request) {
+        if (injectionGuard.scan(request.reason()).suspicious()) {
+            throw new IllegalArgumentException("降级理由包含不被允许的内容");
+        }
+        return workspaceService.proposeDowngrade(caseId, issueId, request.expectedRevision(),
+                request.downgradeTo(), request.reason(), request.evidenceReference(), operator());
+    }
+
+    /** 降级确认第二步（A5-04）：另一位已认证 REVIEWER/ADMIN 独立确认；身份由服务端写入。 */
+    @PostMapping("/downgrade-proposals/{proposalId}/confirmations")
+    @PreAuthorize("hasAnyRole('REVIEWER','ADMIN')")
+    public ExplanationViews.IssueView confirmDowngrade(@PathVariable Long caseId,
+                                                       @PathVariable Long proposalId,
+                                                       @RequestBody DowngradeConfirmationRequest request) {
+        return workspaceService.confirmDowngrade(caseId, proposalId, request.expectedProposalRevision(),
+                request.expectedIssueRevision(), request.confirmNote(), operator());
+    }
+
+    /** 拒绝降级提案：问题现状不变。 */
+    @PostMapping("/downgrade-proposals/{proposalId}/rejections")
+    @PreAuthorize("hasAnyRole('REVIEWER','ADMIN')")
+    public ExplanationViews.IssueReviewView rejectDowngrade(@PathVariable Long caseId,
+                                                            @PathVariable Long proposalId,
+                                                            @RequestBody DowngradeRejectionRequest request) {
+        return workspaceService.rejectDowngrade(caseId, proposalId, request.expectedProposalRevision(),
+                request.rejectedReason(), operator());
     }
 
     /** 分析员按问题提出补件建议（进入待处理复核队列，不产生 REVIEWER 权限）。 */
@@ -141,18 +173,35 @@ public class ExplanationController {
                 request.resolutionReason(), operator());
     }
 
+    /** 定向核验建议（v3 计划 §7）：下一动作按优先级排序；只对缺口发起可解释的补件。 */
+    @GetMapping("/units/{unitId}/next-actions")
+    public List<ExplanationViews.NextActionView> nextActions(@PathVariable Long caseId,
+                                                             @PathVariable Long unitId) {
+        return workspaceService.nextActions(caseId, unitId);
+    }
+
+    /** 重复补件提醒：同事实键已有 ≥2 条非 OPEN 处置记录 → 提示替代方式/升级。 */
+    @GetMapping("/units/{unitId}/repeated-evidence")
+    public Map<String, Object> repeatedEvidence(@PathVariable Long caseId, @PathVariable Long unitId,
+                                                @org.springframework.web.bind.annotation.RequestParam
+                                                String factKey) {
+        return Map.of("repeated", workspaceService.repeatedEvidenceRequest(caseId, unitId, factKey));
+    }
+
     /** 供前端展示配方口径（只读）。 */
     @GetMapping("/explanation-policies")
     public Map<String, Object> policies() {
         return Map.of(
                 "policies", List.of(ExplanationPolicyCatalog.GOODS_SETTLED_V1,
-                        ExplanationPolicyCatalog.GOODS_PREPAY_V1),
+                        ExplanationPolicyCatalog.GOODS_PREPAY_V1,
+                        ExplanationPolicyCatalog.GOODS_GROUP_PAYMENT_V1),
                 "settledQuestions", policyCatalog.questionFocus(ExplanationPolicyCatalog.GOODS_SETTLED_V1),
-                "prepayQuestions", policyCatalog.questionFocus(ExplanationPolicyCatalog.GOODS_PREPAY_V1));
+                "prepayQuestions", policyCatalog.questionFocus(ExplanationPolicyCatalog.GOODS_PREPAY_V1),
+                "groupPaymentQuestions",
+                policyCatalog.questionFocus(ExplanationPolicyCatalog.GOODS_GROUP_PAYMENT_V1));
     }
 
-    public record CaptureRequest(String sourceSystem, String sourceReference, String contentSha256,
-                                 String claimedSha256) {
+    public record CaptureRequest(String sourceSystem, String sourceReference) {
     }
 
     public record VerificationRequest(String method, String observedFacts, String limitations, String result) {
@@ -168,7 +217,18 @@ public class ExplanationController {
     }
 
     public record DispositionRequest(int expectedRevision, String disposition, String reason,
-                                     String evidenceReference, String downgradeTo, String confirmedBy) {
+                                     String evidenceReference) {
+    }
+
+    public record DowngradeProposalRequest(int expectedRevision, String downgradeTo, String reason,
+                                           String evidenceReference) {
+    }
+
+    public record DowngradeConfirmationRequest(int expectedProposalRevision, int expectedIssueRevision,
+                                               String confirmNote) {
+    }
+
+    public record DowngradeRejectionRequest(int expectedProposalRevision, String rejectedReason) {
     }
 
     public record EddProposalRequest(List<String> requiredItems, String unitLabel, String issueBindingsJson) {

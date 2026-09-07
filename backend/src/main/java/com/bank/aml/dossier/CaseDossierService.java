@@ -67,6 +67,10 @@ public class CaseDossierService {
     private final InvestigationEvidenceLinkRepository investigationEvidenceRepository;
     private final AlertInvestigationCoverageRepository alertCoverageRepository;
     private final CaseOperationsService caseOperationsService;
+    private final com.bank.aml.explanation.AlertExplanationUnitRepository explanationUnitRepository;
+    private final com.bank.aml.explanation.ExplanationClaimRepository explanationClaimRepository;
+    private final com.bank.aml.explanation.ExplanationIssueRepository explanationIssueRepository;
+    private final com.bank.aml.explanation.VerificationBasisRepository explanationBasisRepository;
     private final ObjectMapper objectMapper;
 
     public CaseDossierService(CaseRepository caseRepository,
@@ -77,7 +81,8 @@ public class CaseDossierService {
                               InvestigationSnapshotRepository snapshotRepository,
                               ObjectMapper objectMapper) {
         this(caseRepository, caseLogRepository, executionRepository, toolTraceRepository, reviewRepository,
-                snapshotRepository, null, null, null, null, null, null, null, null, null, objectMapper);
+                snapshotRepository, null, null, null, null, null, null, null, null, null,
+                null, null, null, null, objectMapper);
     }
 
     public CaseDossierService(CaseRepository caseRepository,
@@ -90,7 +95,7 @@ public class CaseDossierService {
                               ObjectMapper objectMapper) {
         this(caseRepository, caseLogRepository, executionRepository, toolTraceRepository, reviewRepository,
                 snapshotRepository, sanctionReviewRepository, null, null, null,
-                null, null, null, null, null, objectMapper);
+                null, null, null, null, null, null, null, null, null, objectMapper);
     }
 
     public CaseDossierService(CaseRepository caseRepository,
@@ -104,7 +109,7 @@ public class CaseDossierService {
                               ObjectMapper objectMapper) {
         this(caseRepository, caseLogRepository, executionRepository, toolTraceRepository, reviewRepository,
                 snapshotRepository, sanctionReviewRepository, enhancedDueDiligenceRepository, null, null,
-                null, null, null, null, null, objectMapper);
+                null, null, null, null, null, null, null, null, null, objectMapper);
     }
 
     @Autowired
@@ -124,6 +129,34 @@ public class CaseDossierService {
                               AlertInvestigationCoverageRepository alertCoverageRepository,
                               CaseOperationsService caseOperationsService,
                               ObjectMapper objectMapper) {
+        this(caseRepository, caseLogRepository, executionRepository, toolTraceRepository, reviewRepository,
+                snapshotRepository, sanctionReviewRepository, enhancedDueDiligenceRepository,
+                enhancedDueDiligenceEvidenceRepository, suspiciousTransactionReportRepository,
+                alertRepository, hypothesisRepository, investigationEvidenceRepository,
+                alertCoverageRepository, caseOperationsService,
+                null, null, null, null, objectMapper);
+    }
+
+    public CaseDossierService(CaseRepository caseRepository,
+                              CaseLogRepository caseLogRepository,
+                              CaseExecutionRepository executionRepository,
+                              ToolExecutionTraceRepository toolTraceRepository,
+                              ManualReviewRepository reviewRepository,
+                              InvestigationSnapshotRepository snapshotRepository,
+                              SanctionCandidateReviewRepository sanctionReviewRepository,
+                              EnhancedDueDiligenceRequestRepository enhancedDueDiligenceRepository,
+                              EnhancedDueDiligenceEvidenceRepository enhancedDueDiligenceEvidenceRepository,
+                              SuspiciousTransactionReportRepository suspiciousTransactionReportRepository,
+                              AmlAlertRepository alertRepository,
+                              InvestigationHypothesisRepository hypothesisRepository,
+                              InvestigationEvidenceLinkRepository investigationEvidenceRepository,
+                              AlertInvestigationCoverageRepository alertCoverageRepository,
+                              CaseOperationsService caseOperationsService,
+                              com.bank.aml.explanation.AlertExplanationUnitRepository explanationUnitRepository,
+                              com.bank.aml.explanation.ExplanationClaimRepository explanationClaimRepository,
+                              com.bank.aml.explanation.ExplanationIssueRepository explanationIssueRepository,
+                              com.bank.aml.explanation.VerificationBasisRepository explanationBasisRepository,
+                              ObjectMapper objectMapper) {
         this.caseRepository = caseRepository;
         this.caseLogRepository = caseLogRepository;
         this.executionRepository = executionRepository;
@@ -139,6 +172,10 @@ public class CaseDossierService {
         this.investigationEvidenceRepository = investigationEvidenceRepository;
         this.alertCoverageRepository = alertCoverageRepository;
         this.caseOperationsService = caseOperationsService;
+        this.explanationUnitRepository = explanationUnitRepository;
+        this.explanationClaimRepository = explanationClaimRepository;
+        this.explanationIssueRepository = explanationIssueRepository;
+        this.explanationBasisRepository = explanationBasisRepository;
         this.objectMapper = objectMapper;
     }
 
@@ -182,10 +219,45 @@ public class CaseDossierService {
                 alertCoverageRepository == null ? List.of()
                         : alertCoverageRepository.findByCaseIdOrderByAlertIdAsc(caseId).stream()
                         .map(this::alertCoverageRecord).toList(),
-                caseOperationsService == null ? null : caseOperationsRecord(caseOperationsService.get(caseId)));
+                caseOperationsService == null ? null : caseOperationsRecord(caseOperationsService.get(caseId)),
+                explanationSection(caseEntity, caseId));
 
-        return new CaseDossier("1.6", "INTERNAL_CONFIDENTIAL", Instant.now(), "SHA-256",
+        return new CaseDossier("1.7", "INTERNAL_CONFIDENTIAL", Instant.now(), "SHA-256",
                 sha256(content), content);
+    }
+
+    /** 解释核验档案段（v3 §11）：历史档案保持原貌；无解释数据（v0/v1 案件）返回 null。 */
+    private CaseDossier.ExplanationSection explanationSection(CaseEntity caseEntity, Long caseId) {
+        if (caseEntity.getInvestigationContractVersion() < 2 || explanationUnitRepository == null) {
+            return null;
+        }
+        List<CaseDossier.ExplanationUnitRecord> units = explanationUnitRepository
+                .findByCaseIdOrderByIdAsc(caseId).stream()
+                .map(unit -> new CaseDossier.ExplanationUnitRecord(unit.getId(), unit.getAlertId(),
+                        unit.getPolicyCode(), unit.getDraftRevision(), unit.getCurrentSubmissionId(),
+                        null, unit.getDraftJson(), unit.getCreatedBy(), unit.getUpdatedAt()))
+                .toList();
+        List<CaseDossier.ExplanationClaimRecord> claims = explanationClaimRepository == null ? List.of()
+                : explanationClaimRepository.findByCaseIdOrderByIdAsc(caseId).stream()
+                .map(claim -> new CaseDossier.ExplanationClaimRecord(claim.getId(), claim.getUnitId(),
+                        claim.getClaimCode(), claim.getStatus(), claim.getImportance(),
+                        claim.getJudgement(), claim.getMethodNote(), claim.getLimitations(),
+                        claim.getNotApplicableReason(), claim.getClaimRevision(), claim.getUpdatedBy()))
+                .toList();
+        List<CaseDossier.ExplanationIssueRecord> issues = explanationIssueRepository == null ? List.of()
+                : explanationIssueRepository.findByCaseIdOrderByIdAsc(caseId).stream()
+                .map(issue -> new CaseDossier.ExplanationIssueRecord(issue.getId(), issue.getUnitId(),
+                        issue.getIssueKey(), issue.getSeverity().name(), issue.getDescription(),
+                        issue.getDisposition().name(), issue.getDispositionReason(),
+                        issue.getResolvedBy(), issue.getConfirmedBy(), issue.getRevision()))
+                .toList();
+        List<CaseDossier.ExplanationBasisRecord> bases = explanationBasisRepository == null ? List.of()
+                : explanationBasisRepository.findTopByCaseIdOrderByBasisRevisionDesc(caseId)
+                .map(basis -> List.of(new CaseDossier.ExplanationBasisRecord(basis.getId(),
+                        basis.getBasisRevision(), basis.getScopeJson(), basis.getScopeDigest(),
+                        basis.getBasisDigest(), basis.getSourceCutoff(), basis.getCreatedBy())))
+                .orElse(List.of());
+        return new CaseDossier.ExplanationSection(units, claims, issues, bases);
     }
 
     private CaseDossier.CaseSummary caseSummary(CaseEntity entity) {

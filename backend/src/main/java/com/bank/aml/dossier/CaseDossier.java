@@ -45,7 +45,74 @@ public record CaseDossier(
             List<HypothesisRecord> hypotheses,
             List<InvestigationEvidenceRecord> investigationEvidence,
             List<AlertCoverageRecord> alertCoverage,
-            CaseOperationsRecord operations
+            CaseOperationsRecord operations,
+            ExplanationSection explanation
+    ) {
+    }
+
+    /**
+     * 解释核验档案段（v3 计划 §11）：解释范围、交易去重口径、C1~C6 采用判断、
+     * 支持/反对事实及定位、授权执行情况、未解决项、接续责任、政策版本与评价时点。
+     * 历史档案保持原貌；来源后来失效时另附当前状态与后续核验事件，不改写当时的事实。
+     */
+    public record ExplanationSection(
+            List<ExplanationUnitRecord> units,
+            List<ExplanationClaimRecord> claims,
+            List<ExplanationIssueRecord> issues,
+            List<ExplanationBasisRecord> bases
+    ) {
+    }
+
+    public record ExplanationUnitRecord(
+            Long unitId,
+            Long alertId,
+            String policyCode,
+            int draftRevision,
+            Long currentSubmissionId,
+            String currentOutcome,
+            String currentPayloadJson,
+            String submittedBy,
+            LocalDateTime submittedAt
+    ) {
+    }
+
+    public record ExplanationClaimRecord(
+            Long claimId,
+            Long unitId,
+            String claimCode,
+            String status,
+            String importance,
+            String judgement,
+            String methodNote,
+            String limitations,
+            String notApplicableReason,
+            int claimRevision,
+            String updatedBy
+    ) {
+    }
+
+    public record ExplanationIssueRecord(
+            Long issueId,
+            Long unitId,
+            String issueKey,
+            String severity,
+            String description,
+            String disposition,
+            String dispositionReason,
+            String resolvedBy,
+            String confirmedBy,
+            int revision
+    ) {
+    }
+
+    public record ExplanationBasisRecord(
+            Long basisId,
+            int basisRevision,
+            String scopeJson,
+            String scopeDigest,
+            String basisDigest,
+            LocalDateTime sourceCutoff,
+            String createdBy
     ) {
     }
 

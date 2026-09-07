@@ -67,7 +67,8 @@ public class RelationalCustomerDataPort implements CustomerDataPort, CustomerDat
         return transactions.findByCustomerNoOrderByTransactedAtAsc(customerId).stream()
                 .map(entity -> new TransactionRecord(entity.getTransactedAt(), entity.getAmount(),
                         entity.getDirection(), entity.getCounterparty(), region(entity.getCounterpartyRegion()),
-                        entity.getChannel(), entity.getPurpose(), entity.getCurrency()))
+                        entity.getChannel(), entity.getPurpose(), entity.getCurrency(),
+                        String.valueOf(entity.getId())))
                 .toList();
     }
 

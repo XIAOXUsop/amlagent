@@ -69,6 +69,10 @@ public class EnhancedDueDiligenceRequest {
 
     private LocalDateTime resolvedAt;
 
+    /** 明确完成核验的复核人（A5-08：与 respondedBy 不同人，身份由服务端认证写入）。 */
+    @Column(length = 64)
+    private String resolvedBy;
+
     @Column(length = 64)
     private String cancelledBy;
 
@@ -98,6 +102,10 @@ public class EnhancedDueDiligenceRequest {
     /** 显式完成/接替原因：RESOLVED 不再由其他业务决定自动产生。 */
     @Column(length = 500)
     private String resolutionReason;
+
+    /** 完成标准（A5-07）：接续任务的核验目标与验收口径完整值；长度审计不能替代保存。 */
+    @Column(columnDefinition = "TEXT")
+    private String completionStandard;
 
     @Column(nullable = false)
     private LocalDateTime createdAt;
@@ -152,6 +160,8 @@ public class EnhancedDueDiligenceRequest {
     public void setRespondedAt(LocalDateTime respondedAt) { this.respondedAt = respondedAt; }
     public LocalDateTime getResolvedAt() { return resolvedAt; }
     public void setResolvedAt(LocalDateTime resolvedAt) { this.resolvedAt = resolvedAt; }
+    public String getResolvedBy() { return resolvedBy; }
+    public void setResolvedBy(String resolvedBy) { this.resolvedBy = resolvedBy; }
     public String getCancelledBy() { return cancelledBy; }
     public void setCancelledBy(String cancelledBy) { this.cancelledBy = cancelledBy; }
     public LocalDateTime getCancelledAt() { return cancelledAt; }
@@ -171,6 +181,8 @@ public class EnhancedDueDiligenceRequest {
     public void setDueCalendarVersion(String value) { dueCalendarVersion = value; }
     public String getResolutionReason() { return resolutionReason; }
     public void setResolutionReason(String value) { resolutionReason = value; }
+    public String getCompletionStandard() { return completionStandard; }
+    public void setCompletionStandard(String value) { completionStandard = value; }
     public LocalDateTime getCreatedAt() { return createdAt; }
     public LocalDateTime getUpdatedAt() { return updatedAt; }
 }

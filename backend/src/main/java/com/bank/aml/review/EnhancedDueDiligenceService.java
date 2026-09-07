@@ -143,8 +143,12 @@ public class EnhancedDueDiligenceService {
         repository.save(request);
     }
 
-    /** 义务接续（§8.2.2—3）：为继续核验创建 CONTINUING_REVIEW 任务；被接替的原任务置 CANCELLED（非 RESOLVED）。
-     *  在最终复核事务内先行调用；任一写入失败整体回滚。 */
+    /**
+     * 义务接续（A5-07 修复）：逐项对应——每个 plan 的 originRequestId 必须指向本案件的
+     * OPEN DECISION_SUPPORT 任务；只有被 plan 明确引用的原任务才被 CANCELLED；
+     * 未被接替的 OPEN 决策支持任务保持 OPEN（继续阻断最终处置）。
+     * completionStandard 完整保存（不再只做长度审计）；任一写入失败整体回滚。
+     */
     public void transferObligations(Long caseId, String reviewer, LocalDateTime decidedAt,
                                      List<ContinuationTaskPlan> plans, Long originReviewId) {
         for (ContinuationTaskPlan plan : plans) {
@@ -153,6 +157,26 @@ public class EnhancedDueDiligenceService {
             }
             validateAssignment(plan.assignedTo(), plan.assignedUnit());
             validateDueAt(plan.dueAt());
+            // 逐项对应（A5-07/TP-21）：originRequestId 必须是本案件 OPEN 的决策支持任务。
+            if (plan.originRequestId() == null) {
+                throw new IllegalArgumentException("接续计划必须绑定原任务（originRequestId）");
+            }
+            EnhancedDueDiligenceRequest origin = repository.findByIdAndCaseId(plan.originRequestId(), caseId)
+                    .orElseThrow(() -> new IllegalArgumentException(
+                            "接续计划引用的原任务不存在或不属于本案件：" + plan.originRequestId()));
+            if (origin.getPurpose() != com.bank.aml.explanation.EddTaskPurpose.DECISION_SUPPORT
+                    || origin.getStatus() != EnhancedDueDiligenceStatus.OPEN) {
+                throw new IllegalStateException("原任务 #" + plan.originRequestId()
+                        + " 不是待处理的决策支持任务（当前 " + origin.getStatus() + "/" + origin.getPurpose()
+                        + "），不能被接替");
+            }
+        }
+        // 同一原任务被两个 plan 接替 → 拒绝（避免重复创建与重复取消）。
+        Set<Long> origins = new LinkedHashSet<>();
+        for (ContinuationTaskPlan plan : plans) {
+            if (!origins.add(plan.originRequestId())) {
+                throw new IllegalArgumentException("同一原任务被多个接续计划引用：" + plan.originRequestId());
+            }
         }
         for (ContinuationTaskPlan plan : plans) {
             Optional<EnhancedDueDiligenceRequest> latest = repository.findTopByCaseIdOrderByRoundNoDesc(caseId);
@@ -174,30 +198,35 @@ public class EnhancedDueDiligenceService {
             task.setOriginRequestId(plan.originRequestId());
             task.setOriginReviewId(originReviewId);
             task.setIssueBindings(plan.issueBindingsJson());
+            // A5-07：完成标准完整保存（长度审计不等于保存）。
+            task.setCompletionStandard(plan.completionStandard().trim());
             task.setDueCalendarVersion(com.bank.aml.explanation.ExplanationWorkspaceService.DEFAULT_CALENDAR_VERSION);
             repository.save(task);
             auditOutbox.enqueue("EDD_CONTINUATION:" + caseId + ":" + task.getRoundNo(),
                     reviewer, "EDD_CONTINUING_REVIEW_CREATED", "EDD_REQUEST", String.valueOf(task.getId()),
                     "caseId=" + caseId + ",originRequestId=" + plan.originRequestId()
-                            + ",standardLen=" + plan.completionStandard().trim().length());
+                            + ",standard=" + truncateStandard(plan.completionStandard()));
         }
-        // 被接替的 OPEN DECISION_SUPPORT 任务：CANCELLED + SUPERSEDED_BY_CONTINUING_REVIEW，保留原轮次与未解决问题。
-        for (EnhancedDueDiligenceRequest open : repository
-                .findByCaseIdAndStatusOrderByIdAsc(caseId, EnhancedDueDiligenceStatus.OPEN)) {
-            if (open.getPurpose() != com.bank.aml.explanation.EddTaskPurpose.DECISION_SUPPORT) {
-                continue;
-            }
-            open.setStatus(EnhancedDueDiligenceStatus.CANCELLED);
-            open.setRevision(open.getRevision() + 1);
-            open.setCancelledBy(reviewer);
-            open.setCancelledAt(decidedAt);
-            open.setCancellationReason("已由持续核验任务接替；原义务未消失，由 CONTINUING_REVIEW 履行");
-            open.setResolutionReason("SUPERSEDED_BY_CONTINUING_REVIEW");
-            repository.save(open);
-            auditOutbox.enqueue("EDD_SUPERSEDED:" + caseId + ":" + open.getId(),
-                    reviewer, "EDD_DECISION_SUPPORT_SUPERSEDED", "EDD_REQUEST", String.valueOf(open.getId()),
-                    "caseId=" + caseId + ",round=" + open.getRoundNo());
+        // 只取消被 plan 明确接替的原任务（A5-07）：逐个按 ID 条件更新，条件失败回滚语义由调用方事务保证。
+        for (ContinuationTaskPlan plan : plans) {
+            EnhancedDueDiligenceRequest origin = repository.findByIdAndCaseId(plan.originRequestId(), caseId)
+                    .orElseThrow();
+            origin.setStatus(EnhancedDueDiligenceStatus.CANCELLED);
+            origin.setRevision(origin.getRevision() + 1);
+            origin.setCancelledBy(reviewer);
+            origin.setCancelledAt(decidedAt);
+            origin.setCancellationReason("已由持续核验任务接替；原义务未消失，由 CONTINUING_REVIEW 履行");
+            origin.setResolutionReason("SUPERSEDED_BY_CONTINUING_REVIEW");
+            repository.save(origin);
+            auditOutbox.enqueue("EDD_SUPERSEDED:" + caseId + ":" + origin.getId(),
+                    reviewer, "EDD_DECISION_SUPPORT_SUPERSEDED", "EDD_REQUEST", String.valueOf(origin.getId()),
+                    "caseId=" + caseId + ",round=" + origin.getRoundNo());
         }
+    }
+
+    private static String truncateStandard(String standard) {
+        String trimmed = standard.trim();
+        return trimmed.length() <= 120 ? trimmed : trimmed.substring(0, 120) + "…";
     }
 
     /** 义务接续计划项（v2 计划 §8.2/§13 continuationPlan）。 */
@@ -297,31 +326,57 @@ public class EnhancedDueDiligenceService {
     }
 
     /**
-     * v2（§8.3）：明确完成任务——由（不同于原作者的）复核人确认持续核验已完成。
+     * v2（§8.3）：明确完成任务——由（不同于材料提交人的）复核人确认持续核验已完成。
+     * A5-08 修复：expectedRevision 参与条件更新（版本不符或竞争完成返回 409，仅一方成功）；
+     * 完成人不得等于材料提交人（respondedBy），防止 ADMIN 等双权限自审；
+     * resolvedBy 由服务端认证身份写入并持久化；案件锁保护避免与结案交错。
      * RESOLVED 不再由其他业务决定自动产生（原 applyReviewDecision 的自动 RESOLVED 已移除）。
      */
     @Transactional
     public EnhancedDueDiligenceView completeTask(Long caseId, Long requestId, int expectedRevision,
                                                  String resolutionReason, String resolvedBy) {
-        requireCase(caseId);
+        requireCaseForUpdate(caseId);
         EnhancedDueDiligenceRequest request = repository.findByIdAndCaseId(requestId, caseId)
                 .orElseThrow(() -> new IllegalArgumentException("补充尽调任务不存在"));
         if (request.getStatus() != EnhancedDueDiligenceStatus.SUBMITTED) {
             throw new IllegalStateException("仅已提交材料待核验（SUBMITTED）的任务可以被明确完成");
         }
+        if (request.getRevision() != expectedRevision) {
+            throw new com.bank.aml.common.exception.InvestigationRevisionConflictException(
+                    com.bank.aml.common.exception.InvestigationRevisionConflictException.TYPE_COVERAGE,
+                    requestId, request.getRevision(),
+                    "任务版本已变化（当前 " + request.getRevision() + "，请求基于 " + expectedRevision
+                            + "）；两位复核人竞争完成时仅一方成功，请刷新后重试");
+        }
+        String completer = resolvedBy == null ? "" : resolvedBy.trim();
+        if (completer.isEmpty()) {
+            throw new IllegalArgumentException("完成核验需明确的复核人身份");
+        }
+        // 独立性：完成人不得是材料提交人（respondedBy）；ADMIN 兼具两权限时同样禁止自审（A5-08）。
+        if (request.getRespondedBy() != null && request.getRespondedBy().equals(completer)) {
+            throw new IllegalStateException("材料提交人不能自行完成核验（A5-08）；"
+                    + "需由另一位复核人核对后完成");
+        }
         String reason = resolutionReason == null ? "" : resolutionReason.trim();
         if (reason.length() < 10) {
             throw new IllegalArgumentException("完成核验需记录核验结论与依据（至少 10 个字符）");
         }
-        request.setStatus(EnhancedDueDiligenceStatus.RESOLVED);
-        request.setRevision(request.getRevision() + 1);
-        request.setResolvedAt(LocalDateTime.now());
-        request.setResolutionReason(reason);
-        EnhancedDueDiligenceRequest saved = repository.save(request);
+        // 条件更新绑定状态与版本：并发竞争仅一方成功，另一方 409。
+        int updated = repository.completeTask(requestId, caseId,
+                EnhancedDueDiligenceStatus.SUBMITTED, EnhancedDueDiligenceStatus.RESOLVED,
+                expectedRevision, reason, completer, LocalDateTime.now());
+        if (updated == 0) {
+            throw new com.bank.aml.common.exception.InvestigationRevisionConflictException(
+                    com.bank.aml.common.exception.InvestigationRevisionConflictException.TYPE_COVERAGE,
+                    requestId, request.getRevision(),
+                    "任务已被他人完成或版本已变化，请刷新后重试");
+        }
+        EnhancedDueDiligenceRequest saved = repository.findById(requestId)
+                .orElseThrow(() -> new IllegalStateException("补充尽调任务不存在"));
         auditOutbox.enqueue("EDD_COMPLETE:" + caseId + ":" + requestId + ":" + expectedRevision,
-                resolvedBy, "EDD_TASK_COMPLETED", "EDD_REQUEST", String.valueOf(requestId),
-                "caseId=" + caseId + ",round=" + request.getRoundNo()
-                        + ",purpose=" + request.getPurpose());
+                completer, "EDD_TASK_COMPLETED", "EDD_REQUEST", String.valueOf(requestId),
+                "caseId=" + caseId + ",round=" + saved.getRoundNo()
+                        + ",purpose=" + saved.getPurpose() + ",resolvedBy=" + completer);
         return view(saved);
     }
 
@@ -331,7 +386,8 @@ public class EnhancedDueDiligenceService {
                 request.getRequestedAt(), request.getAssignedTo(), request.getAssignedUnit(), request.getDueAt(),
                 request.getStatus(), isOverdue(request), request.getRevision(),
                 request.getResponseSummary(), readList(request.getEvidenceReferencesJson()), request.getRespondedBy(),
-                request.getRespondedAt(), request.getResolvedAt(), request.getCancelledBy(), request.getCancelledAt(),
+                request.getRespondedAt(), request.getResolvedBy(), request.getResolvedAt(),
+                request.getCancelledBy(), request.getCancelledAt(),
                 request.getCancellationReason(),
                 evidenceRepository.findByRequestIdOrderByIdAsc(request.getId()).stream()
                         .map(this::evidenceView).toList());

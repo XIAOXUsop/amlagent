@@ -43,4 +43,22 @@ public interface EnhancedDueDiligenceRequestRepository
                        @Param("referencesJson") String referencesJson,
                        @Param("respondedBy") String respondedBy,
                        @Param("respondedAt") LocalDateTime respondedAt);
+
+    /** A5-08：明确完成任务的条件更新——状态与版本绑定；两位复核人竞争完成仅一方成功。 */
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query("""
+            UPDATE EnhancedDueDiligenceRequest r
+            SET r.status = :resolved, r.resolutionReason = :reason,
+                r.resolvedBy = :resolvedBy, r.resolvedAt = :resolvedAt, r.revision = r.revision + 1
+            WHERE r.id = :id AND r.caseId = :caseId AND r.status = :submittedStatus
+              AND r.revision = :expectedRevision
+            """)
+    int completeTask(@Param("id") Long id,
+                     @Param("caseId") Long caseId,
+                     @Param("submittedStatus") EnhancedDueDiligenceStatus submittedStatus,
+                     @Param("resolved") EnhancedDueDiligenceStatus resolved,
+                     @Param("expectedRevision") int expectedRevision,
+                     @Param("reason") String reason,
+                     @Param("resolvedBy") String resolvedBy,
+                     @Param("resolvedAt") LocalDateTime resolvedAt);
 }

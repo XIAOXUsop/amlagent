@@ -22,6 +22,7 @@ public record EnhancedDueDiligenceView(
         List<String> evidenceReferences,
         String respondedBy,
         LocalDateTime respondedAt,
+        String resolvedBy,
         LocalDateTime resolvedAt,
         String cancelledBy,
         LocalDateTime cancelledAt,

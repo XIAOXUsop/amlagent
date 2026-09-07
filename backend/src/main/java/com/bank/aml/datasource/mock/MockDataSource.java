@@ -126,7 +126,8 @@ public class MockDataSource implements CustomerDataPort {
                     : counterparties[rand.nextInt(counterparties.length)];
             list.add(new TransactionRecord(date, BigDecimal.valueOf(amount).setScale(2, RoundingMode.HALF_UP),
                     "转出", counterparty, country,
-                    channels[rand.nextInt(channels.length)], scenes[rand.nextInt(scenes.length)], currency));
+                    channels[rand.nextInt(channels.length)], scenes[rand.nextInt(scenes.length)], currency,
+                    "MOCK-" + customerId + "-" + (i + 1)));
         }
         list.sort((a, b) -> a.date().compareTo(b.date()));
         transactions.put(customerId, list);

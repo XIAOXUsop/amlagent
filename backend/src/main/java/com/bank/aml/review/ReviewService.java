@@ -102,8 +102,13 @@ public class ReviewService {
             throw new WorkflowStateConflictException(caseId, c.getStatus(),
                     java.util.Set.of(CaseStatus.HOLD));
         }
-        // v2 义务接续在同一事务内先行完成（§8.2.2）：创建 CONTINUING_REVIEW + 接替 OPEN 补件任务；
-        // 任一写入失败整体回滚，随后按已接续状态校验任务门槛与决策表。
+        // A5-07 顺序修复：先验证用户看到的依据令牌（基于变更前事实），再做任何任务变更；
+        // 接续改变 OPEN 任务集合后不得用"变更后 token"回填校验。
+        if (v2Case) {
+            explanationWorkspaceService.validateReviewBasisToken(caseId, reviewBasisToken);
+        }
+        // v2 义务接续在同一事务内完成（§8.2.2）：创建 CONTINUING_REVIEW + 接替被引用的
+        // OPEN 补件任务；任一写入失败整体回滚，随后按已接续状态校验任务门槛与决策表。
         if (v2Case && continuationTasks != null && !continuationTasks.isEmpty()) {
             if (normalizedDecision != ReviewDecision.CONFIRM_SUSPICIOUS) {
                 throw new IllegalArgumentException("义务接续仅支持确认可疑路径；当前关键未知不能借接续放行排除");
@@ -114,9 +119,11 @@ public class ReviewService {
         enhancedDueDiligenceService.validateReviewDecision(caseId, normalizedDecision, requiredItems, dueAt,
                 assignedTo, assignedUnit);
         if (v2Case) {
-            // v2：决策表 + 依据令牌 + 实质贡献人自审限制（§7/§9/§10）。
+            // v2：决策表 + Clock 即时重评 + 自审限制。
+            // 令牌已在本事务变更前由 validateReviewBasisToken 校验；接续会改变任务集合，
+            // 不拿变更前 token 与变更后事实作等值比较（A5-07/TP-22）。
             explanationWorkspaceService.validateReadyForReview(c, normalizedDecision, reviewerId,
-                    reviewBasisToken);
+                    reviewBasisToken, true);
         } else {
             investigationService.validateReadyForReview(c, normalizedDecision);
         }
