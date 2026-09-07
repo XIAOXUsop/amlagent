@@ -105,12 +105,59 @@ class InvestigationSnapshotTest {
         assertThat(v2.executionVersion()).isEqualTo(2);
     }
 
+    // ---- 冻结关联预警（T05/T07）----
+
+    @Test
+    void snapshotWithAlertsUsesAlertKeywordsForLegalRetrievalAndDigest() {
+        CustomerDataPort dataSource = stubDataSource();
+        InvestigationSnapshotFactory factory = factory(dataSource);
+        var alertA = new com.bank.aml.domain.InvestigationAlertSnapshot(11L, "ALERT-A",
+                "RULE-001", "CROSS_BORDER_ANOMALY", "客户连续发生夜间跨境转账",
+                LocalDateTime.of(2026, 8, 1, 23, 0), 0);
+        var alertB = new com.bank.aml.domain.InvestigationAlertSnapshot(12L, "ALERT-B",
+                "RULE-002", "STRUCTURING", "客户通过拆分现金交易规避监测",
+                LocalDateTime.of(2026, 8, 1, 10, 0), 0);
+
+        InvestigationSnapshot snapshot = factory.create(1L, 1, CUSTOMER, "低风险", List.of(alertA, alertB));
+
+        assertThat(snapshot.schemaVersion()).isEqualTo(InvestigationSnapshot.SCHEMA_VERSION_WITH_ALERTS);
+        assertThat(snapshot.alerts()).containsExactly(alertA, alertB);
+        // 逐条预警的关键词都保留：夜间/跨境/拆分/现金不会因归并被规则编号替换
+        assertThat(snapshot.legalKeywords()).contains("夜间", "跨境", "拆分", "现金");
+        assertThat(snapshot.alertsDigest()).hasSize(64);
+        assertThat(snapshot.hasFrozenAlerts()).isTrue();
+
+        // 预警版本或原因变化会改变预警摘要
+        var changed = new com.bank.aml.domain.InvestigationAlertSnapshot(12L, "ALERT-B",
+                "RULE-002", "STRUCTURING", "命中原因已修订：拆分现金交易规避监测",
+                LocalDateTime.of(2026, 8, 1, 10, 0), 1);
+        assertThat(factory.create(1L, 1, CUSTOMER, "低风险", List.of(alertA, changed)).alertsDigest())
+                .isNotEqualTo(snapshot.alertsDigest());
+    }
+
+    @Test
+    void legacySnapshotSchemaRemainsReadableAndExportCompatible() {
+        CustomerDataPort dataSource = stubDataSource();
+        InvestigationSnapshotFactory factory = factory(dataSource);
+
+        InvestigationSnapshot legacy = factory.createForAlertRuleText(1L, 1, CUSTOMER, "低风险", "常规监测");
+
+        // 兼容适配器生成显式标记的 LEGACY 伪预警（alertId 为 null，不冒充真实预警事实）
+        assertThat(legacy.alerts()).hasSize(1);
+        assertThat(legacy.alerts().get(0).externalAlertId()).isEqualTo("LEGACY-ALERT-RULE");
+        assertThat(legacy.hasFrozenAlerts()).isFalse();
+        assertThat(legacy.sourceDigest()).isNotBlank();
+        assertThat(legacy.snapshotId()).isEqualTo("case-1-v1");
+    }
+
     private InvestigationSnapshotFactory factory(CustomerDataPort dataSource) {
         EnterpriseLegalRetriever retriever = mock(EnterpriseLegalRetriever.class);
         when(retriever.retrieve(any())).thenReturn(new RetrievalResponse(
                 RetrievalResponse.Status.NO_RELEVANT_EVIDENCE, "v1", List.of()));
         return new InvestigationSnapshotFactory(dataSource, new RiskFactAssembler(dataSource),
-                retriever, new LegalKeywordResolver(), () -> "v1");
+                retriever, new LegalKeywordResolver(), () -> "v1",
+                new com.bank.aml.agent.AlertSnapshotAssembler(new com.fasterxml.jackson.databind.ObjectMapper()
+                        .findAndRegisterModules(), 8));
     }
 
     private CustomerDataPort stubDataSource() {

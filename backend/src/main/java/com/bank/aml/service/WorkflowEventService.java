@@ -134,7 +134,9 @@ public class WorkflowEventService {
                 emitter.send(SseEmitter.event().name(eventName).data(data, MediaType.APPLICATION_JSON));
             } catch (IOException e) {
                 remove(caseId, emitter);
-                emitter.completeWithError(e);
+                // 客户端关闭页面/网络中断只代表订阅失效，不能把传输异常重新派发到 MVC
+                // 异常链并反向中断正在执行的尽调业务。
+                log.debug("工单 {} SSE 客户端已断开：{}", caseId, e.getMessage());
             }
         }
     }

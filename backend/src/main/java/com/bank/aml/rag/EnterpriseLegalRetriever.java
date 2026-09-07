@@ -31,12 +31,14 @@ public class EnterpriseLegalRetriever {
     private final SupportProbabilityCalibrator calibrator;
     private final LegalQueryAnalyzer queryAnalyzer;
     private final SupportPolicy supportPolicy;
+    private final com.bank.aml.security.PromptInjectionGuard injectionGuard;
 
     public EnterpriseLegalRetriever(LegalDocumentSearcher searcher, LegalIndexVersionProvider versions,
                                     MetricsRecorder metrics,
                                     @Value("${aml.rag.retrieval.recall-multiplier:4}") int recallMultiplier) {
         this(searcher, versions, metrics, new RagContextSelector(), Math.max(2, recallMultiplier), 3, 8_000,
-                new SupportProbabilityCalibrator(), new LegalQueryAnalyzer(), new SupportPolicy());
+                new SupportProbabilityCalibrator(), new LegalQueryAnalyzer(), new SupportPolicy(),
+                new com.bank.aml.security.PromptInjectionGuard());
     }
 
     @org.springframework.beans.factory.annotation.Autowired
@@ -46,7 +48,8 @@ public class EnterpriseLegalRetriever {
                                     @Value("${aml.rag.retrieval.max-per-document:3}") int maxPerDocument,
                                     @Value("${aml.rag.retrieval.max-context-characters:8000}") int maxContextCharacters,
                                     SupportProbabilityCalibrator calibrator,
-                                    LegalQueryAnalyzer queryAnalyzer, SupportPolicy supportPolicy) {
+                                    LegalQueryAnalyzer queryAnalyzer, SupportPolicy supportPolicy,
+                                    com.bank.aml.security.PromptInjectionGuard injectionGuard) {
         this.searcher = searcher;
         this.versions = versions;
         this.metrics = metrics;
@@ -57,10 +60,17 @@ public class EnterpriseLegalRetriever {
         this.calibrator = calibrator == null ? new SupportProbabilityCalibrator() : calibrator;
         this.queryAnalyzer = queryAnalyzer == null ? new LegalQueryAnalyzer() : queryAnalyzer;
         this.supportPolicy = supportPolicy == null ? new SupportPolicy() : supportPolicy;
+        this.injectionGuard = injectionGuard == null ? new com.bank.aml.security.PromptInjectionGuard() : injectionGuard;
     }
 
     public RetrievalResponse retrieve(RetrievalRequest request) {
         long start = System.nanoTime();
+        // 输入信任边界：检索查询是用户/模型可控输入，检出注入模式一律拒答，不给任何证据
+        if (injectionGuard.scan(request.query() + " " + request.topic()).suspicious()) {
+            metrics.ragAbstention("PROMPT_INJECTION");
+            return finish(RetrievalResponse.Status.NO_RELEVANT_EVIDENCE, EvidenceSupport.NO_RELEVANT_EVIDENCE,
+                    List.of(), List.of(), versions.activeVersion(), start);
+        }
         String version = versions.versionFor(request);
         if (version.isBlank()) {
             return finish(RetrievalResponse.Status.INDEX_UNAVAILABLE, EvidenceSupport.NO_RELEVANT_EVIDENCE,

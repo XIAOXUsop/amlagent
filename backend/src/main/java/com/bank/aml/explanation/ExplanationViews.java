@@ -1,0 +1,120 @@
+package com.bank.aml.explanation;
+
+import java.util.List;
+import java.util.Map;
+
+/** 解释核验工作区对外视图（v2 计划 §13/§14）。 */
+public final class ExplanationViews {
+
+    private ExplanationViews() {
+    }
+
+    /** 单元条目：工作区首行显示，支持同案“1 条有解释、1 条有疑点、1 条未决”的混合呈现。 */
+    public record UnitView(
+            Long unitId,
+            Long alertId,
+            String externalAlertId,
+            Long hypothesisId,
+            String policyCode,
+            int draftRevision,
+            boolean hasCurrentSubmission,
+            Long currentSubmissionId,
+            ExplanationOutcome currentOutcome,
+            boolean criticalUnknown,
+            boolean followupRequired,
+            List<String> blockers
+    ) {
+    }
+
+    /** 工作区：全量范围不受页面筛选影响；同时返回案件事实序号。 */
+    public record WorkspaceView(
+            Long caseId,
+            int contractVersion,
+            long caseFactsEpoch,
+            boolean stale,
+            List<UnitView> units,
+            List<IssueView> issues,
+            List<EvidenceView> artifacts,
+            List<String> generalBlockers,
+            boolean canExclude,
+            boolean canConfirm,
+            List<String> confirmBlockers,
+            List<String> excludeBlockers
+    ) {
+    }
+
+    /** 问题条目（差异/反证/缺口）。 */
+    public record IssueView(
+            Long issueId,
+            Long unitId,
+            String issueKey,
+            IssueSeverity severity,
+            String questionCode,
+            String transactionIds,
+            String description,
+            IssueDisposition disposition,
+            String dispositionReason,
+            String resolvedBy,
+            String confirmedBy,
+            int revision
+    ) {
+    }
+
+    /** 材料版本条目：登记 ≠ 已核验；availability/integrity 是两个独立维度。 */
+    public record EvidenceView(
+            Long artifactVersionId,
+            String artifactKey,
+            int version,
+            String sourceSystem,
+            String sourceReference,
+            String contentSha256,
+            String claimedSha256,
+            String availability,
+            String integrityStatus,
+            String capturedBy,
+            String capturedAt
+    ) {
+    }
+
+    /** 核验动作条目。 */
+    public record VerificationView(
+            Long eventId,
+            Long artifactVersionId,
+            String method,
+            String observedFacts,
+            String limitations,
+            String result,
+            String actor,
+            String eventTime
+    ) {
+    }
+
+    /** 提交结果：返回 submissionId 与当前状态（幂等重放时可能是 STALE，V2-22）。 */
+    public record SubmissionResult(
+            Long submissionId,
+            Long unitId,
+            int submissionNo,
+            ExplanationOutcome outcome,
+            SubmissionState state,
+            ExplanationOutcome hypothesisAggregate,
+            String reviewBasisToken,
+            List<String> messages
+    ) {
+    }
+
+    /** 最终复核候选依据（§13 GET /review-basis）。 */
+    public record ReviewBasisView(
+            Long caseId,
+            long caseFactsEpoch,
+            String reviewBasisToken,
+            boolean reviewerIndependent,
+            boolean canExclude,
+            boolean canConfirm,
+            List<String> confirmBlockers,
+            List<String> excludeBlockers,
+            List<UnitView> adoptedUnits,
+            List<IssueView> openIssues,
+            Map<String, String> unitOutcomes
+    ) {
+    }
+}

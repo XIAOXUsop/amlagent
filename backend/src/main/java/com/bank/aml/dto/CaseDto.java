@@ -25,6 +25,10 @@ public record CaseDto(
         boolean modelFallback,
         int executionVersion,
         int reviewRevision,
+        int investigationContractVersion,
+        String reviewDisposition,
+        String reviewReasonCode,
+        LocalDateTime reviewedAt,
         int retryCount,
         String failureCode,
         String failureMessage,
@@ -37,7 +41,9 @@ public record CaseDto(
                 e.getStatus(), e.getRiskLevel(), e.getRawRiskLevel(), e.getReportJson(), e.getSummary(),
                 e.getReportSource(), e.getSnapshotId(),
                 e.getModelProvider(), e.getModelName(), e.isModelFallback(),
-                e.getExecutionVersion(), e.getReviewRevision(), e.getRetryCount(),
+                e.getExecutionVersion(), e.getReviewRevision(), e.getInvestigationContractVersion(),
+                e.getReviewDisposition(),
+                e.getReviewReasonCode(), e.getReviewedAt(), e.getRetryCount(),
                 e.getFailureCode(), e.getFailureMessage(),
                 e.getCreatedAt(), e.getUpdatedAt());
     }

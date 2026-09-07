@@ -67,6 +67,19 @@ public class GlobalExceptionHandler {
         return build(HttpStatus.CONFLICT, "SANCTION_REVIEW_CONFLICT", ex.getMessage(), req);
     }
 
+    /**
+     * 调查版本冲突：覆盖或其引用的假设版本已变化。409 + 稳定错误码，
+     * 并附上有界冲突对象信息（类型/标识/当前版本），客户端刷新后由用户明确重新确认。
+     */
+    @ExceptionHandler(com.bank.aml.common.exception.InvestigationRevisionConflictException.class)
+    public ResponseEntity<ApiError> handleInvestigationRevisionConflict(
+            com.bank.aml.common.exception.InvestigationRevisionConflictException ex, HttpServletRequest req) {
+        ApiError.Conflict conflict = ex.getConflictType() == null ? null : new ApiError.Conflict(
+                ex.getConflictType(), ex.getConflictId(), ex.getCurrentVersion());
+        return ResponseEntity.status(HttpStatus.CONFLICT)
+                .body(ApiError.of("INVESTIGATION_REVISION_CONFLICT", ex.getMessage(), traceId(req), conflict));
+    }
+
     /** 登录/鉴权速率限制：429，客户端应停止重试并等待解锁 */
     @ExceptionHandler(TooManyRequestsException.class)
     public ResponseEntity<ApiError> handleRateLimited(TooManyRequestsException ex, HttpServletRequest req) {
@@ -139,9 +152,12 @@ public class GlobalExceptionHandler {
         return build(HttpStatus.TOO_MANY_REQUESTS, "ASSISTANT_RATE_LIMITED", ex.getMessage(), req);
     }
 
-    private ResponseEntity<ApiError> build(HttpStatus status, String code, String message, HttpServletRequest req) {
+    private String traceId(HttpServletRequest req) {
         Object attr = req.getAttribute(TraceIdFilter.REQUEST_ATTR_TRACE_ID);
-        String traceId = attr instanceof String s && !s.isBlank() ? s : "unknown";
-        return ResponseEntity.status(status).body(ApiError.of(code, message, traceId));
+        return attr instanceof String s && !s.isBlank() ? s : "unknown";
+    }
+
+    private ResponseEntity<ApiError> build(HttpStatus status, String code, String message, HttpServletRequest req) {
+        return ResponseEntity.status(status).body(ApiError.of(code, message, traceId(req)));
     }
 }

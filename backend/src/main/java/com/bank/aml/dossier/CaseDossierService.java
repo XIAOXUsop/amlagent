@@ -8,6 +8,22 @@ import com.bank.aml.datasource.repository.CaseRepository;
 import com.bank.aml.datasource.repository.InvestigationSnapshotRepository;
 import com.bank.aml.review.ManualReview;
 import com.bank.aml.review.ManualReviewRepository;
+import com.bank.aml.review.EnhancedDueDiligenceRequest;
+import com.bank.aml.review.EnhancedDueDiligenceRequestRepository;
+import com.bank.aml.review.EnhancedDueDiligenceEvidence;
+import com.bank.aml.review.EnhancedDueDiligenceEvidenceRepository;
+import com.bank.aml.investigation.AlertInvestigationCoverage;
+import com.bank.aml.investigation.AlertInvestigationCoverageRepository;
+import com.bank.aml.investigation.AmlAlert;
+import com.bank.aml.investigation.AmlAlertRepository;
+import com.bank.aml.investigation.InvestigationEvidenceLink;
+import com.bank.aml.investigation.InvestigationEvidenceLinkRepository;
+import com.bank.aml.investigation.InvestigationHypothesis;
+import com.bank.aml.investigation.InvestigationHypothesisRepository;
+import com.bank.aml.operations.CaseOperationsService;
+import com.bank.aml.operations.CaseOperationsView;
+import com.bank.aml.reporting.SuspiciousTransactionReport;
+import com.bank.aml.reporting.SuspiciousTransactionReportRepository;
 import com.bank.aml.sanction.SanctionCandidateReview;
 import com.bank.aml.sanction.SanctionCandidateReviewRepository;
 import com.bank.aml.tools.ToolExecutionTraceEntity;
@@ -27,6 +43,7 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.Instant;
 import java.util.HexFormat;
+import java.util.ArrayList;
 import java.util.List;
 
 /** 聚合案件、快照元数据、工作流、工具轨迹和人工复核记录，生成可校验的调查档案。 */
@@ -42,6 +59,14 @@ public class CaseDossierService {
     private final ManualReviewRepository reviewRepository;
     private final InvestigationSnapshotRepository snapshotRepository;
     private final SanctionCandidateReviewRepository sanctionReviewRepository;
+    private final EnhancedDueDiligenceRequestRepository enhancedDueDiligenceRepository;
+    private final EnhancedDueDiligenceEvidenceRepository enhancedDueDiligenceEvidenceRepository;
+    private final SuspiciousTransactionReportRepository suspiciousTransactionReportRepository;
+    private final AmlAlertRepository alertRepository;
+    private final InvestigationHypothesisRepository hypothesisRepository;
+    private final InvestigationEvidenceLinkRepository investigationEvidenceRepository;
+    private final AlertInvestigationCoverageRepository alertCoverageRepository;
+    private final CaseOperationsService caseOperationsService;
     private final ObjectMapper objectMapper;
 
     public CaseDossierService(CaseRepository caseRepository,
@@ -52,7 +77,34 @@ public class CaseDossierService {
                               InvestigationSnapshotRepository snapshotRepository,
                               ObjectMapper objectMapper) {
         this(caseRepository, caseLogRepository, executionRepository, toolTraceRepository, reviewRepository,
-                snapshotRepository, null, objectMapper);
+                snapshotRepository, null, null, null, null, null, null, null, null, null, objectMapper);
+    }
+
+    public CaseDossierService(CaseRepository caseRepository,
+                              CaseLogRepository caseLogRepository,
+                              CaseExecutionRepository executionRepository,
+                              ToolExecutionTraceRepository toolTraceRepository,
+                              ManualReviewRepository reviewRepository,
+                              InvestigationSnapshotRepository snapshotRepository,
+                              SanctionCandidateReviewRepository sanctionReviewRepository,
+                              ObjectMapper objectMapper) {
+        this(caseRepository, caseLogRepository, executionRepository, toolTraceRepository, reviewRepository,
+                snapshotRepository, sanctionReviewRepository, null, null, null,
+                null, null, null, null, null, objectMapper);
+    }
+
+    public CaseDossierService(CaseRepository caseRepository,
+                              CaseLogRepository caseLogRepository,
+                              CaseExecutionRepository executionRepository,
+                              ToolExecutionTraceRepository toolTraceRepository,
+                              ManualReviewRepository reviewRepository,
+                              InvestigationSnapshotRepository snapshotRepository,
+                              SanctionCandidateReviewRepository sanctionReviewRepository,
+                              EnhancedDueDiligenceRequestRepository enhancedDueDiligenceRepository,
+                              ObjectMapper objectMapper) {
+        this(caseRepository, caseLogRepository, executionRepository, toolTraceRepository, reviewRepository,
+                snapshotRepository, sanctionReviewRepository, enhancedDueDiligenceRepository, null, null,
+                null, null, null, null, null, objectMapper);
     }
 
     @Autowired
@@ -63,6 +115,14 @@ public class CaseDossierService {
                               ManualReviewRepository reviewRepository,
                               InvestigationSnapshotRepository snapshotRepository,
                               SanctionCandidateReviewRepository sanctionReviewRepository,
+                              EnhancedDueDiligenceRequestRepository enhancedDueDiligenceRepository,
+                              EnhancedDueDiligenceEvidenceRepository enhancedDueDiligenceEvidenceRepository,
+                              SuspiciousTransactionReportRepository suspiciousTransactionReportRepository,
+                              AmlAlertRepository alertRepository,
+                              InvestigationHypothesisRepository hypothesisRepository,
+                              InvestigationEvidenceLinkRepository investigationEvidenceRepository,
+                              AlertInvestigationCoverageRepository alertCoverageRepository,
+                              CaseOperationsService caseOperationsService,
                               ObjectMapper objectMapper) {
         this.caseRepository = caseRepository;
         this.caseLogRepository = caseLogRepository;
@@ -71,6 +131,14 @@ public class CaseDossierService {
         this.reviewRepository = reviewRepository;
         this.snapshotRepository = snapshotRepository;
         this.sanctionReviewRepository = sanctionReviewRepository;
+        this.enhancedDueDiligenceRepository = enhancedDueDiligenceRepository;
+        this.enhancedDueDiligenceEvidenceRepository = enhancedDueDiligenceEvidenceRepository;
+        this.suspiciousTransactionReportRepository = suspiciousTransactionReportRepository;
+        this.alertRepository = alertRepository;
+        this.hypothesisRepository = hypothesisRepository;
+        this.investigationEvidenceRepository = investigationEvidenceRepository;
+        this.alertCoverageRepository = alertCoverageRepository;
+        this.caseOperationsService = caseOperationsService;
         this.objectMapper = objectMapper;
     }
 
@@ -93,11 +161,30 @@ public class CaseDossierService {
                 toolTraceRepository.findByCaseIdOrderByExecutionVersionDescSequenceNoAsc(caseId).stream()
                         .map(this::toolTrace).toList(),
                 reviewRepository.findByCaseIdOrderByCreatedAtAsc(caseId).stream().map(this::reviewRecord).toList(),
+                enhancedDueDiligenceRepository == null ? List.of()
+                        : enhancedDueDiligenceRepository.findByCaseIdOrderByRoundNoAsc(caseId)
+                        .stream().map(this::enhancedDueDiligenceRecord).toList(),
+                suspiciousTransactionReportRepository == null ? null
+                        : suspiciousTransactionReportRepository.findByCaseId(caseId)
+                        .map(this::suspiciousTransactionReportRecord).orElse(null),
                 sanctionReviewRepository == null ? List.of()
                         : sanctionReviewRepository.findByCustomerIdOrderByCreatedAtAsc(caseEntity.getCustomerId())
-                        .stream().map(this::sanctionReviewRecord).toList());
+                        .stream().map(this::sanctionReviewRecord).toList(),
+                alertRepository == null ? List.of()
+                        : alertRepository.findByCaseIdOrderByOccurredAtAsc(caseId).stream()
+                        .map(this::alertRecord).toList(),
+                hypothesisRepository == null ? List.of()
+                        : hypothesisRepository.findByCaseIdOrderByIdAsc(caseId).stream()
+                        .map(this::hypothesisRecord).toList(),
+                investigationEvidenceRepository == null ? List.of()
+                        : investigationEvidenceRepository.findByCaseIdOrderByCreatedAtAsc(caseId).stream()
+                        .map(this::investigationEvidenceRecord).toList(),
+                alertCoverageRepository == null ? List.of()
+                        : alertCoverageRepository.findByCaseIdOrderByAlertIdAsc(caseId).stream()
+                        .map(this::alertCoverageRecord).toList(),
+                caseOperationsService == null ? null : caseOperationsRecord(caseOperationsService.get(caseId)));
 
-        return new CaseDossier("1.0", "INTERNAL_CONFIDENTIAL", Instant.now(), "SHA-256",
+        return new CaseDossier("1.6", "INTERNAL_CONFIDENTIAL", Instant.now(), "SHA-256",
                 sha256(content), content);
     }
 
@@ -106,13 +193,44 @@ public class CaseDossierService {
                 entity.getAlertRule(), entity.getStatus(), entity.getRawRiskLevel(), entity.getRiskLevel(),
                 entity.getSummary(), entity.getReportSource(), entity.getModelProvider(), entity.getModelName(),
                 entity.isModelFallback(), entity.getExecutionVersion(), entity.getReviewRevision(),
+                entity.getInvestigationContractVersion(),
+                entity.getReviewDisposition(), entity.getReviewReasonCode(), entity.getReviewedAt(),
                 entity.getRetryCount(), entity.getFailureCode(), entity.getCreatedAt(), entity.getUpdatedAt());
     }
 
     private CaseDossier.SnapshotMetadata snapshotMetadata(InvestigationSnapshotEntity entity) {
         return new CaseDossier.SnapshotMetadata(entity.getSnapshotId(), entity.getExecutionVersion(),
                 entity.getAsOfTime(), entity.getSourceSystem(), entity.getSourceVersion(),
-                entity.getLegalIndexVersion(), entity.getSourceDigest(), entity.getCreatedAt());
+                entity.getLegalIndexVersion(), entity.getSourceDigest(), entity.getAlertsDigest(),
+                frozenAlerts(entity), entity.getCreatedAt());
+    }
+
+    /**
+     * 从加密归档载荷中提取本次执行实际冻结的预警引用。
+     * 旧快照（无预警事实）返回空列表；载荷损坏时拒绝导出，不能把损坏记录伪装成“无预警”。
+     */
+    private List<CaseDossier.FrozenAlertRef> frozenAlerts(InvestigationSnapshotEntity entity) {
+        if (entity.getAlertsDigest() == null) {
+            return List.of();
+        }
+        try {
+            JsonNode root = objectMapper.readTree(
+                    com.bank.aml.security.SensitivePayloadCipher.decrypt(entity.getPayloadCiphertext()));
+            JsonNode alerts = root.path("alerts");
+            if (!alerts.isArray()) {
+                throw new IllegalStateException("尽调快照归档缺少预警事实");
+            }
+            List<CaseDossier.FrozenAlertRef> refs = new ArrayList<>();
+            for (JsonNode alert : alerts) {
+                refs.add(new CaseDossier.FrozenAlertRef(
+                        alert.path("alertId").isNumber() ? alert.get("alertId").asLong() : null,
+                        alert.path("externalAlertId").isTextual() ? alert.get("externalAlertId").asText() : null,
+                        alert.path("alertRevision").isInt() ? alert.get("alertRevision").asInt() : 0));
+            }
+            return List.copyOf(refs);
+        } catch (Exception e) {
+            throw new IllegalStateException("尽调快照预警事实解析失败：" + entity.getSnapshotId(), e);
+        }
     }
 
     private CaseDossier.WorkflowLog workflowLog(CaseLogEntity entity) {
@@ -130,7 +248,8 @@ public class CaseDossierService {
 
     private CaseDossier.ReviewRecord reviewRecord(ManualReview entity) {
         return new CaseDossier.ReviewRecord(entity.getId(), entity.getReviewerId(), entity.getAgentRiskLevel(),
-                entity.getGuardrailRiskLevel(), entity.getReviewerRiskLevel(), entity.getDecision(), entity.getComment(),
+                entity.getGuardrailRiskLevel(), entity.getReviewerRiskLevel(), entity.getDecision(),
+                entity.getReasonCode(), entity.getComment(),
                 entity.getReviewRevision(), entity.getCaseStatusBefore(), entity.getCaseStatusAfter(),
                 entity.getCreatedAt(), entity.getCompletedAt());
     }
@@ -140,6 +259,71 @@ public class CaseDossierService {
                 entity.getListType(), entity.getMatchScore(), entity.getAlgorithmDecision(),
                 entity.getReviewDecision(), entity.getReviewerId(), entity.getComment(),
                 entity.getReviewRevision(), entity.getCreatedAt());
+    }
+
+    private CaseDossier.EnhancedDueDiligenceRecord enhancedDueDiligenceRecord(
+            EnhancedDueDiligenceRequest entity) {
+        return new CaseDossier.EnhancedDueDiligenceRecord(entity.getId(), entity.getRoundNo(), entity.getReasonCode(),
+                parseRequiredDossierList(entity.getRequiredItemsJson(), "enhancedDueDiligence.requiredItems"),
+                entity.getRequestedBy(), entity.getRequestedAt(), entity.getAssignedTo(), entity.getAssignedUnit(),
+                entity.getDueAt(), entity.getStatus().name(), entity.getRevision(), entity.getResponseSummary(),
+                parseDossierList(entity.getEvidenceReferencesJson(), "enhancedDueDiligence.evidenceReferences"),
+                entity.getRespondedBy(), entity.getRespondedAt(), entity.getResolvedAt(), entity.getCancelledBy(),
+                entity.getCancelledAt(), entity.getCancellationReason(),
+                enhancedDueDiligenceEvidenceRepository == null || entity.getId() == null ? List.of()
+                        : enhancedDueDiligenceEvidenceRepository.findByRequestIdOrderByIdAsc(entity.getId())
+                        .stream().map(this::enhancedDueDiligenceEvidenceRecord).toList());
+    }
+
+    private CaseDossier.EnhancedDueDiligenceEvidenceRecord enhancedDueDiligenceEvidenceRecord(
+            EnhancedDueDiligenceEvidence entity) {
+        return new CaseDossier.EnhancedDueDiligenceEvidenceRecord(entity.getId(),
+                "EDD-EVIDENCE-" + entity.getId(), entity.getRequiredItemCode(), entity.getSourceSystem(),
+                entity.getSourceReference(), entity.getContentSha256(), entity.getCapturedBy(), entity.getCapturedAt());
+    }
+
+    private CaseDossier.SuspiciousTransactionReportRecord suspiciousTransactionReportRecord(
+            SuspiciousTransactionReport entity) {
+        return new CaseDossier.SuspiciousTransactionReportRecord(entity.getId(), entity.getReviewId(),
+                entity.getStatus().name(), entity.getReportReason(), entity.getCreatedBy(), entity.getRevision(),
+                entity.getExternalReference(), entity.getSubmittedBy(), entity.getSubmittedAt(), entity.getReturnedBy(),
+                entity.getReturnedAt(), entity.getReturnReason(), entity.getCreatedAt(), entity.getUpdatedAt());
+    }
+
+    private CaseDossier.AlertRecord alertRecord(AmlAlert entity) {
+        return new CaseDossier.AlertRecord(entity.getId(), entity.getExternalAlertId(), entity.getCustomerId(),
+                entity.getRuleCode(), entity.getScenarioCode(), entity.getHitReason(), entity.getOccurredAt(),
+                entity.getStatus(), entity.getRevision(), entity.getResolutionReason(), entity.getCreatedBy(),
+                entity.getCreatedAt(), entity.getUpdatedAt());
+    }
+
+    private CaseDossier.HypothesisRecord hypothesisRecord(InvestigationHypothesis entity) {
+        List<String> required = entity.getRequiredEvidenceTypes() == null
+                || entity.getRequiredEvidenceTypes().isBlank() ? List.of()
+                : java.util.Arrays.stream(entity.getRequiredEvidenceTypes().split(","))
+                .map(String::trim).filter(value -> !value.isEmpty()).toList();
+        return new CaseDossier.HypothesisRecord(entity.getId(), entity.getScenarioCode(),
+                entity.getHypothesisCode(), entity.getTitle(), entity.getInvestigationQuestion(), required,
+                entity.getStatus(), entity.getRationale(), entity.getRevision(), entity.getCreatedBy(),
+                entity.getUpdatedBy(), entity.getCreatedAt(), entity.getUpdatedAt());
+    }
+
+    private CaseDossier.InvestigationEvidenceRecord investigationEvidenceRecord(InvestigationEvidenceLink entity) {
+        return new CaseDossier.InvestigationEvidenceRecord(entity.getId(), entity.getHypothesisId(),
+                entity.getEvidenceType(), entity.getEvidenceReference(), entity.getStance(),
+                entity.getFindingSummary(), entity.getCreatedBy(), entity.getCreatedAt());
+    }
+
+    private CaseDossier.AlertCoverageRecord alertCoverageRecord(AlertInvestigationCoverage entity) {
+        return new CaseDossier.AlertCoverageRecord(entity.getAlertId(), entity.getHypothesisId(),
+                entity.getConclusion(), entity.getAnalysisSummary(), entity.getRevision(), entity.getUpdatedBy(),
+                entity.getUpdatedAt());
+    }
+
+    private CaseDossier.CaseOperationsRecord caseOperationsRecord(CaseOperationsView view) {
+        return new CaseDossier.CaseOperationsRecord(view.priority(), view.priorityScore(), view.priorityReasons(),
+                view.priorityPolicy(), view.phase(), view.responsibleRole(), view.assignedTo(), view.assignedUnit(), view.clockStartedAt(),
+                view.dueAt(), view.slaPolicy());
     }
 
     private ParsedReport parseReport(String reportJson) {
@@ -160,6 +344,26 @@ public class CaseDossierService {
         } catch (JsonProcessingException ignored) {
             return List.of();
         }
+    }
+
+    /** 档案业务字段不能在损坏时降级为空列表，否则会形成“看似完整”的错误档案。 */
+    private List<String> parseDossierList(String value, String field) {
+        if (value == null || value.isBlank()) return List.of();
+        try {
+            List<String> items = objectMapper.readValue(value, STRING_LIST);
+            if (items == null) return List.of();
+            return items.stream().filter(item -> item != null && !item.isBlank()).distinct().toList();
+        } catch (JsonProcessingException e) {
+            throw new IllegalStateException("案件档案字段损坏：" + field, e);
+        }
+    }
+
+    private List<String> parseRequiredDossierList(String value, String field) {
+        List<String> items = parseDossierList(value, field);
+        if (items.isEmpty()) {
+            throw new IllegalStateException("案件档案字段损坏：" + field + " 不能为空");
+        }
+        return items;
     }
 
     private String sha256(CaseDossier.Content content) {

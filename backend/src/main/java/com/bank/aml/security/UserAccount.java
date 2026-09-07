@@ -39,6 +39,13 @@ public class UserAccount {
     @Column(nullable = false)
     private boolean enabled = true;
 
+    /**
+     * 令牌版本号：登出/改密/禁用等吊销场景递增。
+     * JWT 内嵌签发时的版本号，每次请求与数据库比对，不匹配即拒绝——无需黑名单即可吊销历史令牌。
+     */
+    @Column(nullable = false)
+    private int tokenVersion = 0;
+
     @Column(nullable = false)
     private LocalDateTime createdAt;
 
@@ -90,6 +97,19 @@ public class UserAccount {
 
     public void setEnabled(boolean enabled) {
         this.enabled = enabled;
+    }
+
+    public int getTokenVersion() {
+        return tokenVersion;
+    }
+
+    public void setTokenVersion(int tokenVersion) {
+        this.tokenVersion = tokenVersion;
+    }
+
+    /** 吊销当前已签发的全部令牌（登出/改密/禁用后调用）。 */
+    public void revokeTokens() {
+        this.tokenVersion = this.tokenVersion + 1;
     }
 
     public LocalDateTime getCreatedAt() {

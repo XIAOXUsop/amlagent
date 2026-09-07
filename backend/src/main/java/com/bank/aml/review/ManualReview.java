@@ -39,9 +39,13 @@ public class ManualReview {
     @Column(length = 32)
     private String reviewerRiskLevel;
 
-    /** 决定：APPROVE（批准）/ REJECT（驳回，需补充尽调）/ ESCALATE（升级） */
-    @Column(length = 32)
+    /** 业务处置：确认可疑 / 排除预警 / 请求强化尽调。 */
+    @Column(length = 48)
     private String decision;
+
+    /** 与处置匹配的结构化原因码。 */
+    @Column(length = 64)
+    private String reasonCode;
 
     @Column(columnDefinition = "TEXT")
     private String comment;
@@ -118,6 +122,14 @@ public class ManualReview {
 
     public void setDecision(String decision) {
         this.decision = decision;
+    }
+
+    public String getReasonCode() {
+        return reasonCode;
+    }
+
+    public void setReasonCode(String reasonCode) {
+        this.reasonCode = reasonCode;
     }
 
     public String getComment() {

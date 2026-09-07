@@ -55,6 +55,15 @@ public class SecurityConfig {
                         .ignoringRequestMatchers("/api/auth/login", "/api/auth/csrf", "/actuator/**",
                                 "/swagger-ui/**", "/swagger-ui.html", "/v3/api-docs/**"))
                 .sessionManagement(sm -> sm.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
+                // 安全响应头：CSP（兼容 springdoc 内联资源）+ 禁止嵌入 + HSTS（仅 HTTPS 响应携带）；
+                // nosniff / cache-control 由 Spring Security 默认开启
+                .headers(headers -> headers
+                        .contentSecurityPolicy(csp -> csp.policyDirectives(
+                                "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; "
+                                        + "img-src 'self' data:; frame-ancestors 'none'; object-src 'none'; "
+                                        + "base-uri 'self'; form-action 'self'"))
+                        .frameOptions(frame -> frame.deny())
+                        .httpStrictTransportSecurity(hsts -> hsts.includeSubDomains(true)))
                 .authorizeHttpRequests(auth -> auth
                         // Actuator 仅 health/info 公开，其余（含 prometheus）限 ADMIN
                         .requestMatchers("/api/auth/login", "/api/auth/logout", "/api/auth/csrf",

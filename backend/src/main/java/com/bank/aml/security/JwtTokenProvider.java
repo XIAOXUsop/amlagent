@@ -26,14 +26,21 @@ public class JwtTokenProvider {
         this.validityMs = validityHours * 3600_000L;
     }
 
-    public String createToken(String username, String role) {
+    public String createToken(String username, String role, int tokenVersion) {
         return Jwts.builder()
                 .subject(username)
                 .claim("role", role)
+                .claim("ver", tokenVersion)
                 .issuedAt(new Date())
                 .expiration(new Date(System.currentTimeMillis() + validityMs))
                 .signWith(key)
                 .compact();
+    }
+
+    /** 读取令牌签发时的 tokenVersion；旧令牌（无 ver claim）按 -1 处理，一律视为待吊销。 */
+    public int tokenVersion(Claims claims) {
+        Object ver = claims.get("ver");
+        return ver instanceof Number number ? number.intValue() : -1;
     }
 
     public boolean validate(String token) {

@@ -44,4 +44,24 @@ public class PromptInjectionGuard {
         }
         return new InjectionResult(!matched.isEmpty(), matched);
     }
+
+    /**
+     * 高置信扫描：只匹配"忽略指令 / 角色扮演 / 提示词泄露"类强注入信号。
+     * 用于模型输出侧与自由文本落库前校验，排除"违背/override"等可能出现在正常业务措辞中的宽泛词，避免误伤。
+     */
+    public InjectionResult scanHighConfidence(String input) {
+        if (input == null || input.isBlank()) {
+            return InjectionResult.clean();
+        }
+        List<Pattern> highConfidence = List.of(
+                INJECTION_PATTERNS.get(0), INJECTION_PATTERNS.get(1),
+                INJECTION_PATTERNS.get(2), INJECTION_PATTERNS.get(4), INJECTION_PATTERNS.get(6));
+        List<String> matched = new ArrayList<>();
+        for (Pattern pattern : highConfidence) {
+            if (pattern.matcher(input).find()) {
+                matched.add(pattern.pattern());
+            }
+        }
+        return new InjectionResult(!matched.isEmpty(), matched);
+    }
 }

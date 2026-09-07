@@ -1,5 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { parseReport, subscribeAssistantRun, subscribeCase, type CaseItem } from './client'
+import {
+  api, createCase, createCaseFromAlert, parseReport, splitAlertToNewCase,
+  subscribeAssistantRun, subscribeCase, updateAlertCoverage, type CaseItem,
+} from './client'
 
 class FakeEventSource {
   static last: FakeEventSource
@@ -111,5 +114,46 @@ describe('parseReport', () => {
   it('parses a valid final report', () => {
     const item = { reportJson: JSON.stringify({ riskLevel: '高风险', actionCodes: ['MANUAL_REVIEW'] }) } as CaseItem
     expect(parseReport(item)).toMatchObject({ riskLevel: '高风险', actionCodes: ['MANUAL_REVIEW'] })
+  })
+})
+
+describe('case start options', () => {
+  /** T14：建案/拆分的两种模式必须显式传 autoProcess，防止调用点遗漏后悄悄恢复立即入队。 */
+  it('passes autoProcess explicitly for create / create-from-alert / split', async () => {
+    const post = vi.spyOn(api, 'post').mockResolvedValue({ data: { id: 1 } } as never)
+    try {
+      await createCase('C001', '常规监测', { autoProcess: false })
+      expect(post).toHaveBeenLastCalledWith(
+        '/cases', { customerId: 'C001', alertRule: '常规监测', autoProcess: false })
+
+      await createCaseFromAlert(3, 2, { autoProcess: false })
+      expect(post).toHaveBeenLastCalledWith(
+        '/alerts/3/create-case', { expectedRevision: 2, autoProcess: false })
+
+      await createCaseFromAlert(3, 2, { autoProcess: true })
+      expect(post).toHaveBeenLastCalledWith(
+        '/alerts/3/create-case', { expectedRevision: 2, autoProcess: true })
+
+      await splitAlertToNewCase(3, 2, '该预警的交易主体应独立处理', { autoProcess: false })
+      expect(post).toHaveBeenLastCalledWith('/alerts/3/split',
+        { expectedRevision: 2, reason: '该预警的交易主体应独立处理', autoProcess: false })
+    } finally {
+      post.mockRestore()
+    }
+  })
+
+  /** T14：覆盖更新必须携带假设版本，旧客户端缺字段会被后端明确拒绝。 */
+  it('sends expectedHypothesisRevision with coverage updates', async () => {
+    const put = vi.spyOn(api, 'put').mockResolvedValue({ data: {} } as never)
+    try {
+      await updateAlertCoverage(7, 11, {
+        expectedRevision: 1, hypothesisId: 21, expectedHypothesisRevision: 3,
+        conclusion: 'SUSPICIOUS', analysisSummary: '与已确认假设一致的覆盖结论说明',
+      })
+      expect(put).toHaveBeenCalledWith('/cases/7/investigation/alerts/11/coverage',
+        expect.objectContaining({ expectedHypothesisRevision: 3 }))
+    } finally {
+      put.mockRestore()
+    }
   })
 })

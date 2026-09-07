@@ -24,10 +24,13 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
     private final JwtTokenProvider tokenProvider;
     private final UserDetailsService userDetailsService;
+    private final UserAccountRepository userAccounts;
 
-    public JwtAuthenticationFilter(JwtTokenProvider tokenProvider, UserDetailsService userDetailsService) {
+    public JwtAuthenticationFilter(JwtTokenProvider tokenProvider, UserDetailsService userDetailsService,
+                                   UserAccountRepository userAccounts) {
         this.tokenProvider = tokenProvider;
         this.userDetailsService = userDetailsService;
+        this.userAccounts = userAccounts;
     }
 
     /** SSE 完成/超时会触发 ASYNC 二次派发；无状态认证必须在该派发上重新建立 SecurityContext。 */
@@ -55,6 +58,14 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
             }
             if (!user.isEnabled() || !user.isAccountNonLocked()
                     || !user.isAccountNonExpired() || !user.isCredentialsNonExpired()) {
+                chain.doFilter(request, response);
+                return;
+            }
+            // 令牌版本吊销：登出/改密/禁用会递增数据库版本号，签发版本不一致的历史令牌一律失效
+            Integer dbTokenVersion = userAccounts.findByUsername(username)
+                    .map(com.bank.aml.security.UserAccount::getTokenVersion)
+                    .orElse(null);
+            if (dbTokenVersion == null || dbTokenVersion != tokenProvider.tokenVersion(claims)) {
                 chain.doFilter(request, response);
                 return;
             }

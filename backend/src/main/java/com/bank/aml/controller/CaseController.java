@@ -10,12 +10,15 @@ import com.bank.aml.workflow.CaseExecution;
 import com.bank.aml.workflow.CaseExecutionRepository;
 import com.bank.aml.tools.ToolExecutionTraceEntity;
 import com.bank.aml.tools.ToolExecutionTraceRepository;
+import com.bank.aml.investigation.AlertView;
+import com.bank.aml.investigation.CaseIntakeService;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -40,15 +43,18 @@ public class CaseController {
     private final CaseExecutionRepository caseExecutionRepository;
     private final CustomerDataPort dataSource;
     private final ToolExecutionTraceRepository toolTraceRepository;
+    private final CaseIntakeService caseIntakeService;
 
     public CaseController(DueDiligenceService service, WorkflowEventService workflowEventService,
                           CaseExecutionRepository caseExecutionRepository, CustomerDataPort dataSource,
-                           ToolExecutionTraceRepository toolTraceRepository) {
+                          ToolExecutionTraceRepository toolTraceRepository,
+                          CaseIntakeService caseIntakeService) {
         this.service = service;
         this.workflowEventService = workflowEventService;
         this.caseExecutionRepository = caseExecutionRepository;
         this.dataSource = dataSource;
         this.toolTraceRepository = toolTraceRepository;
+        this.caseIntakeService = caseIntakeService;
     }
 
     /** 全部工单（倒序，分页） */
@@ -74,9 +80,9 @@ public class CaseController {
     /** 创建预警工单；autoProcess 默认 true，创建后自动触发尽调（仅 ANALYST/ADMIN） */
     @PostMapping
     @PreAuthorize("hasAnyRole('ANALYST','ADMIN')")
-    public CaseDto create(@Valid @RequestBody CreateCaseRequest req) {
+    public CaseDto create(@Valid @RequestBody CreateCaseRequest req, Authentication authentication) {
         boolean autoProcess = req.autoProcess() == null || req.autoProcess();
-        return CaseDto.from(service.createCase(req.customerId(), req.alertRule(), autoProcess));
+        return CaseDto.from(service.createCase(req.customerId(), req.alertRule(), autoProcess, authentication.getName()));
     }
 
     /** 手动触发处理（幂等：已在执行中的工单会因抢占失败而忽略；仅 ANALYST/ADMIN） */
@@ -98,6 +104,11 @@ public class CaseController {
     @GetMapping("/{id}")
     public CaseDto detail(@PathVariable Long id) {
         return CaseDto.from(service.getCase(id));
+    }
+
+    @GetMapping("/{id}/alerts")
+    public List<AlertView> alerts(@PathVariable Long id) {
+        return caseIntakeService.caseAlerts(id);
     }
 
     /** 工单工作流日志 */

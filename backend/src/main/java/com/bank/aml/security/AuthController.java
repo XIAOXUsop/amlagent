@@ -1,5 +1,6 @@
 package com.bank.aml.security;
 
+import com.bank.aml.audit.AuditService;
 import jakarta.servlet.http.Cookie;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
@@ -30,14 +31,19 @@ public class AuthController {
     private final AuthenticationManager authenticationManager;
     private final JwtTokenProvider tokenProvider;
     private final LoginRateLimiter loginRateLimiter;
+    private final AuditService audit;
+    private final UserAccountRepository userAccounts;
     private final boolean cookieSecure;
 
     public AuthController(AuthenticationManager authenticationManager, JwtTokenProvider tokenProvider,
-                          LoginRateLimiter loginRateLimiter,
+                          LoginRateLimiter loginRateLimiter, AuditService audit,
+                          UserAccountRepository userAccounts,
                           @Value("${aml.security.cookie-secure:false}") boolean cookieSecure) {
         this.authenticationManager = authenticationManager;
         this.tokenProvider = tokenProvider;
         this.loginRateLimiter = loginRateLimiter;
+        this.audit = audit;
+        this.userAccounts = userAccounts;
         this.cookieSecure = cookieSecure;
     }
 
@@ -53,13 +59,17 @@ public class AuthController {
                     UsernamePasswordAuthenticationToken.unauthenticated(req.username(), req.password()));
         } catch (AuthenticationException e) {
             loginRateLimiter.recordFailure(ip, req.username());
+            // 登录失败审计：只记用户名与来源 IP，不记密码与失败细节
+            audit.record(req.username(), "LOGIN_FAILURE", "USER", req.username(), "FAILURE", null, ip);
             throw new IllegalArgumentException("用户名或密码错误");
         }
         UserDetails user = (UserDetails) authentication.getPrincipal();
         loginRateLimiter.reset(ip, req.username());
         String role = user.getAuthorities().stream()
                 .findFirst().map(a -> a.getAuthority().replace("ROLE_", "")).orElse("ANALYST");
-        String token = tokenProvider.createToken(user.getUsername(), role);
+        int tokenVersion = userAccounts.findByUsername(user.getUsername())
+                .map(UserAccount::getTokenVersion).orElse(0);
+        String token = tokenProvider.createToken(user.getUsername(), role, tokenVersion);
         // 纯 HttpOnly Cookie：JWT 不进入响应体 / localStorage / URL，降低 XSS 窃取与日志泄露风险
         Cookie cookie = new Cookie("aml_token", token);
         cookie.setHttpOnly(true);
@@ -68,6 +78,7 @@ public class AuthController {
         cookie.setPath("/");
         cookie.setMaxAge(24 * 3600); // 与 JWT 有效期一致
         response.addCookie(cookie);
+        audit.record(user.getUsername(), "LOGIN_SUCCESS", "USER", user.getUsername(), "SUCCESS", null, ip);
         return Map.of("username", user.getUsername(), "role", role);
     }
 
@@ -94,9 +105,16 @@ public class AuthController {
         return Map.of("headerName", token.getHeaderName(), "parameterName", token.getParameterName());
     }
 
-    /** 登出：清除认证 Cookie */
+    /** 登出：递增令牌版本吊销已签发 JWT，并清除认证 Cookie。 */
     @PostMapping("/logout")
-    public Map<String, Object> logout(HttpServletResponse response) {
+    public Map<String, Object> logout(Authentication authentication, HttpServletResponse response) {
+        if (authentication != null && authentication.isAuthenticated()) {
+            userAccounts.findByUsername(authentication.getName()).ifPresent(account -> {
+                account.revokeTokens();
+                userAccounts.save(account);
+            });
+            audit.record(authentication.getName(), "LOGOUT", "USER", authentication.getName(), "SUCCESS", null, null);
+        }
         Cookie cookie = new Cookie("aml_token", null);
         cookie.setHttpOnly(true);
         cookie.setSecure(cookieSecure);

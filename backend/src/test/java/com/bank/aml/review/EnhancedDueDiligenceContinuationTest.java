@@ -1,0 +1,217 @@
+package com.bank.aml.review;
+
+import com.bank.aml.audit.AuditOutboxService;
+import com.bank.aml.security.UserAccount;
+import com.bank.aml.security.UserAccountRepository;
+import com.bank.aml.common.enums.CaseStatus;
+import com.bank.aml.datasource.entity.CaseEntity;
+import com.bank.aml.datasource.repository.CaseRepository;
+import com.bank.aml.explanation.EddTaskPurpose;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+
+import java.time.LocalDateTime;
+import java.util.List;
+import java.util.Optional;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
+
+/**
+ * v2 计划 §8：EDD 目的分离与义务接续回归。
+ * 覆盖 V2-06/07（接续创建 + SUPERSEDED 非 RESOLVED）、V2-17（父案 DONE 后持续任务可提交）、
+ * V2-24（CONTINUING_REVIEW 不阻断最终处置）。
+ */
+class EnhancedDueDiligenceContinuationTest {
+
+    private static final Long CASE_ID = 7L;
+
+    private final EnhancedDueDiligenceRequestRepository repository =
+            mock(EnhancedDueDiligenceRequestRepository.class);
+    private final EnhancedDueDiligenceEvidenceRepository evidenceRepository =
+            mock(EnhancedDueDiligenceEvidenceRepository.class);
+    private final CaseRepository caseRepository = mock(CaseRepository.class);
+    private final UserAccountRepository userAccountRepository = mock(UserAccountRepository.class);
+    private final AuditOutboxService auditOutbox = mock(AuditOutboxService.class);
+
+    private final EnhancedDueDiligenceService service = new EnhancedDueDiligenceService(repository,
+            evidenceRepository, caseRepository, userAccountRepository, auditOutbox, new ObjectMapper());
+
+    private CaseEntity holdCase;
+
+    @BeforeEach
+    void setUp() {
+        holdCase = new CaseEntity();
+        setId(holdCase, CASE_ID);
+        holdCase.setStatus(CaseStatus.HOLD);
+        when(caseRepository.findById(CASE_ID)).thenReturn(Optional.of(holdCase));
+        when(caseRepository.findByIdForUpdate(CASE_ID)).thenReturn(Optional.of(holdCase));
+        when(repository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        when(repository.findTopByCaseIdOrderByRoundNoDesc(CASE_ID)).thenReturn(Optional.empty());
+        when(repository.findByCaseIdAndStatusOrderByIdAsc(eq(CASE_ID), any())).thenReturn(List.of());
+        UserAccount account = new UserAccount();
+        account.setUsername("analyst");
+        account.setRole("ANALYST");
+        account.setEnabled(true);
+        when(userAccountRepository.findByUsername("analyst")).thenReturn(Optional.of(account));
+    }
+
+    /** V2-24：OPEN 的 CONTINUING_REVIEW 不阻断最终处置；OPEN 的 DECISION_SUPPORT 阻断。 */
+    @Test
+    void openContinuingReviewDoesNotBlockFinalDecisionButDecisionSupportDoes() {
+        EnhancedDueDiligenceRequest continuing = task(21L, 2, EddTaskPurpose.CONTINUING_REVIEW,
+                EnhancedDueDiligenceStatus.OPEN);
+        when(repository.findByCaseIdAndStatusOrderByIdAsc(CASE_ID, EnhancedDueDiligenceStatus.OPEN))
+                .thenReturn(List.of(continuing));
+
+        service.validateReviewDecision(CASE_ID, ReviewDecision.EXCLUDE_FALSE_POSITIVE,
+                List.of(), null, null, null);
+
+        EnhancedDueDiligenceRequest decisionSupport = task(22L, 3, EddTaskPurpose.DECISION_SUPPORT,
+                EnhancedDueDiligenceStatus.OPEN);
+        when(repository.findByCaseIdAndStatusOrderByIdAsc(CASE_ID, EnhancedDueDiligenceStatus.OPEN))
+                .thenReturn(List.of(decisionSupport));
+
+        assertThatThrownBy(() -> service.validateReviewDecision(CASE_ID,
+                ReviewDecision.EXCLUDE_FALSE_POSITIVE, List.of(), null, null, null))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("决策支持");
+    }
+
+    /** V2-07：义务接续同一事务内——创建 CONTINUING_REVIEW，原任务 CANCELLED+SUPERSEDED（非 RESOLVED）。 */
+    @Test
+    void transferObligationsCreatesContinuingTasksAndCancelsSupersededAsNotResolved() {
+        EnhancedDueDiligenceRequest openSupport = task(22L, 1, EddTaskPurpose.DECISION_SUPPORT,
+                EnhancedDueDiligenceStatus.OPEN);
+        when(repository.findByCaseIdAndStatusOrderByIdAsc(CASE_ID, EnhancedDueDiligenceStatus.OPEN))
+                .thenReturn(List.of(openSupport));
+        when(repository.findTopByCaseIdOrderByRoundNoDesc(CASE_ID))
+                .thenReturn(Optional.of(openSupport));
+
+        List<EnhancedDueDiligenceService.ContinuationTaskPlan> plans = List.of(
+                new EnhancedDueDiligenceService.ContinuationTaskPlan(22L, "analyst", "调查一组",
+                        LocalDateTime.now().plusDays(5), List.of("TRANSACTION_PURPOSE"),
+                        "完成收款主体与合同买方一致性的独立核验并记录方法与观察",
+                        "{\"issueIds\":[9],\"standard\":\"核验完成并复核\"}"));
+
+        service.transferObligations(CASE_ID, "reviewer", LocalDateTime.now(), plans, 88L);
+
+        // 原任务：CANCELLED + SUPERSEDED_BY_CONTINUING_REVIEW，不得标为 RESOLVED
+        assertThat(openSupport.getStatus()).isEqualTo(EnhancedDueDiligenceStatus.CANCELLED);
+        assertThat(openSupport.getResolutionReason()).isEqualTo("SUPERSEDED_BY_CONTINUING_REVIEW");
+        // 新任务：CONTINUING_REVIEW，绑定原任务/复核与完成标准
+        org.mockito.Mockito.verify(repository, org.mockito.Mockito.atLeastOnce())
+                .save(org.mockito.ArgumentMatchers.argThat(saved -> saved instanceof EnhancedDueDiligenceRequest t
+                        && t.getPurpose() == EddTaskPurpose.CONTINUING_REVIEW));
+    }
+
+    /** 接续计划缺完成标准 → 拒绝（§8.2：不能假装已完成义务）。 */
+    @Test
+    void continuationPlanWithoutCompletionStandardIsRejected() {
+        List<EnhancedDueDiligenceService.ContinuationTaskPlan> plans = List.of(
+                new EnhancedDueDiligenceService.ContinuationTaskPlan(22L, "analyst", "调查一组",
+                        LocalDateTime.now().plusDays(5), List.of(), "以后再查", null));
+
+        assertThatThrownBy(() -> service.transferObligations(CASE_ID, "reviewer", LocalDateTime.now(),
+                plans, null))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("完成标准");
+    }
+
+    /** V2-17：父案 DONE 后，OPEN 的 CONTINUING_REVIEW 仍可提交材料；DECISION_SUPPORT 不行。 */
+    @Test
+    void continuingTaskCanBeSubmittedAfterCaseDone() {
+        holdCase.setStatus(CaseStatus.DONE);
+        EnhancedDueDiligenceRequest continuing = task(21L, 2, EddTaskPurpose.CONTINUING_REVIEW,
+                EnhancedDueDiligenceStatus.OPEN);
+        continuing.setAssignedTo("analyst");
+        continuing.setRequiredItemsJson("[\"TRANSACTION_PURPOSE\"]");
+        when(repository.findByIdAndCaseId(21L, CASE_ID)).thenReturn(Optional.of(continuing));
+        when(repository.submitResponse(eq(21L), eq(CASE_ID), any(), any(), eq(0),
+                any(), any(), any(), any())).thenReturn(1);
+        when(evidenceRepository.saveAllAndFlush(any())).thenReturn(List.of());
+        when(repository.findById(21L)).thenReturn(Optional.of(continuing));
+
+        EnhancedDueDiligenceView view = service.submitResponse(CASE_ID, 21L, 0,
+                "已完成收款主体一致性核验：核心系统流水与合同买方一致", List.of(
+                        new EnhancedDueDiligenceEvidenceSubmission("TRANSACTION_PURPOSE", "CORE_BANKING",
+                                "TXN-DOC-009", "a".repeat(64))),
+                "analyst", false);
+        assertThat(view).isNotNull();
+
+        // DECISION_SUPPORT 在 DONE 状态不可提交
+        EnhancedDueDiligenceRequest support = task(22L, 3, EddTaskPurpose.DECISION_SUPPORT,
+                EnhancedDueDiligenceStatus.OPEN);
+        support.setAssignedTo("analyst");
+        support.setRequiredItemsJson("[\"SOURCE_OF_FUNDS\"]");
+        when(repository.findByIdAndCaseId(22L, CASE_ID)).thenReturn(Optional.of(support));
+        assertThatThrownBy(() -> service.submitResponse(CASE_ID, 22L, 0,
+                "补充说明材料", List.of(new EnhancedDueDiligenceEvidenceSubmission("SOURCE_OF_FUNDS",
+                        "CORE_BANKING", "TXN-DOC-010", "b".repeat(64))),
+                "analyst", false))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("人工复核状态");
+    }
+
+    /** §8.3：RESOLVED 只能由明确完成产生；不再因“最近一轮”被其他业务决定自动 RESOLVED。 */
+    @Test
+    void applyReviewDecisionNoLongerAutoResolvesSubmittedTasks() {
+        EnhancedDueDiligenceRequest submitted = task(23L, 1, EddTaskPurpose.DECISION_SUPPORT,
+                EnhancedDueDiligenceStatus.SUBMITTED);
+        when(repository.findTopByCaseIdOrderByRoundNoDesc(CASE_ID)).thenReturn(Optional.of(submitted));
+
+        service.applyReviewDecision(CASE_ID, ReviewDecision.EXCLUDE_FALSE_POSITIVE, ReviewReasonCode.VERIFIED_LEGITIMATE_PURPOSE,
+                List.of(), null, null, null, "reviewer", LocalDateTime.now());
+
+        assertThat(submitted.getStatus()).isEqualTo(EnhancedDueDiligenceStatus.SUBMITTED);
+    }
+
+    /** 显式完成任务：REVIEWER 以 requestId/expectedRevision 确认，RESOLVED 带核验结论。 */
+    @Test
+    void explicitCompletionResolvesTaskWithReason() {
+        EnhancedDueDiligenceRequest submittedTask = task(21L, 2, EddTaskPurpose.CONTINUING_REVIEW,
+                EnhancedDueDiligenceStatus.SUBMITTED);
+        submittedTask.setAssignedTo("analyst");
+        when(repository.findByIdAndCaseId(21L, CASE_ID)).thenReturn(Optional.of(submittedTask));
+        when(repository.findById(21L)).thenReturn(Optional.of(submittedTask));
+
+        EnhancedDueDiligenceView view = service.completeTask(CASE_ID, 21L, 0,
+                "复核确认：收款主体一致性核验完成，观察与限制已记录", "reviewer-b");
+
+        assertThat(submittedTask.getStatus()).isEqualTo(EnhancedDueDiligenceStatus.RESOLVED);
+        assertThat(submittedTask.getResolutionReason()).contains("核验完成");
+        assertThat(view).isNotNull();
+    }
+
+    private EnhancedDueDiligenceRequest task(Long id, int round, EddTaskPurpose purpose,
+                                             EnhancedDueDiligenceStatus status) {
+        EnhancedDueDiligenceRequest request = new EnhancedDueDiligenceRequest();
+        setId(request, id);
+        request.setCaseId(CASE_ID);
+        request.setRoundNo(round);
+        request.setReasonCode("SOURCE_OF_FUNDS_UNCLEAR");
+        request.setRequiredItemsJson("[\"SOURCE_OF_FUNDS\"]");
+        request.setRequestedBy("reviewer");
+        request.setRequestedAt(LocalDateTime.now());
+        request.setDueAt(LocalDateTime.now().plusDays(3));
+        request.setStatus(status);
+        request.setPurpose(purpose);
+        request.setRevision(0);
+        return request;
+    }
+
+    private static void setId(Object entity, Long id) {
+        try {
+            var field = entity.getClass().getDeclaredField("id");
+            field.setAccessible(true);
+            field.set(entity, id);
+        } catch (ReflectiveOperationException e) {
+            throw new IllegalStateException(e);
+        }
+    }
+}

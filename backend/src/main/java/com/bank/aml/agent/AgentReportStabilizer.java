@@ -58,12 +58,9 @@ public final class AgentReportStabilizer {
         }
 
         // 删除模型自造 ID 由 Validator 负责；这里只同步真实冻结证据，避免掩盖越权引用。
-        Set<String> citedAllowed = new LinkedHashSet<>(extractAllowed(legalBasis, allowedIds));
-        citedAllowed.addAll(extractAllowed(evidenceChain, allowedIds));
-        // 法规工具的完整结果就是本次冻结证据包；即使模型漏抄 ID，后端仍可恢复其来源引用。
-        if (citedAllowed.isEmpty()) {
-            citedAllowed.addAll(allowedIds);
-        }
+        // 本次工具真实返回的证据均可确定性追溯；模型只抄到其中一个 ID 时也必须补齐其余返回项，
+        // 否则后端 Guardrail 随后补入的高影响动作可能丢失已经检索到的法律支持。
+        Set<String> citedAllowed = new LinkedHashSet<>(allowedIds);
 
         for (LegalDoc doc : snapshot.legalEvidence()) {
             if (doc.evidenceId() == null || !citedAllowed.contains(doc.evidenceId())) {

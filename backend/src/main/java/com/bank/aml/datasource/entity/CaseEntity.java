@@ -89,6 +89,25 @@ public class CaseEntity {
     @Column(nullable = false)
     private int reviewRevision = 0;
 
+    /** 0=存量兼容；1=必须满足预警覆盖、假设和证据结案契约；2=解释核验政策（快进快出专项）；>=3 不受支持，拒绝写入。 */
+    @Column(nullable = false)
+    private int investigationContractVersion = 0;
+
+    /** 案件事实变更序号：范围/材料核验/当前提交/关键问题处置/政策绑定/任务义务变更时递增（v2 依据令牌绑定此值）。 */
+    @Column(nullable = false)
+    private long caseFactsEpoch = 0;
+
+    /** 最新人工业务处置：确认可疑 / 排除预警 / 请求强化尽调。 */
+    @Column(length = 48)
+    private String reviewDisposition;
+
+    /** 与最新处置匹配的结构化原因码。 */
+    @Column(length = 64)
+    private String reviewReasonCode;
+
+    /** 最近一次人工处置完成时间。 */
+    private LocalDateTime reviewedAt;
+
     /** 当前执行者（Worker 标识） */
     @Column(length = 64)
     private String lockedBy;
@@ -261,6 +280,46 @@ public class CaseEntity {
 
     public void setReviewRevision(int reviewRevision) {
         this.reviewRevision = reviewRevision;
+    }
+
+    public int getInvestigationContractVersion() {
+        return investigationContractVersion;
+    }
+
+    public void setInvestigationContractVersion(int investigationContractVersion) {
+        this.investigationContractVersion = investigationContractVersion;
+    }
+
+    public long getCaseFactsEpoch() {
+        return caseFactsEpoch;
+    }
+
+    public void setCaseFactsEpoch(long caseFactsEpoch) {
+        this.caseFactsEpoch = caseFactsEpoch;
+    }
+
+    public String getReviewDisposition() {
+        return reviewDisposition;
+    }
+
+    public void setReviewDisposition(String reviewDisposition) {
+        this.reviewDisposition = reviewDisposition;
+    }
+
+    public String getReviewReasonCode() {
+        return reviewReasonCode;
+    }
+
+    public void setReviewReasonCode(String reviewReasonCode) {
+        this.reviewReasonCode = reviewReasonCode;
+    }
+
+    public LocalDateTime getReviewedAt() {
+        return reviewedAt;
+    }
+
+    public void setReviewedAt(LocalDateTime reviewedAt) {
+        this.reviewedAt = reviewedAt;
     }
 
     public String getLockedBy() {

@@ -5,6 +5,7 @@ import com.bank.aml.datasource.entity.CaseEntity;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
@@ -12,12 +13,27 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Optional;
+
+import jakarta.persistence.LockModeType;
 
 public interface CaseRepository extends JpaRepository<CaseEntity, Long> {
+
+    /**
+     * 人工处置与补充尽调回传共享同一案件行锁，保证跨表状态迁移串行化。
+     * 不能只分别锁案件表或任务表，否则 DONE 与 SUBMITTED 仍可能交错提交。
+     */
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("SELECT c FROM CaseEntity c WHERE c.id = :id")
+    Optional<CaseEntity> findByIdForUpdate(@Param("id") Long id);
 
     Page<CaseEntity> findAllByOrderByCreatedAtDesc(Pageable pageable);
 
     List<CaseEntity> findByStatusOrderByCreatedAtAsc(CaseStatus status);
+
+    List<CaseEntity> findByCustomerIdAndStatusOrderByCreatedAtDesc(String customerId, CaseStatus status);
+
+    List<CaseEntity> findByStatusInOrderByCreatedAtAsc(java.util.Collection<CaseStatus> statuses);
 
     long countByStatus(CaseStatus status);
 
@@ -176,33 +192,62 @@ public interface CaseRepository extends JpaRepository<CaseEntity, Long> {
                              @Param("worker") String worker,
                              @Param("heartbeatThreshold") LocalDateTime heartbeatThreshold);
 
-    /** 人工复核终态：HOLD → DONE/FAILED，reviewRevision 自增（条件更新 + 乐观锁，旧 revision 返回 0） */
+    /** 人工复核终态：HOLD → DONE，同时落业务处置与原因码。 */
     @Modifying
     @Transactional
     @Query("""
             UPDATE CaseEntity c
             SET c.status = :status, c.reviewRevision = c.reviewRevision + 1,
-                c.failureCode = :failureCode, c.failureMessage = :failureMessage
+                c.reviewDisposition = :disposition, c.reviewReasonCode = :reasonCode,
+                c.reviewedAt = :reviewedAt, c.failureCode = NULL, c.failureMessage = NULL
             WHERE c.id = :id AND c.status = :hold AND c.reviewRevision = :expectedRevision
             """)
     int completeReview(@Param("id") Long id,
                        @Param("status") CaseStatus status,
                        @Param("hold") CaseStatus hold,
                        @Param("expectedRevision") int expectedRevision,
-                       @Param("failureCode") String failureCode,
-                       @Param("failureMessage") String failureMessage);
+                       @Param("disposition") String disposition,
+                       @Param("reasonCode") String reasonCode,
+                       @Param("reviewedAt") LocalDateTime reviewedAt);
 
-    /** 人工复核升级：HOLD 保持 HOLD，仅 reviewRevision 自增（条件更新 + 乐观锁） */
+    /** 请求强化尽调：保持 HOLD，记录原因并递增 revision，等待补充材料后再次处置。 */
     @Modifying
     @Transactional
     @Query("""
             UPDATE CaseEntity c
-            SET c.reviewRevision = c.reviewRevision + 1
+            SET c.reviewRevision = c.reviewRevision + 1,
+                c.reviewDisposition = :disposition, c.reviewReasonCode = :reasonCode,
+                c.reviewedAt = :reviewedAt
             WHERE c.id = :id AND c.status = :hold AND c.reviewRevision = :expectedRevision
             """)
-    int escalateReview(@Param("id") Long id,
-                       @Param("hold") CaseStatus hold,
-                       @Param("expectedRevision") int expectedRevision);
+    int requestEnhancedDueDiligence(@Param("id") Long id,
+                                    @Param("hold") CaseStatus hold,
+                                    @Param("expectedRevision") int expectedRevision,
+                                    @Param("disposition") String disposition,
+                                    @Param("reasonCode") String reasonCode,
+                                    @Param("reviewedAt") LocalDateTime reviewedAt);
+
+    /** 报送完成：REPORT_PENDING → DONE。 */
+    @Modifying
+    @Transactional
+    @Query("""
+            UPDATE CaseEntity c SET c.status = :done
+            WHERE c.id = :id AND c.status = :reportPending
+            """)
+    int completeSuspiciousReport(@Param("id") Long id,
+                                 @Param("reportPending") CaseStatus reportPending,
+                                 @Param("done") CaseStatus done);
+
+    /** 外部退回补正：已完成案件重新进入报告待办。 */
+    @Modifying
+    @Transactional
+    @Query("""
+            UPDATE CaseEntity c SET c.status = :reportPending
+            WHERE c.id = :id AND c.status = :done AND c.reviewDisposition = 'CONFIRM_SUSPICIOUS'
+            """)
+    int reopenSuspiciousReport(@Param("id") Long id,
+                               @Param("done") CaseStatus done,
+                               @Param("reportPending") CaseStatus reportPending);
 
     /** 人工重试：FAILED → PENDING，清锁、失败信息并清零重试计数（条件更新，非 FAILED 返回 0） */
     @Modifying
@@ -232,4 +277,10 @@ public interface CaseRepository extends JpaRepository<CaseEntity, Long> {
                          @Param("pending") CaseStatus pending,
                          @Param("failed") CaseStatus failed,
                          @Param("allowedFailureCodes") java.util.Collection<String> allowedFailureCodes);
+
+    /** 案件事实序号递增：范围/材料核验/当前提交/关键问题处置/政策绑定/任务义务变更时调用（v2 依据令牌绑定）。 */
+    @Modifying
+    @Transactional
+    @Query("UPDATE CaseEntity c SET c.caseFactsEpoch = c.caseFactsEpoch + 1 WHERE c.id = :id")
+    int bumpFactsEpoch(@Param("id") Long id);
 }

@@ -14,6 +14,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
 import java.util.Map;
+import java.time.LocalDateTime;
 
 /**
  * 人工复核接口（REVIEWER / ADMIN）。
@@ -24,9 +25,12 @@ import java.util.Map;
 public class ReviewController {
 
     private final ReviewService reviewService;
+    private final com.bank.aml.security.PromptInjectionGuard injectionGuard;
 
-    public ReviewController(ReviewService reviewService) {
+    public ReviewController(ReviewService reviewService,
+                            com.bank.aml.security.PromptInjectionGuard injectionGuard) {
         this.reviewService = reviewService;
+        this.injectionGuard = injectionGuard;
     }
 
     /** 待复核队列（HOLD 工单） */
@@ -38,13 +42,27 @@ public class ReviewController {
     /** 提交复核决定（携带 expectedReviewRevision 做乐观锁，旧 revision 返回 409） */
     @PostMapping("/{caseId}")
     public ManualReview submit(@PathVariable Long caseId, @RequestBody ReviewRequest req) {
+        // 复核评论是自由文本并将回显给其他复核者：检出注入模式直接拒绝（400）
+        if (injectionGuard.scan(req.comment()).suspicious()) {
+            throw new IllegalArgumentException("评论包含不被允许的内容");
+        }
         String reviewer = SecurityContextHolder.getContext().getAuthentication().getName();
-        return reviewService.submit(caseId, reviewer, req.reviewerRiskLevel(), req.decision(),
-                req.comment(), req.expectedReviewRevision());
+        ManualReview review = reviewService.submit(caseId, reviewer, req.reviewerRiskLevel(), req.decision(),
+                req.reasonCode(), req.comment(), req.expectedReviewRevision(), req.requiredItems(), req.dueAt(),
+                req.assignedTo(), req.assignedUnit(), req.reviewBasisToken(),
+                req.continuationTasks() == null ? null
+                        : req.continuationTasks().stream()
+                                .map(item -> new com.bank.aml.review.EnhancedDueDiligenceService.ContinuationTaskPlan(
+                                        item.originRequestId(), item.assignedTo(), item.assignedUnit(),
+                                        item.dueAt(), item.requiredItems(), item.completionStandard(),
+                                        item.issueBindingsJson()))
+                                .toList());
+        return review;
     }
 
     /** 工单复核记录 */
     @GetMapping("/{caseId}")
+    @PreAuthorize("hasAnyRole('ANALYST','REVIEWER','ADMIN')")
     public List<ManualReview> records(@PathVariable Long caseId) {
         return reviewService.records(caseId);
     }
@@ -55,7 +73,17 @@ public class ReviewController {
         return reviewService.stats();
     }
 
-    public record ReviewRequest(String reviewerRiskLevel, String decision, String comment,
-                                int expectedReviewRevision) {
+    public record ReviewRequest(String reviewerRiskLevel, String decision, String reasonCode, String comment,
+                                int expectedReviewRevision, List<String> requiredItems, LocalDateTime dueAt,
+                                String assignedTo, String assignedUnit,
+                                /** v2：最终复核依据令牌（GET /review-basis 取得）；v1 案件可不带。 */
+                                String reviewBasisToken,
+                                /** v2：义务接续计划（可疑 + 已披露未知路径必须提供）。 */
+                                List<ContinuationTaskRequest> continuationTasks) {
+    }
+
+    public record ContinuationTaskRequest(Long originRequestId, String assignedTo, String assignedUnit,
+                                          LocalDateTime dueAt, List<String> requiredItems,
+                                          String completionStandard, String issueBindingsJson) {
     }
 }

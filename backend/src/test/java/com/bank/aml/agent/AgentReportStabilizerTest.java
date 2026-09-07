@@ -72,6 +72,24 @@ class AgentReportStabilizerTest {
         assertThat(stabilized.evidenceChain()).doesNotContain("LEGAL-VALID-1");
     }
 
+    @Test
+    void attachesEveryEvidenceActuallyReturnedByLegalToolWhenModelCitesOnlyOne() {
+        LegalDoc first = new LegalDoc("LEGAL-VALID-1", "反洗钱法", "文号", "第三条", "应当报告");
+        LegalDoc second = new LegalDoc("LEGAL-VALID-2", "资产冻结办法", "文号", "第二条", "应当立即冻结");
+        InvestigationSnapshot snapshot = new InvestigationSnapshot(
+                "snapshot-2", 1L, 1, Instant.EPOCH,
+                new CustomerProfile("C1", "客户", "ID", "个人", "", "", ""),
+                List.of(), List.of(), List.of(), List.of(first, second), Map.of("制裁", List.of(first, second)),
+                List.of("制裁"), risk(), "v1", "digest");
+        DueDiligenceReport raw = report(List.of("依据 LEGAL-VALID-1"), List.of("证据 LEGAL-VALID-1"));
+
+        DueDiligenceReport stabilized = AgentReportStabilizer.attachFrozenLegalEvidence(
+                snapshot, raw, List.of("LEGAL-VALID-1", "LEGAL-VALID-2"));
+
+        assertThat(stabilized.legalBasis()).anyMatch(value -> value.contains("LEGAL-VALID-2"));
+        assertThat(stabilized.evidenceChain()).anyMatch(value -> value.contains("LEGAL-VALID-2"));
+    }
+
     private DueDiligenceReport report(List<String> basis, List<String> chain) {
         return new DueDiligenceReport(
                 "C1", "客户", "低风险", "tx", "corp", List.of(), basis,

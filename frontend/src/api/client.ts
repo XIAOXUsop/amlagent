@@ -28,6 +28,10 @@ export interface CaseItem {
   modelFallback: boolean
   executionVersion: number
   reviewRevision: number
+  investigationContractVersion: number
+  reviewDisposition: string | null
+  reviewReasonCode: string | null
+  reviewedAt: string | null
   retryCount: number
   failureCode: string | null
   failureMessage: string | null
@@ -76,10 +80,16 @@ export interface ManualReview {
   caseId: number
   reviewerId: string
   agentRiskLevel: string
+  guardrailRiskLevel: string
   reviewerRiskLevel: string
   decision: string
+  reasonCode: string
   comment: string
+  reviewRevision: number
+  caseStatusBefore: string
+  caseStatusAfter: string
   createdAt: string
+  completedAt: string
 }
 
 export const api = axios.create({ baseURL: '/api', timeout: 120000 })
@@ -152,6 +162,7 @@ export interface CaseStats {
   pending: number
   running: number
   hold: number
+  reportPending: number
   done: number
   failed: number
 }
@@ -178,6 +189,204 @@ export interface CustomerAdminItem {
   status: string
   createdAt: string
   updatedAt: string
+}
+
+export type AlertStatus = 'NEW' | 'LINKED' | 'DUPLICATE'
+export type InvestigationScenarioCode =
+  'STRUCTURING' | 'RAPID_MOVEMENT' | 'CROSS_BORDER_ANOMALY' | 'PROFILE_MISMATCH'
+  | 'COMPLEX_OWNERSHIP' | 'SANCTIONS_WATCHLIST'
+export type HypothesisStatus = 'OPEN' | 'CONFIRMED' | 'REJECTED'
+export type EvidenceStance = 'SUPPORTS' | 'CONTRADICTS'
+export type InvestigationEvidenceType =
+  'TRANSACTION' | 'CUSTOMER_PROFILE' | 'BENEFICIAL_OWNERSHIP' | 'SANCTIONS_SCREENING'
+  | 'DOCUMENT' | 'EXTERNAL_DATA' | 'LEGAL'
+export type AlertCoverageConclusion = 'PENDING' | 'SUSPICIOUS' | 'EXPLAINED'
+
+export interface AmlAlert {
+  id: number
+  externalAlertId: string
+  customerId: string
+  ruleCode: string
+  scenarioCode: InvestigationScenarioCode
+  hitReason: string
+  occurredAt: string
+  status: AlertStatus
+  caseId: number | null
+  revision: number
+  resolutionReason: string | null
+  createdBy: string
+  createdAt: string
+  updatedAt: string
+}
+
+export interface InvestigationEvidence {
+  id: number
+  hypothesisId: number
+  evidenceType: InvestigationEvidenceType
+  evidenceReference: string
+  stance: EvidenceStance
+  findingSummary: string
+  createdBy: string
+  createdAt: string
+}
+
+export interface InvestigationHypothesis {
+  id: number
+  caseId: number
+  scenarioCode: InvestigationScenarioCode
+  hypothesisCode: string
+  title: string
+  investigationQuestion: string
+  requiredEvidenceTypes: InvestigationEvidenceType[]
+  status: HypothesisStatus
+  rationale: string | null
+  revision: number
+  createdBy: string
+  updatedBy: string | null
+  createdAt: string
+  updatedAt: string
+  evidence: InvestigationEvidence[]
+}
+
+export interface AlertCoverage {
+  id: number
+  alertId: number
+  caseId: number
+  hypothesisId: number | null
+  /** 覆盖决定形成时锁定的假设版本；null 表示存量数据，门禁会要求重新确认。 */
+  hypothesisRevision: number | null
+  conclusion: AlertCoverageConclusion
+  analysisSummary: string | null
+  revision: number
+  updatedBy: string | null
+  updatedAt: string
+}
+
+export interface CaseInvestigation {
+  contractVersion: number
+  alerts: AmlAlert[]
+  hypotheses: InvestigationHypothesis[]
+  coverage: AlertCoverage[]
+  /** 两种结案路径（确认可疑 / 排除预警）至少一条不被阻断 */
+  readyForFinalReview: boolean
+  /** 与具体决定无关的调查完成度阻断（供分析员待办与详情展示） */
+  generalBlockers: string[]
+  confirmSuspiciousBlockers: string[]
+  excludeFalsePositiveBlockers: string[]
+}
+
+export interface InvestigationPlaybook {
+  code: InvestigationScenarioCode
+  name: string
+  defaultHypothesisCode: string
+  defaultHypothesisTitle: string
+  investigationQuestion: string
+  requiredEvidenceTypes: InvestigationEvidenceType[]
+  escalationFocus: string
+}
+
+export interface TransactionWindowView {
+  asOfTime: string
+  sourceSystem: string
+  sourceVersion: string
+  windows: Array<{
+    days: number
+    transactionCount: number
+    currencyBreakdown: Array<{
+      currency: string
+      totalAmount: number
+      incomingAmount: number
+      outgoingAmount: number
+      crossBorderAmount: number
+    }>
+    crossBorderCount: number
+    nightCount: number
+    topCounterparties: Array<{
+      counterparty: string
+      transactionCount: number
+      amounts: Array<{ currency: string; amount: number }>
+    }>
+  }>
+}
+
+export type EnhancedDueDiligenceStatus = 'OPEN' | 'SUBMITTED' | 'RESOLVED' | 'CANCELLED'
+
+export type CasePriority = 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'NORMAL'
+export type OperationPhase = 'INVESTIGATION' | 'REVIEW' | 'ENHANCED_DUE_DILIGENCE' | 'REPORTING' | 'COMPLETED'
+export interface CaseOperationsView {
+  caseId: number
+  customerId: string
+  customerName: string
+  caseStatus: CaseItem['status']
+  priority: CasePriority
+  priorityScore: number
+  priorityReasons: string[]
+  priorityPolicy: string
+  phase: OperationPhase
+  responsibleRole: string
+  assignedTo: string | null
+  assignedUnit: string | null
+  clockStartedAt: string
+  dueAt: string | null
+  overdue: boolean
+  minutesRemaining: number
+  slaPolicy: string
+  calculatedAt: string
+}
+
+export async function listCaseOperations(params?: {
+  overdueOnly?: boolean
+  priority?: CasePriority | ''
+  phase?: OperationPhase | ''
+}): Promise<CaseOperationsView[]> {
+  return (await api.get('/case-operations', { params: {
+    overdueOnly: params?.overdueOnly || undefined,
+    priority: params?.priority || undefined,
+    phase: params?.phase || undefined,
+  } })).data
+}
+
+export async function getCaseOperations(caseId: number): Promise<CaseOperationsView> {
+  return (await api.get(`/case-operations/${caseId}`)).data
+}
+
+export interface EnhancedDueDiligenceEvidenceSubmission {
+  requiredItemCode: string
+  sourceSystem: string
+  sourceReference: string
+  contentSha256: string
+}
+
+export interface EnhancedDueDiligenceEvidence extends EnhancedDueDiligenceEvidenceSubmission {
+  id: number
+  evidenceId: string
+  capturedBy: string
+  capturedAt: string
+}
+
+export interface EnhancedDueDiligenceRequest {
+  id: number
+  caseId: number
+  roundNo: number
+  reasonCode: string
+  requiredItems: string[]
+  requestedBy: string
+  requestedAt: string
+  assignedTo: string | null
+  assignedUnit: string | null
+  dueAt: string
+  status: EnhancedDueDiligenceStatus
+  overdue: boolean
+  revision: number
+  responseSummary: string | null
+  evidenceReferences: string[]
+  respondedBy: string | null
+  respondedAt: string | null
+  resolvedAt: string | null
+  cancelledBy: string | null
+  cancelledAt: string | null
+  cancellationReason: string | null
+  evidenceItems: EnhancedDueDiligenceEvidence[]
 }
 
 export interface CustomerEditPayload {
@@ -334,8 +543,110 @@ export function subscribeAssistantRun(
   }
 }
 
-export async function createCase(customerId: string, alertRule: string): Promise<CaseItem> {
-  return (await api.post('/cases', { customerId, alertRule, autoProcess: true })).data
+export interface CaseStartOptions {
+  /** true：创建后立即入队开始尽调；false：仅创建案件（可继续归并/拆分），稍后显式“开始调查”。 */
+  autoProcess: boolean
+  /** v2 试点显式开启（§17.2）：true 时契约版本=2，案件进入解释核验工作区。 */
+  enableExplanationPolicy?: boolean
+}
+
+/** 创建预警工单；autoProcess 必须显式传入，防止调用点遗漏后悄悄恢复立即入队。 */
+export async function createCase(
+  customerId: string, alertRule: string, options: CaseStartOptions,
+): Promise<CaseItem> {
+  return (await api.post('/cases', { customerId, alertRule, autoProcess: options.autoProcess })).data
+}
+
+export async function listAlertInbox(): Promise<AmlAlert[]> {
+  return (await api.get('/alerts')).data
+}
+
+export async function createAmlAlert(body: {
+  externalAlertId: string
+  customerId: string
+  ruleCode: string
+  scenarioCode: InvestigationScenarioCode
+  hitReason: string
+  occurredAt?: string
+}): Promise<AmlAlert> {
+  return (await api.post('/alerts', body)).data
+}
+
+export async function listAlertCandidateCases(alertId: number): Promise<CaseItem[]> {
+  return (await api.get(`/alerts/${alertId}/candidate-cases`)).data
+}
+
+export async function createCaseFromAlert(
+  alertId: number, expectedRevision: number, options: CaseStartOptions,
+): Promise<CaseItem> {
+  return (await api.post(`/alerts/${alertId}/create-case`, {
+    expectedRevision, autoProcess: options.autoProcess,
+    ...(options.enableExplanationPolicy ? { enableExplanationPolicy: true } : {}),
+  })).data
+}
+
+export async function linkAlertToCase(
+  alertId: number, caseId: number, expectedRevision: number, reason: string,
+): Promise<AmlAlert> {
+  return (await api.post(`/alerts/${alertId}/link`, { caseId, expectedRevision, reason })).data
+}
+
+export async function closeDuplicateAlert(
+  alertId: number, expectedRevision: number, reason: string,
+): Promise<AmlAlert> {
+  return (await api.post(`/alerts/${alertId}/duplicate`, { expectedRevision, reason })).data
+}
+
+export async function splitAlertToNewCase(
+  alertId: number, expectedRevision: number, reason: string, options: CaseStartOptions,
+): Promise<CaseItem> {
+  return (await api.post(`/alerts/${alertId}/split`, {
+    expectedRevision, reason, autoProcess: options.autoProcess,
+  })).data
+}
+
+export async function listCaseAlerts(caseId: number): Promise<AmlAlert[]> {
+  return (await api.get(`/cases/${caseId}/alerts`)).data
+}
+
+export async function getCaseInvestigation(caseId: number): Promise<CaseInvestigation> {
+  return (await api.get(`/cases/${caseId}/investigation`)).data
+}
+
+export async function listInvestigationPlaybooks(caseId: number): Promise<InvestigationPlaybook[]> {
+  return (await api.get(`/cases/${caseId}/investigation/playbooks`)).data
+}
+
+export async function getTransactionWindows(caseId: number): Promise<TransactionWindowView> {
+  return (await api.get(`/cases/${caseId}/investigation/transaction-windows`)).data
+}
+
+export async function addInvestigationEvidence(
+  caseId: number, hypothesisId: number,
+  body: { evidenceType: InvestigationEvidenceType; evidenceReference: string; stance: EvidenceStance; findingSummary: string },
+): Promise<InvestigationEvidence> {
+  return (await api.post(`/cases/${caseId}/investigation/hypotheses/${hypothesisId}/evidence`, body)).data
+}
+
+export async function updateInvestigationHypothesis(
+  caseId: number, hypothesisId: number,
+  body: { expectedRevision: number; status: 'CONFIRMED' | 'REJECTED'; rationale: string },
+): Promise<InvestigationHypothesis> {
+  return (await api.put(`/cases/${caseId}/investigation/hypotheses/${hypothesisId}`, body)).data
+}
+
+export async function updateAlertCoverage(
+  caseId: number, alertId: number,
+  body: {
+    expectedRevision: number
+    hypothesisId: number
+    /** 覆盖所关联假设的当前版本；缺失或过期会得到明确错误（409） */
+    expectedHypothesisRevision: number
+    conclusion: 'SUSPICIOUS' | 'EXPLAINED'
+    analysisSummary: string
+  },
+): Promise<AlertCoverage> {
+  return (await api.put(`/cases/${caseId}/investigation/alerts/${alertId}/coverage`, body)).data
 }
 
 export async function processCase(id: number): Promise<CaseItem> {
@@ -429,6 +740,11 @@ export interface CaseDossier {
     toolTraces: unknown[]
     reviewHistory: unknown[]
     sanctionReviewHistory: unknown[]
+    alerts: unknown[]
+    hypotheses: unknown[]
+    investigationEvidence: unknown[]
+    alertCoverage: unknown[]
+    operations: Record<string, unknown> | null
   }
 }
 
@@ -512,15 +828,270 @@ export async function listPendingReviews(): Promise<CaseItem[]> {
   return (await api.get('/reviews/pending')).data
 }
 
+export async function listCaseReviews(caseId: number): Promise<ManualReview[]> {
+  return (await api.get(`/reviews/${caseId}`)).data
+}
+
 export async function submitReview(
   caseId: number,
-  body: { reviewerRiskLevel: string; decision: string; comment: string; expectedReviewRevision: number },
+  body: {
+    reviewerRiskLevel: string
+    decision: string
+    reasonCode: string
+    comment: string
+    expectedReviewRevision: number
+    requiredItems?: string[]
+    dueAt?: string
+    assignedTo?: string
+    assignedUnit?: string
+    /** v2 解释核验：最终复核依据令牌（GET review-basis 取得）；v1 案件可不带。 */
+    reviewBasisToken?: string
+    /** v2：义务接续计划（可疑 + 已披露未知路径必须提供）。 */
+    continuationTasks?: ExplanationContinuationTask[]
+  },
 ): Promise<ManualReview> {
   return (await api.post(`/reviews/${caseId}`, body)).data
 }
 
-export async function reviewStats(): Promise<{ reviewedCount: number; agreementRate: number; approvedCount: number; rejectedCount: number; escalatedCount: number }> {
+// ==================== 解释核验工作区（v2 计划 §13） ====================
+
+export interface ExplanationUnitView {
+  unitId: number
+  alertId: number
+  externalAlertId: string | null
+  hypothesisId: number | null
+  policyCode: string | null
+  draftRevision: number
+  hasCurrentSubmission: boolean
+  currentSubmissionId: number | null
+  currentOutcome: 'EXPLAINED' | 'SUSPICIOUS' | 'UNRESOLVED' | null
+  criticalUnknown: boolean
+  followupRequired: boolean
+  blockers: string[]
+}
+
+export interface ExplanationIssueView {
+  issueId: number
+  unitId: number | null
+  issueKey: string
+  severity: 'INTEGRITY_BLOCKER' | 'DECISION_CRITICAL' | 'CONTEXT_GAP' | 'FUTURE_OBLIGATION'
+  questionCode: string | null
+  transactionIds: string | null
+  description: string
+  disposition: 'OPEN' | 'RESOLVED_WITH_EVIDENCE' | 'NOT_RELEVANT_WITH_REASON' | 'DISCLOSED_UNRESOLVED'
+  dispositionReason: string | null
+  resolvedBy: string | null
+  confirmedBy: string | null
+  revision: number
+}
+
+export interface ExplanationEvidenceView {
+  artifactVersionId: number
+  artifactKey: string
+  version: number
+  sourceSystem: string
+  sourceReference: string
+  contentSha256: string
+  claimedSha256: string | null
+  availability: string
+  integrityStatus: string
+  capturedBy: string
+  capturedAt: string
+}
+
+export interface ExplanationWorkspaceView {
+  caseId: number
+  contractVersion: number
+  caseFactsEpoch: number
+  stale: boolean
+  units: ExplanationUnitView[]
+  issues: ExplanationIssueView[]
+  artifacts: ExplanationEvidenceView[]
+  generalBlockers: string[]
+  canExclude: boolean
+  canConfirm: boolean
+  confirmBlockers: string[]
+  excludeBlockers: string[]
+}
+
+export interface ExplanationSubmissionResult {
+  submissionId: number
+  unitId: number
+  submissionNo: number
+  outcome: 'EXPLAINED' | 'SUSPICIOUS' | 'UNRESOLVED'
+  state: 'CURRENT' | 'WITHDRAWN' | 'STALE' | 'SUPERSEDED'
+  hypothesisAggregate: 'EXPLAINED' | 'SUSPICIOUS' | 'UNRESOLVED'
+  reviewBasisToken: string
+  messages: string[]
+}
+
+export interface ExplanationReviewBasisView {
+  caseId: number
+  caseFactsEpoch: number
+  reviewBasisToken: string
+  reviewerIndependent: boolean
+  canExclude: boolean
+  canConfirm: boolean
+  confirmBlockers: string[]
+  excludeBlockers: string[]
+  adoptedUnits: ExplanationUnitView[]
+  openIssues: ExplanationIssueView[]
+  unitOutcomes: Record<string, string>
+}
+
+export interface ExplanationContinuationTask {
+  originRequestId: number | null
+  assignedTo: string
+  assignedUnit: string
+  dueAt: string
+  requiredItems?: string[]
+  completionStandard: string
+  issueBindingsJson: string | null
+}
+
+export async function getExplanationWorkspace(caseId: number): Promise<ExplanationWorkspaceView> {
+  return (await api.get(`/cases/${caseId}/investigation/explanation-workspace`)).data
+}
+
+export async function captureExplanationEvidence(
+  caseId: number,
+  body: { sourceSystem: string; sourceReference: string; contentSha256: string; claimedSha256?: string },
+): Promise<ExplanationEvidenceView> {
+  return (await api.post(`/cases/${caseId}/investigation/evidence/captures`, body)).data
+}
+
+export async function recordEvidenceVerification(
+  caseId: number, versionId: number,
+  body: { method: string; observedFacts: string; limitations?: string; result: string },
+) {
+  return (await api.post(`/cases/${caseId}/investigation/evidence/${versionId}/verifications`, body)).data
+}
+
+export async function saveExplanationDraft(
+  caseId: number, unitId: number,
+  body: { expectedDraftRevision: number; draftJson: string },
+): Promise<ExplanationUnitView> {
+  return (await api.put(`/cases/${caseId}/investigation/units/${unitId}/draft`, body)).data
+}
+
+export async function submitExplanationUnit(
+  caseId: number, unitId: number,
+  body: { expectedDraftRevision: number; reviewBasisToken: string; idempotencyKey: string },
+): Promise<ExplanationSubmissionResult> {
+  return (await api.post(`/cases/${caseId}/investigation/units/${unitId}/submissions`, body)).data
+}
+
+export async function amendExplanationUnit(
+  caseId: number, unitId: number, body: { currentSubmissionId: number },
+): Promise<ExplanationUnitView> {
+  return (await api.post(`/cases/${caseId}/investigation/units/${unitId}/amendments`, body)).data
+}
+
+export async function disposeExplanationIssue(
+  caseId: number, issueId: number,
+  body: { expectedRevision: number; disposition: string; reason: string; evidenceReference?: string; downgradeTo?: string; confirmedBy?: string },
+): Promise<ExplanationIssueView> {
+  return (await api.post(`/cases/${caseId}/investigation/issues/${issueId}/dispositions`, body)).data
+}
+
+export async function proposeExplanationEdd(
+  caseId: number,
+  body: { requiredItems: string[]; unitLabel?: string; issueBindingsJson?: string },
+) {
+  return (await api.post(`/cases/${caseId}/investigation/edd-proposals`, body)).data
+}
+
+export async function getExplanationReviewBasis(caseId: number): Promise<ExplanationReviewBasisView> {
+  return (await api.get(`/cases/${caseId}/investigation/review-basis`)).data
+}
+
+export async function completeContinuingTask(
+  caseId: number, requestId: number, body: { expectedRevision: number; resolutionReason: string },
+) {
+  return (await api.post(`/cases/${caseId}/investigation/edd-tasks/${requestId}/completion`, body)).data
+}
+
+export async function reviewStats(): Promise<{
+  reviewedCount: number
+  agreementRate: number
+  confirmedSuspiciousCount: number
+  falsePositiveCount: number
+  eddRequestedCount: number
+}> {
   return (await api.get('/reviews/stats')).data
+}
+
+export async function listEnhancedDueDiligence(caseId: number): Promise<EnhancedDueDiligenceRequest[]> {
+  return (await api.get(`/cases/${caseId}/edd`)).data
+}
+
+export async function listPendingEnhancedDueDiligence(all = false): Promise<EnhancedDueDiligenceRequest[]> {
+  return (await api.get('/edd/tasks', { params: { all } })).data
+}
+
+export async function listEnhancedDueDiligenceAssignees(): Promise<Array<{ username: string; role: string }>> {
+  return (await api.get('/edd/assignees')).data
+}
+
+export async function submitEnhancedDueDiligence(
+  caseId: number,
+  requestId: number,
+  body: {
+    expectedRevision: number
+    responseSummary: string
+    evidenceItems: EnhancedDueDiligenceEvidenceSubmission[]
+  },
+): Promise<EnhancedDueDiligenceRequest> {
+  return (await api.post(`/cases/${caseId}/edd/${requestId}/submit`, body)).data
+}
+
+export async function cancelEnhancedDueDiligence(
+  caseId: number,
+  requestId: number,
+  body: { expectedRevision: number; reason: string },
+): Promise<EnhancedDueDiligenceRequest> {
+  return (await api.post(`/cases/${caseId}/edd/${requestId}/cancel`, body)).data
+}
+
+export type SuspiciousTransactionReportStatus =
+  'PENDING_SUBMISSION' | 'SUBMITTED' | 'RETURNED_FOR_CORRECTION'
+
+export interface SuspiciousTransactionReport {
+  id: number
+  caseId: number
+  reviewId: number
+  status: SuspiciousTransactionReportStatus
+  reportReason: string
+  createdBy: string
+  revision: number
+  externalReference: string | null
+  submittedBy: string | null
+  submittedAt: string | null
+  returnedBy: string | null
+  returnedAt: string | null
+  returnReason: string | null
+  createdAt: string
+  updatedAt: string
+}
+
+export async function listPendingSuspiciousReports(): Promise<SuspiciousTransactionReport[]> {
+  return (await api.get('/reports/pending')).data
+}
+
+export async function getSuspiciousTransactionReport(caseId: number): Promise<SuspiciousTransactionReport> {
+  return (await api.get(`/reports/${caseId}`)).data
+}
+
+export async function submitSuspiciousReport(
+  caseId: number, expectedRevision: number, externalReference: string,
+): Promise<SuspiciousTransactionReport> {
+  return (await api.post(`/reports/${caseId}/submit`, { expectedRevision, externalReference })).data
+}
+
+export async function returnSuspiciousReport(
+  caseId: number, expectedRevision: number, reason: string,
+): Promise<SuspiciousTransactionReport> {
+  return (await api.post(`/reports/${caseId}/return`, { expectedRevision, reason })).data
 }
 
 // ---------- 评测 ----------

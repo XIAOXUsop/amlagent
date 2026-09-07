@@ -2,6 +2,7 @@ package com.bank.aml.agent;
 
 import com.bank.aml.datasource.CustomerDataPort;
 import com.bank.aml.domain.CustomerProfile;
+import com.bank.aml.domain.InvestigationAlertSnapshot;
 import com.bank.aml.domain.InvestigationSnapshot;
 import com.bank.aml.domain.SanctionRecord;
 import com.bank.aml.domain.ShareholdingRecord;
@@ -40,35 +41,63 @@ public class InvestigationSnapshotFactory {
     private final EnterpriseLegalRetriever legalRetriever;
     private final LegalKeywordResolver legalKeywordResolver;
     private final LegalIndexVersionProvider legalIndexVersions;
+    private final AlertSnapshotAssembler alertAssembler;
 
     public InvestigationSnapshotFactory(CustomerDataPort dataSource, RiskFactAssembler riskFactAssembler,
                                         EnterpriseLegalRetriever legalRetriever,
                                         LegalKeywordResolver legalKeywordResolver,
-                                        LegalIndexVersionProvider legalIndexVersions) {
+                                        LegalIndexVersionProvider legalIndexVersions,
+                                        AlertSnapshotAssembler alertAssembler) {
         this.dataSource = dataSource;
         this.riskFactAssembler = riskFactAssembler;
         this.legalRetriever = legalRetriever;
         this.legalKeywordResolver = legalKeywordResolver;
         this.legalIndexVersions = legalIndexVersions;
+        this.alertAssembler = alertAssembler;
     }
 
+    /**
+     * 生产规范入口：Worker 抢占案件后冻结的全部 LINKED 预警必须传入，
+     * 模型上下文、法规主题与预警摘要都基于这份集合；版本 1 不允许回退到预警文本。
+     */
     public InvestigationSnapshot create(Long caseId, int executionVersion,
-                                        CustomerProfile customer, String modelRiskLevel, String alertRule) {
+                                        CustomerProfile customer, String modelRiskLevel,
+                                        List<InvestigationAlertSnapshot> alerts) {
         List<TransactionRecord> transactions = dataSource.transactionsOf(customer.id());
         List<ShareholdingRecord> shareholdings = dataSource.shareholdingsOf(customer.id());
         List<SanctionRecord> sanctionHits = riskFactAssembler.searchSanctions(customer);
-        // 法规证据在快照创建时预检索并冻结，Agent 工具不再实时访问可变 RAG 索引
-        List<String> legalKeywords = legalKeywordResolver.resolve(alertRule);
+        RiskContext riskFacts = riskFactAssembler.assembleFrom(
+                transactions, shareholdings, sanctionHits, modelRiskLevel);
+        // 同时依据冻结预警命中原因/场景和确定性风险事实预检索；规则可能补入的高影响动作必须先有法规证据支撑。
+        List<String> legalKeywords = legalKeywordResolver.resolve(alerts, riskFacts);
         Instant asOfTime = dataSource.asOfTime();
         Map<String, List<LegalDoc>> legalEvidenceByTopic = preloadLegalEvidence(legalKeywords, asOfTime);
         List<LegalDoc> legalEvidence = legalEvidenceByTopic.values().stream().flatMap(List::stream).distinct().toList();
-        RiskContext riskFacts = riskFactAssembler.assembleFrom(transactions, shareholdings, sanctionHits, modelRiskLevel);
         String sourceDigest = digest(customer, transactions, shareholdings, sanctionHits);
         return new InvestigationSnapshot(
                 "case-" + caseId + "-v" + executionVersion,
                 caseId, executionVersion, asOfTime,
-                customer, transactions, shareholdings, sanctionHits, legalEvidence, legalEvidenceByTopic,
-                legalKeywords, riskFacts, legalIndexVersions.activeVersion(), sourceDigest);
+                customer, List.copyOf(alerts), transactions, shareholdings, sanctionHits,
+                legalEvidence, legalEvidenceByTopic, legalKeywords, riskFacts,
+                legalIndexVersions.activeVersion(), sourceDigest,
+                alertAssembler.digest(alerts), InvestigationSnapshot.SCHEMA_VERSION_WITH_ALERTS);
+    }
+
+    /**
+     * 兼容入口（仅限版本 0 存量路径与不绑定数据库案件的评测夹具）：
+     * 只有预警文本时生成显式标记的 LEGACY 伪预警，不适用于版本 1 的生产案件。
+     */
+    public InvestigationSnapshot createForAlertRuleText(Long caseId, int executionVersion,
+                                                        CustomerProfile customer, String modelRiskLevel,
+                                                        String alertRule) {
+        return create(caseId, executionVersion, customer, modelRiskLevel,
+                alertAssembler.fromAlertRuleText(alertRule));
+    }
+
+    /** 兼容入口（保留既有 5 参签名，内部委托给显式的文本适配入口）。 */
+    public InvestigationSnapshot create(Long caseId, int executionVersion,
+                                        CustomerProfile customer, String modelRiskLevel, String alertRule) {
+        return createForAlertRuleText(caseId, executionVersion, customer, modelRiskLevel, alertRule);
     }
 
     /** 按预警规则解析的法规关键词预检索法规证据，去重后冻结进快照 */

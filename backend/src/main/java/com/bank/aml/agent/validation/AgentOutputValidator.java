@@ -30,14 +30,17 @@ public class AgentOutputValidator {
     private static final Pattern LEGAL_EVIDENCE_ID = Pattern.compile(
             "(?i)\\b(?:[A-Z0-9]+-)*LEGAL-[A-Z0-9][A-Z0-9_-]*\\b");
     private final LegalEvidenceSupportValidator evidenceSupportValidator;
+    private final com.bank.aml.security.PromptInjectionGuard injectionGuard;
 
     public AgentOutputValidator() {
-        this(new LegalEvidenceSupportValidator());
+        this(new LegalEvidenceSupportValidator(), new com.bank.aml.security.PromptInjectionGuard());
     }
 
     @org.springframework.beans.factory.annotation.Autowired
-    public AgentOutputValidator(LegalEvidenceSupportValidator evidenceSupportValidator) {
+    public AgentOutputValidator(LegalEvidenceSupportValidator evidenceSupportValidator,
+                                com.bank.aml.security.PromptInjectionGuard injectionGuard) {
         this.evidenceSupportValidator = evidenceSupportValidator;
+        this.injectionGuard = injectionGuard;
     }
 
     public ValidationResult validate(InvestigationSnapshot snapshot, DueDiligenceReport report) {
@@ -62,6 +65,10 @@ public class AgentOutputValidator {
                 AgentReportVocabulary.ACTION_CODES, violations);
 
         validateManualReview(report, violations);
+        // 模型自由文本落库前做高置信注入扫描（违规码不含命中内容，避免日志二次泄露）
+        if (injectionGuard.scanHighConfidence(String.join("\n", reportContent(report))).suspicious()) {
+            violations.add("OUTPUT_INJECTION_SUSPECTED");
+        }
         if (snapshot != null) {
             validateIdentityLeakage(snapshot, report, violations);
             validateLegalEvidence(snapshot, report, violations);

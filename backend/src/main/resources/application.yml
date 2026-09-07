@@ -77,6 +77,9 @@ logging:
 
 # ---- AML 专有配置 ----
 aml:
+  agent:
+    # 单次尽调可冻结的最大关联预警数；超出必须明确拒绝（归并/拆分），禁止截断尾部预警当作完整调查
+    max-linked-alerts: ${AML_AGENT_MAX_LINKED_ALERTS:8}
   assistant:
     # 默认关闭；开发或生产必须显式开启。关闭时不得创建会话或触发模型调用。
     enabled: ${AML_ASSISTANT_ENABLED:false}

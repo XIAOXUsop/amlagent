@@ -16,7 +16,7 @@ import java.util.List;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * Flyway V1→V2 真实 MySQL 迁移测试（复用本机 Docker 的 MySQL，独立 schema 隔离）。
+ * Flyway V1→最新版本真实 MySQL 迁移测试（复用本机 Docker 的 MySQL，独立 schema 隔离）。
  * <p>覆盖任务书 D9 的棕地升级场景：V1 建表 → 插入历史"同一工单多条复核记录"（review_revision 尚未存在，
  * 升级后全部默认 0，会与唯一键冲突）→ V2 迁移回填连续 revision 并创建唯一键。
  * 运行：./mvnw test -Dgroups=integration
@@ -56,6 +56,23 @@ class FlywayMigrationTest {
         assertThat(columnExists("aml_case", "model_provider")).isTrue();
         assertThat(columnExists("aml_case", "model_name")).isTrue();
         assertThat(columnExists("aml_case", "model_fallback")).isTrue();
+        assertThat(columnExists("aml_case", "review_disposition")).isTrue();
+        assertThat(columnExists("aml_case", "review_reason_code")).isTrue();
+        assertThat(columnExists("aml_case", "reviewed_at")).isTrue();
+        assertThat(columnExists("manual_review", "reason_code")).isTrue();
+        assertThat(columnExists("enhanced_due_diligence_request", "required_items_json")).isTrue();
+        assertThat(columnExists("enhanced_due_diligence_request", "evidence_references_json")).isTrue();
+        assertThat(columnExists("enhanced_due_diligence_request", "assigned_to")).isTrue();
+        assertThat(columnExists("enhanced_due_diligence_request", "cancellation_reason")).isTrue();
+        assertThat(tableExists("enhanced_due_diligence_evidence")).isTrue();
+        assertThat(tableExists("suspicious_transaction_report")).isTrue();
+        assertThat(columnExists("audit_log", "event_key")).isTrue();
+        assertThat(tableExists("audit_outbox")).isTrue();
+        assertThat(columnExists("aml_case", "investigation_contract_version")).isTrue();
+        assertThat(tableExists("aml_alert")).isTrue();
+        assertThat(tableExists("investigation_hypothesis")).isTrue();
+        assertThat(tableExists("investigation_evidence_link")).isTrue();
+        assertThat(tableExists("alert_investigation_coverage")).isTrue();
     }
 
     private void migrateTo(MigrationVersion target) {
@@ -132,6 +149,17 @@ class FlywayMigrationTest {
                      "SELECT COUNT(*) FROM information_schema.columns "
                              + "WHERE table_schema = '" + SCHEMA + "' AND table_name = '" + table
                              + "' AND column_name = '" + column + "'")) {
+            rs.next();
+            return rs.getInt(1) > 0;
+        }
+    }
+
+    private boolean tableExists(String table) throws Exception {
+        try (Connection conn = DriverManager.getConnection(SCHEMA_URL, ROOT_USER, ROOT_PASSWORD);
+             Statement st = conn.createStatement();
+             ResultSet rs = st.executeQuery(
+                     "SELECT COUNT(*) FROM information_schema.tables "
+                             + "WHERE table_schema = '" + SCHEMA + "' AND table_name = '" + table + "'")) {
             rs.next();
             return rs.getInt(1) > 0;
         }

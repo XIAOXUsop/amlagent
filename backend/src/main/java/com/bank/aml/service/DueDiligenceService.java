@@ -22,10 +22,14 @@ import com.bank.aml.datasource.entity.CaseEntity;
 import com.bank.aml.datasource.entity.CaseLogEntity;
 import com.bank.aml.datasource.CustomerDataPort;
 import com.bank.aml.domain.CustomerProfile;
+import com.bank.aml.domain.InvestigationAlertSnapshot;
 import com.bank.aml.domain.InvestigationSnapshot;
 import com.bank.aml.datasource.repository.CaseLogRepository;
 import com.bank.aml.datasource.repository.CaseRepository;
+import com.bank.aml.agent.AlertSnapshotAssembler;
+import com.bank.aml.investigation.AmlAlertRepository;
 import com.bank.aml.messaging.WorkflowCommandService;
+import com.bank.aml.investigation.CaseIntakeService;
 import com.bank.aml.messaging.ExecutionLease;
 import com.bank.aml.observability.MetricsRecorder;
 import com.bank.aml.tools.ToolExecutionTrace;
@@ -69,6 +73,8 @@ public class DueDiligenceService {
     private final InvestigationSnapshotFactory snapshotFactory;
     private final WorkflowEventService workflowEventService;
     private final CustomerDataPort dataSource;
+    private final AmlAlertRepository alertRepository;
+    private final AlertSnapshotAssembler alertAssembler;
     private final FaultInjector faultInjector;
     private final PromptInjectionGuard promptInjectionGuard;
     private final CostRouter costRouter;
@@ -79,6 +85,7 @@ public class DueDiligenceService {
     private final ObjectMapper objectMapper;
     private final ToolExecutionTraceRepository toolTraceRepository;
     private final LlmProperties llmProperties;
+    private final CaseIntakeService caseIntakeService;
 
     /** 阶段耗时测量（每工单独立） */
     private final ThreadLocal<LocalDateTime> lastStageAt = new ThreadLocal<>();
@@ -93,13 +100,15 @@ public class DueDiligenceService {
                                FinalDecisionAssembler finalDecisionAssembler,
                                InvestigationSnapshotFactory snapshotFactory,
                                WorkflowEventService workflowEventService,
-                               CustomerDataPort dataSource, FaultInjector faultInjector,
+                               CustomerDataPort dataSource, AmlAlertRepository alertRepository,
+                               AlertSnapshotAssembler alertAssembler, FaultInjector faultInjector,
                                PromptInjectionGuard promptInjectionGuard, CostRouter costRouter,
                                @Value("${aml.cost-routing.rule-fallback-enabled:false}") boolean ruleFallbackEnabled,
                                @Value("${aml.cost-routing.summary-enabled:false}") boolean summaryEnabled,
                                FinalReportStreamingService finalReportStreamingService, ObjectMapper objectMapper,
                                SnapshotArchiveService snapshotArchiveService,
-                               ToolExecutionTraceRepository toolTraceRepository, LlmProperties llmProperties) {
+                               ToolExecutionTraceRepository toolTraceRepository, LlmProperties llmProperties,
+                               CaseIntakeService caseIntakeService) {
         this.caseRepository = caseRepository;
         this.caseLogRepository = caseLogRepository;
         this.caseExecutionRepository = caseExecutionRepository;
@@ -113,6 +122,8 @@ public class DueDiligenceService {
         this.snapshotFactory = snapshotFactory;
         this.workflowEventService = workflowEventService;
         this.dataSource = dataSource;
+        this.alertRepository = alertRepository;
+        this.alertAssembler = alertAssembler;
         this.faultInjector = faultInjector;
         this.promptInjectionGuard = promptInjectionGuard;
         this.costRouter = costRouter;
@@ -123,28 +134,18 @@ public class DueDiligenceService {
         this.objectMapper = objectMapper;
         this.toolTraceRepository = toolTraceRepository;
         this.llmProperties = llmProperties;
+        this.caseIntakeService = caseIntakeService;
     }
 
     /** 创建预警工单；autoProcess=true 时与工单同事务写入 Outbox，自动触发尽调 */
     @Transactional
     public CaseEntity createCase(String customerId, String alertRule, boolean autoProcess) {
-        CustomerProfile customer = dataSource.findCustomer(customerId)
-                .orElseThrow(() -> new NonRetryableWorkflowException("客户不存在：" + customerId));
-        CaseEntity c = new CaseEntity();
-        c.setCustomerId(customer.id());
-        c.setCustomerName(customer.name());
-        c.setAlertRule(alertRule == null || alertRule.isBlank()
-                ? "大额频繁跨国转账 / 夜间集中交易" : alertRule);
-        c.setStatus(CaseStatus.PENDING);
-        CaseEntity saved = caseRepository.save(c);
-        metrics.caseCreated();
+        return createCase(customerId, alertRule, autoProcess, "system-intake");
+    }
 
-        // Transactional Outbox：工单与 Outbox 事件同事务写入；
-        // 发布器随后异步扫描投递到 Redis Streams（此时事务早已提交，Worker 读到的是已提交工单）
-        if (autoProcess) {
-            enqueue(saved.getId());
-        }
-        return saved;
+    @Transactional
+    public CaseEntity createCase(String customerId, String alertRule, boolean autoProcess, String operator) {
+        return caseIntakeService.createManualCase(customerId, alertRule, autoProcess, operator);
     }
 
     /** 写入 Outbox（首次入队，由发布器投递到 Redis Streams） */
@@ -152,11 +153,21 @@ public class DueDiligenceService {
         workflowCommandService.enqueueCaseCreated(caseId);
     }
 
-    /** 手动触发：仅 PENDING 工单可触发，否则返回 409（不再静默忽略） */
+    /** 手动触发/开始调查：短事务内锁定案件并复查状态，仅 PENDING 可触发（否则 409）。
+     *  锁内复查避免“读取时 PENDING、入队时已被 Worker 抢占”的竞态；残留的旧版本消息仍由
+     *  Worker 抢占的 executionVersion 校验丢弃。启动前同步校验关联预警容量：超限时案件保持
+     *  可拆分的 PENDING 状态，不会进入执行后才失败。 */
+    @Transactional
     public void trigger(Long caseId) {
-        CaseEntity c = getCase(caseId);
+        CaseEntity c = caseRepository.findByIdForUpdate(caseId)
+                .orElseThrow(() -> new IllegalArgumentException("工单不存在：" + caseId));
         if (c.getStatus() != CaseStatus.PENDING) {
             throw new WorkflowStateConflictException(caseId, c.getStatus(), java.util.Set.of(CaseStatus.PENDING));
+        }
+        long linkedAlerts = alertRepository.countByCaseIdAndStatus(caseId, com.bank.aml.investigation.AlertStatus.LINKED);
+        if (linkedAlerts > alertAssembler.capacity()) {
+            throw new IllegalStateException("案件关联预警 " + linkedAlerts + " 条超出单次尽调容量上限 "
+                    + alertAssembler.capacity() + "；请先拆分预警后再开始调查");
         }
         workflowCommandService.triggerManual(caseId, c.getExecutionVersion());
     }
@@ -195,7 +206,25 @@ public class DueDiligenceService {
 
             CustomerProfile customer = dataSource.findCustomer(c.getCustomerId())
                     .orElseThrow(() -> new NonRetryableWorkflowException("客户不存在：" + c.getCustomerId()));
-            InvestigationSnapshot snapshot = snapshotFactory.create(c.getId(), executionVersion, customer, null, c.getAlertRule());
+            // Worker 抢占案件后冻结关联预警：归并/拆分只能在 PENDING 案件上完成，抢占后的归并必然失败，
+            // 因此本读取结果就是本次执行的案件边界；模型、法规预检索与加密归档共用同一份预警集合。
+            List<InvestigationAlertSnapshot> frozenAlerts = alertAssembler.fromLinkedAlerts(c.getId(),
+                    alertRepository.findByCaseIdOrderByOccurredAtAsc(c.getId()));
+            if (c.getInvestigationContractVersion() >= 1 && frozenAlerts.isEmpty()) {
+                throw new NonRetryableWorkflowException("案件没有有效关联预警，调查契约 v"
+                        + c.getInvestigationContractVersion() + " 要求冻结预警事实后才能开始尽调");
+            }
+            // 命中原因是模型可控输入，注入检测扩展到全部关联预警；命中仍继续由 prompt 隔离处理。
+            for (InvestigationAlertSnapshot alert : frozenAlerts) {
+                PromptInjectionGuard.InjectionResult alertInjection =
+                        promptInjectionGuard.scan(alert.hitReason());
+                if (alertInjection.suspicious()) {
+                    record(c, WorkflowStage.PLANNING, "⚠ 预警 [" + alert.externalAlertId()
+                            + "] 命中原因疑似提示注入：" + alertInjection.matchedPatterns());
+                }
+            }
+            InvestigationSnapshot snapshot = snapshotFactory.create(c.getId(), executionVersion, customer,
+                    null, frozenAlerts);
             // 审计前置：快照无法持久化时禁止继续调用模型，避免产出无法回放的合规结论。
             snapshotArchiveService.archive(snapshot);
             record(c, WorkflowStage.COLLECTING, "尽调快照已冻结 snapshotId=" + snapshot.snapshotId()
@@ -290,8 +319,17 @@ public class DueDiligenceService {
             if (!gr.corrections().isEmpty()) {
                 metrics.guardrailCorrection();
             }
-            // 同步最终报告字段（风险评级 / 人工复核标志 / 处置代码）
-            report = finalDecisionAssembler.assemble(report, gr, forceSafetyHold);
+            // 调查契约 v1：自动分析结束不等于案件结案，最终处置必须由人工完成。
+            // 该策略原因与“模型输出违规”区分：正常报告保持 AGENT 来源，不伪装成 AGENT_INVALID_HOLD。
+            boolean contractManualReviewRequired = c.getInvestigationContractVersion() >= 1;
+            if (contractManualReviewRequired) {
+                record(c, WorkflowStage.GUARDRAIL,
+                        "调查契约 v" + c.getInvestigationContractVersion()
+                                + " 要求人工最终处置：自动分析完成后案件保持人工处理状态，最终评级与建议以本报告为准。");
+            }
+            // 同步最终报告字段（风险评级 / 人工复核标志 / 处置代码）；契约策略与模型违规同样强制人工标志，
+            // 保证案件状态、manualReviewRequired、MANUAL_REVIEW 动作码与正文一致。
+            report = finalDecisionAssembler.assemble(report, gr, forceSafetyHold || contractManualReviewRequired);
             AgentOutputValidator.ValidationResult finalValidation = agentOutputValidator.validate(snapshot, report);
             if (!finalValidation.valid()) {
                 throw new NonRetryableWorkflowException(
@@ -302,15 +340,22 @@ public class DueDiligenceService {
             }
             c.setRiskLevel(gr.finalRiskLevel());
             c.setRawRiskLevel(rawAgentRiskLevel);
-            c.setStatus(forceSafetyHold || gr.mustEscalate() ? CaseStatus.HOLD : CaseStatus.DONE);
+            // 契约策略 HOLD 不改变风险评级：低风险进入人工处理不等于提升为高风险。
+            c.setStatus(forceSafetyHold || gr.mustEscalate() || contractManualReviewRequired
+                    ? CaseStatus.HOLD : CaseStatus.DONE);
             if (c.getStatus() == CaseStatus.HOLD) {
                 metrics.caseHold();
-                String escalateRules = gr.decision().triggeredRules().stream()
-                        .filter(r -> "MANUAL_REVIEW".equals(r.action()))
-                        .map(r -> r.ruleCode()).toList().toString();
-                record(c, WorkflowStage.GUARDRAIL, "触发转人工（规则 " + escalateRules + "），工单进入人工复核队列。");
                 if (forceSafetyHold) {
                     record(c, WorkflowStage.GUARDRAIL, "Agent 输出契约不合规，安全策略禁止自动完成。");
+                } else if (!gr.mustEscalate()) {
+                    record(c, WorkflowStage.GUARDRAIL,
+                        "案件进入人工处理队列：待补齐调查后由复核员形成最终处置（确认可疑 / 排除预警）。"
+                                + (contractManualReviewRequired ? "" : "（触发人工处理规则）"));
+                } else {
+                    String escalateRules = gr.decision().triggeredRules().stream()
+                            .filter(r -> "MANUAL_REVIEW".equals(r.action()))
+                            .map(r -> r.ruleCode()).toList().toString();
+                    record(c, WorkflowStage.GUARDRAIL, "触发转人工（规则 " + escalateRules + "），工单进入人工复核队列。");
                 }
             }
 
@@ -378,12 +423,14 @@ public class DueDiligenceService {
         long pending = caseRepository.countByStatus(CaseStatus.PENDING);
         long running = caseRepository.countByStatus(CaseStatus.RUNNING);
         long hold = caseRepository.countByStatus(CaseStatus.HOLD);
+        long reportPending = caseRepository.countByStatus(CaseStatus.REPORT_PENDING);
         long done = caseRepository.countByStatus(CaseStatus.DONE);
         long failed = caseRepository.countByStatus(CaseStatus.FAILED);
-        return new CaseStats(total, pending, running, hold, done, failed);
+        return new CaseStats(total, pending, running, hold, reportPending, done, failed);
     }
 
-    public record CaseStats(long total, long pending, long running, long hold, long done, long failed) {
+    public record CaseStats(long total, long pending, long running, long hold,
+                            long reportPending, long done, long failed) {
     }
 
     public List<CaseLogEntity> listLogs(Long caseId) {
@@ -400,7 +447,8 @@ public class DueDiligenceService {
         String asOfDate = snapshot.asOfTime().toString();
         return new DueDiligenceContext(
                 c.getId(), customer.id(), customer.type(), asOfDate, snapshot.legalKeywords(),
-                c.getAlertRule(), "请基于冻结证据独立判断风险等级、证据充分性和后续处置，不预设风险结论。");
+                snapshot.alerts(), c.getAlertRule(),
+                "请基于冻结证据独立判断风险等级、证据充分性和后续处置，不预设风险结论。");
     }
 
     private List<String> planTasks(String alertRule) {

@@ -22,7 +22,19 @@ class AuthControllerTest {
     private final AuthenticationManager authenticationManager = mock(AuthenticationManager.class);
     private final JwtTokenProvider tokenProvider = mock(JwtTokenProvider.class);
     private final LoginRateLimiter rateLimiter = mock(LoginRateLimiter.class);
-    private final AuthController controller = new AuthController(authenticationManager, tokenProvider, rateLimiter, false);
+    private final com.bank.aml.audit.AuditService audit = mock(com.bank.aml.audit.AuditService.class);
+    private final UserAccountRepository userAccounts = mock(UserAccountRepository.class);
+    private final AuthController controller =
+            new AuthController(authenticationManager, tokenProvider, rateLimiter, audit, userAccounts, false);
+
+    private UserAccount account(String username) {
+        UserAccount account = new UserAccount();
+        account.setUsername(username);
+        account.setPassword("encoded");
+        account.setRole("ANALYST");
+        account.setTokenVersion(0);
+        return account;
+    }
 
     @Test
     void enabledUserIsAuthenticatedBySpringSecurityAndReceivesCookie() {
@@ -35,7 +47,8 @@ class AuthControllerTest {
         var request = request();
         var response = new MockHttpServletResponse();
         when(authenticationManager.authenticate(org.mockito.ArgumentMatchers.any())).thenReturn(authenticated);
-        when(tokenProvider.createToken("analyst", "ANALYST")).thenReturn("signed-token");
+        when(userAccounts.findByUsername("analyst")).thenReturn(java.util.Optional.of(account("analyst")));
+        when(tokenProvider.createToken("analyst", "ANALYST", 0)).thenReturn("signed-token");
 
         Map<String, Object> body = controller.login(
                 new AuthController.LoginRequest("analyst", "secret"), request, response);
@@ -78,6 +91,33 @@ class AuthControllerTest {
 
         verify(rateLimiter).checkBlocked("127.0.0.1", "analyst");
         verify(rateLimiter).recordFailure("127.0.0.1", "analyst");
+    }
+
+    @Test
+    void logoutRevokesOutstandingTokensByIncrementingTokenVersion() {
+        UserAccount account = account("analyst");
+        when(userAccounts.findByUsername("analyst")).thenReturn(java.util.Optional.of(account));
+        var response = new MockHttpServletResponse();
+        var auth = org.springframework.security.authentication.UsernamePasswordAuthenticationToken
+                .authenticated(org.springframework.security.core.userdetails.User
+                        .withUsername("analyst").password("x").roles("ANALYST").build(), null, java.util.List.of());
+
+        controller.logout(auth, response);
+
+        org.mockito.Mockito.verify(userAccounts).save(account);
+        assertThat(account.getTokenVersion()).isEqualTo(1);
+        assertThat(response.getCookie("aml_token")).isNotNull();
+    }
+
+    @Test
+    void anonymousLogoutOnlyClearsCookieWithoutRevocation() {
+        var response = new MockHttpServletResponse();
+
+        controller.logout(null, response);
+
+        org.mockito.Mockito.verify(userAccounts, org.mockito.Mockito.never())
+                .findByUsername(org.mockito.ArgumentMatchers.anyString());
+        assertThat(response.getCookie("aml_token")).isNotNull();
     }
 
     private MockHttpServletRequest request() {

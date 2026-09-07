@@ -7,6 +7,10 @@ import com.bank.aml.datasource.repository.CaseLogRepository;
 import com.bank.aml.datasource.repository.CaseRepository;
 import com.bank.aml.datasource.repository.InvestigationSnapshotRepository;
 import com.bank.aml.review.ManualReviewRepository;
+import com.bank.aml.review.ManualReview;
+import com.bank.aml.review.EnhancedDueDiligenceRequest;
+import com.bank.aml.review.EnhancedDueDiligenceRequestRepository;
+import com.bank.aml.review.EnhancedDueDiligenceStatus;
 import com.bank.aml.sanction.SanctionCandidateReview;
 import com.bank.aml.sanction.SanctionCandidateReviewRepository;
 import com.bank.aml.tools.ToolExecutionTraceRepository;
@@ -15,10 +19,12 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
 
 import java.time.Instant;
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -33,6 +39,21 @@ class CaseDossierServiceTest {
         ManualReviewRepository reviews = mock(ManualReviewRepository.class);
         InvestigationSnapshotRepository snapshots = mock(InvestigationSnapshotRepository.class);
         SanctionCandidateReviewRepository sanctionReviews = mock(SanctionCandidateReviewRepository.class);
+        EnhancedDueDiligenceRequestRepository eddRequests = mock(EnhancedDueDiligenceRequestRepository.class);
+        com.bank.aml.review.EnhancedDueDiligenceEvidenceRepository eddEvidence =
+                mock(com.bank.aml.review.EnhancedDueDiligenceEvidenceRepository.class);
+        com.bank.aml.reporting.SuspiciousTransactionReportRepository suspiciousReports =
+                mock(com.bank.aml.reporting.SuspiciousTransactionReportRepository.class);
+        com.bank.aml.investigation.AmlAlertRepository alerts =
+                mock(com.bank.aml.investigation.AmlAlertRepository.class);
+        com.bank.aml.investigation.InvestigationHypothesisRepository hypotheses =
+                mock(com.bank.aml.investigation.InvestigationHypothesisRepository.class);
+        com.bank.aml.investigation.InvestigationEvidenceLinkRepository investigationEvidence =
+                mock(com.bank.aml.investigation.InvestigationEvidenceLinkRepository.class);
+        com.bank.aml.investigation.AlertInvestigationCoverageRepository alertCoverage =
+                mock(com.bank.aml.investigation.AlertInvestigationCoverageRepository.class);
+        com.bank.aml.operations.CaseOperationsService operations =
+                mock(com.bank.aml.operations.CaseOperationsService.class);
 
         CaseEntity caseEntity = new CaseEntity();
         caseEntity.setCustomerId("C001");
@@ -43,6 +64,15 @@ class CaseDossierServiceTest {
         caseEntity.setRawRiskLevel("高风险");
         caseEntity.setSnapshotId("snap-1");
         caseEntity.setReportJson("{\"riskLevel\":\"高风险\",\"evidenceChain\":[\"E001\"]}");
+        caseEntity.setReviewDisposition("CONFIRM_SUSPICIOUS");
+        caseEntity.setReviewReasonCode("SANCTIONS_OR_WATCHLIST_MATCH");
+
+        ManualReview manualReview = new ManualReview();
+        manualReview.setCaseId(7L);
+        manualReview.setReviewerId("reviewer");
+        manualReview.setDecision("CONFIRM_SUSPICIOUS");
+        manualReview.setReasonCode("SANCTIONS_OR_WATCHLIST_MATCH");
+        manualReview.setComment("身份要素核验后确认名单命中");
 
         InvestigationSnapshotEntity snapshot = new InvestigationSnapshotEntity();
         snapshot.setSnapshotId("snap-1");
@@ -72,20 +102,43 @@ class CaseDossierServiceTest {
         when(logs.findByCaseIdOrderByCreatedAtAsc(7L)).thenReturn(List.of());
         when(executions.findByCaseIdOrderByStartedAtAsc(7L)).thenReturn(List.of());
         when(traces.findByCaseIdOrderByExecutionVersionDescSequenceNoAsc(7L)).thenReturn(List.of());
-        when(reviews.findByCaseIdOrderByCreatedAtAsc(7L)).thenReturn(List.of());
+        when(reviews.findByCaseIdOrderByCreatedAtAsc(7L)).thenReturn(List.of(manualReview));
         when(sanctionReviews.findByCustomerIdOrderByCreatedAtAsc("C001")).thenReturn(List.of(sanctionReview));
+        when(eddRequests.findByCaseIdOrderByRoundNoAsc(7L)).thenReturn(List.of());
+        when(suspiciousReports.findByCaseId(7L)).thenReturn(Optional.empty());
+        when(alerts.findByCaseIdOrderByOccurredAtAsc(7L)).thenReturn(List.of());
+        when(hypotheses.findByCaseIdOrderByIdAsc(7L)).thenReturn(List.of());
+        when(investigationEvidence.findByCaseIdOrderByCreatedAtAsc(7L)).thenReturn(List.of());
+        when(alertCoverage.findByCaseIdOrderByAlertIdAsc(7L)).thenReturn(List.of());
+        LocalDateTime completedAt = LocalDateTime.of(2026, 9, 4, 12, 0);
+        when(operations.get(7L)).thenReturn(new com.bank.aml.operations.CaseOperationsView(
+                7L, "C001", "张伟", CaseStatus.DONE,
+                com.bank.aml.operations.CasePriority.CRITICAL, 100, List.of("名单身份核验场景"),
+                "P1_V1_DETERMINISTIC_CASE_PRIORITY", com.bank.aml.operations.OperationPhase.COMPLETED,
+                "COMPLETED", null, "已完成", completedAt, null, false, 0,
+                "P1_V1_SLA_COMPLETED", completedAt));
 
         ObjectMapper mapper = new ObjectMapper().findAndRegisterModules();
         CaseDossierService service = new CaseDossierService(cases, logs, executions, traces, reviews, snapshots,
-                sanctionReviews, mapper);
+                sanctionReviews, eddRequests, eddEvidence, suspiciousReports, alerts, hypotheses,
+                investigationEvidence, alertCoverage, operations, mapper);
         CaseDossier first = service.export(7L);
         CaseDossier second = service.export(7L);
 
         assertThat(first.contentHash()).hasSize(64).isEqualTo(second.contentHash());
+        assertThat(first.schemaVersion()).isEqualTo("1.6");
         assertThat(first.content().reportParseStatus()).isEqualTo("VALID");
+        assertThat(first.content().caseSummary().reviewDisposition()).isEqualTo("CONFIRM_SUSPICIOUS");
+        assertThat(first.content().reviewHistory()).singleElement()
+                .satisfies(review -> assertThat(review.reasonCode()).isEqualTo("SANCTIONS_OR_WATCHLIST_MATCH"));
         assertThat(first.content().snapshot().sourceDigest()).isEqualTo("a".repeat(64));
         assertThat(first.content().sanctionReviewHistory()).singleElement()
                 .satisfies(review -> assertThat(review.reviewDecision()).isEqualTo("CONFIRM"));
+        assertThat(first.content().operations()).satisfies(operation -> {
+            assertThat(operation.priority()).isEqualTo(com.bank.aml.operations.CasePriority.CRITICAL);
+            assertThat(operation.priorityPolicy()).isEqualTo("P1_V1_DETERMINISTIC_CASE_PRIORITY");
+            assertThat(operation.slaPolicy()).isEqualTo("P1_V1_SLA_COMPLETED");
+        });
         assertThat(mapper.writeValueAsString(first)).doesNotContain("SECRET-CIPHERTEXT-MUST-NOT-BE-EXPORTED");
     }
 
@@ -114,5 +167,40 @@ class CaseDossierServiceTest {
         assertThat(dossier.content().reportParseStatus()).isEqualTo("INVALID");
         assertThat(dossier.content().report()).isNull();
         assertThat(mapper.writeValueAsString(dossier)).doesNotContain("invalid-sensitive-model-text");
+    }
+
+    @Test
+    void refusesToExportDossierWhenEddEvidenceHistoryIsCorrupted() {
+        CaseRepository cases = mock(CaseRepository.class);
+        CaseLogRepository logs = mock(CaseLogRepository.class);
+        CaseExecutionRepository executions = mock(CaseExecutionRepository.class);
+        ToolExecutionTraceRepository traces = mock(ToolExecutionTraceRepository.class);
+        ManualReviewRepository reviews = mock(ManualReviewRepository.class);
+        InvestigationSnapshotRepository snapshots = mock(InvestigationSnapshotRepository.class);
+        EnhancedDueDiligenceRequestRepository eddRequests = mock(EnhancedDueDiligenceRequestRepository.class);
+
+        CaseEntity caseEntity = new CaseEntity();
+        caseEntity.setCustomerId("C001");
+        caseEntity.setStatus(CaseStatus.HOLD);
+        EnhancedDueDiligenceRequest corrupted = new EnhancedDueDiligenceRequest();
+        corrupted.setCaseId(11L);
+        corrupted.setRoundNo(1);
+        corrupted.setReasonCode("SOURCE_OF_FUNDS_EVIDENCE_REQUIRED");
+        corrupted.setRequiredItemsJson("not-json");
+        corrupted.setStatus(EnhancedDueDiligenceStatus.OPEN);
+
+        when(cases.findById(11L)).thenReturn(Optional.of(caseEntity));
+        when(logs.findByCaseIdOrderByCreatedAtAsc(11L)).thenReturn(List.of());
+        when(executions.findByCaseIdOrderByStartedAtAsc(11L)).thenReturn(List.of());
+        when(traces.findByCaseIdOrderByExecutionVersionDescSequenceNoAsc(11L)).thenReturn(List.of());
+        when(reviews.findByCaseIdOrderByCreatedAtAsc(11L)).thenReturn(List.of());
+        when(eddRequests.findByCaseIdOrderByRoundNoAsc(11L)).thenReturn(List.of(corrupted));
+
+        CaseDossierService service = new CaseDossierService(cases, logs, executions, traces, reviews, snapshots,
+                null, eddRequests, new ObjectMapper().findAndRegisterModules());
+
+        assertThatThrownBy(() -> service.export(11L))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("enhancedDueDiligence.requiredItems");
     }
 }

@@ -1,5 +1,6 @@
 package com.bank.aml.controller;
 
+import com.bank.aml.audit.AuditService;
 import com.bank.aml.dto.CustomerDto;
 import com.bank.aml.service.CustomerAdminService;
 import org.springframework.data.domain.Page;
@@ -26,9 +27,11 @@ import org.springframework.web.multipart.MultipartFile;
 public class CustomerAdminController {
 
     private final CustomerAdminService customerAdminService;
+    private final AuditService audit;
 
-    public CustomerAdminController(CustomerAdminService customerAdminService) {
+    public CustomerAdminController(CustomerAdminService customerAdminService, AuditService audit) {
         this.customerAdminService = customerAdminService;
+        this.audit = audit;
     }
 
     @GetMapping
@@ -52,28 +55,44 @@ public class CustomerAdminController {
 
     @PostMapping
     public CustomerDto create(@RequestBody CustomerAdminService.CreateRequest req) {
-        return customerAdminService.create(req, currentUser());
+        CustomerDto created = customerAdminService.create(req, currentUser());
+        // 客户主数据变更必须审计；明细字段（姓名/证件号）不写入审计，仅记主键与摘要
+        audit.record(currentUser(), "CUSTOMER_CREATE", "CUSTOMER", String.valueOf(created.id()),
+                "SUCCESS", "type=" + created.type(), null);
+        return created;
     }
 
     @PutMapping("/{id}")
     public CustomerDto update(@PathVariable Long id, @RequestBody CustomerAdminService.UpdateRequest req) {
-        return customerAdminService.update(id, req);
+        CustomerDto updated = customerAdminService.update(id, req);
+        audit.record(currentUser(), "CUSTOMER_UPDATE", "CUSTOMER", String.valueOf(id),
+                "SUCCESS", "type=" + updated.type(), null);
+        return updated;
     }
 
     @DeleteMapping("/{id}")
     public void delete(@PathVariable Long id) {
         customerAdminService.delete(id);
+        audit.record(currentUser(), "CUSTOMER_DELETE", "CUSTOMER", String.valueOf(id), "SUCCESS", null, null);
     }
 
     @PutMapping("/{id}/status")
     public CustomerDto setStatus(@PathVariable Long id, @RequestParam String status) {
-        return customerAdminService.setStatus(id, status);
+        CustomerDto updated = customerAdminService.setStatus(id, status);
+        audit.record(currentUser(), "CUSTOMER_STATUS_CHANGE", "CUSTOMER", String.valueOf(id),
+                "SUCCESS", "status=" + status, null);
+        return updated;
     }
 
     /** Excel 导入：表头 姓名/证件号/类型/行业/地区/注册资本 */
     @PostMapping("/import")
     public CustomerAdminService.ImportResult importExcel(@RequestParam("file") MultipartFile file) {
-        return customerAdminService.importExcel(file, currentUser());
+        CustomerAdminService.ImportResult result = customerAdminService.importExcel(file, currentUser());
+        // 只审计导入规模，不落 Excel 内容
+        audit.record(currentUser(), "CUSTOMER_IMPORT", "CUSTOMER", null, "SUCCESS",
+                "total=" + result.total() + ",success=" + result.success()
+                        + ",failed=" + result.failed() + ",errorCount=" + result.errors().size(), null);
+        return result;
     }
 
     private String currentUser() {

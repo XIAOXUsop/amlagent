@@ -14,6 +14,6 @@ test.describe('工单核心流程', () => {
 
     // 跳转到工单详情页
     await expect(page).toHaveURL(/\/cases\/\d+/)
-    await expect(page.locator('.card-title').first()).toContainText('工单 #')
+    await expect(page.getByRole('heading', { name: /工单 #\d+/ })).toBeVisible()
   })
 })

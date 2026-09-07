@@ -22,6 +22,7 @@ export const statusMeta: Record<string, StatusMeta> = {
   RETRY_WAIT: { text: '等待重试', type: 'warning', cls: 'st-running', dot: '#e0a23a' },
   DONE: { text: '已完成', type: 'success', cls: 'st-done', dot: '#2fa37f' },
   HOLD: { text: '转人工', type: 'danger', cls: 'st-hold', dot: '#c43d4b' },
+  REPORT_PENDING: { text: '待报送', type: 'warning', cls: 'st-running', dot: '#d97706' },
   FAILED: { text: '失败', type: 'danger', cls: 'st-failed', dot: '#c43d4b' },
 }
 

@@ -57,7 +57,7 @@ class CsrfSecurityTest {
     @Test
     @DisplayName("query 参数 token 不被认证（JWT 仅从 Bearer/Cookie 读取）")
     void queryTokenIsNotAuthenticated() throws Exception {
-        String token = tokenProvider.createToken("admin", "ADMIN");
+        String token = tokenProvider.createToken("admin", "ADMIN", 0);
         mockMvc.perform(get("/api/cases").queryParam("token", token))
                 .andExpect(status().isUnauthorized());
     }

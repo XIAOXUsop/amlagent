@@ -22,6 +22,8 @@ public class InvestigationSnapshotEntity {
     @Column(nullable = false, length = 128) private String sourceVersion;
     @Column(nullable = false, length = 128) private String legalIndexVersion;
     @Column(nullable = false, length = 64, columnDefinition = "char(64)") private String sourceDigest;
+    /** 冻结预警集合摘要；旧归档为 NULL，加载时按旧 schema 校验。 */
+    @Column(length = 64) private String alertsDigest;
     @Lob @Column(nullable = false, columnDefinition = "MEDIUMTEXT") private String payloadCiphertext;
     @Column(nullable = false) private LocalDateTime createdAt;
 
@@ -42,6 +44,8 @@ public class InvestigationSnapshotEntity {
     public void setLegalIndexVersion(String legalIndexVersion) { this.legalIndexVersion = legalIndexVersion; }
     public String getSourceDigest() { return sourceDigest; }
     public void setSourceDigest(String sourceDigest) { this.sourceDigest = sourceDigest; }
+    public String getAlertsDigest() { return alertsDigest; }
+    public void setAlertsDigest(String alertsDigest) { this.alertsDigest = alertsDigest; }
     public String getPayloadCiphertext() { return payloadCiphertext; }
     public void setPayloadCiphertext(String payloadCiphertext) { this.payloadCiphertext = payloadCiphertext; }
     public LocalDateTime getCreatedAt() { return createdAt; }
