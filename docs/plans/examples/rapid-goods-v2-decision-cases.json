@@ -1,0 +1,141 @@
+{
+  "schema": "rapid-goods-plan-decision-cases/v2",
+  "purpose": "仅校验计划书的案件层决策表，不代表生产代码、事实真实性、权限实现、数据库事务或 E2E 已验收。",
+  "contextDefaults": {
+    "caseStatus": "HOLD",
+    "scopeEnumerated": true,
+    "adoptedFactsUsable": true,
+    "reviewBasisCurrent": true,
+    "policyApplicable": true,
+    "reviewerIndependent": true,
+    "otherScenarioGateSatisfied": true,
+    "hasOpenDecisionSupportEdd": false,
+    "obligationTransferReady": false,
+    "continuationPlanReady": false
+  },
+  "unitDefaults": {
+    "assessmentValid": true,
+    "criticalUnknown": false,
+    "suspicionBasisComplete": false,
+    "unresolvedDisclosed": false,
+    "followupRequired": false
+  },
+  "cases": [
+    {
+      "id": "DG-01", "name": "完整已交付结算解释",
+      "units": [{"outcome": "EXPLAINED"}],
+      "expected": {"canExclude": true, "canConfirm": false}
+    },
+    {
+      "id": "DG-02", "name": "交期尚未来到且有可履行跟进安排的合法预付",
+      "context": {"continuationPlanReady": true},
+      "units": [{"outcome": "EXPLAINED", "followupRequired": true}],
+      "expected": {"canExclude": true, "canConfirm": false}
+    },
+    {
+      "id": "DG-03", "name": "交期已过产生未解决关键问题",
+      "units": [{"outcome": "UNRESOLVED", "criticalUnknown": true}],
+      "expected": {"canExclude": false, "canConfirm": false}
+    },
+    {
+      "id": "DG-04", "name": "同案合理与可疑预警并存",
+      "units": [{"outcome": "EXPLAINED"}, {"outcome": "SUSPICIOUS", "suspicionBasisComplete": true}],
+      "expected": {"canExclude": false, "canConfirm": true}
+    },
+    {
+      "id": "DG-05", "name": "合理加未知不得强行定性",
+      "units": [{"outcome": "EXPLAINED"}, {"outcome": "UNRESOLVED"}],
+      "expected": {"canExclude": false, "canConfirm": false}
+    },
+    {
+      "id": "DG-06", "name": "可疑加未披露未知",
+      "units": [{"outcome": "SUSPICIOUS", "suspicionBasisComplete": true}, {"outcome": "UNRESOLVED"}],
+      "expected": {"canExclude": false, "canConfirm": false}
+    },
+    {
+      "id": "DG-07", "name": "可疑加已披露未知且有继续核验安排",
+      "context": {"continuationPlanReady": true},
+      "units": [{"outcome": "SUSPICIOUS", "suspicionBasisComplete": true}, {"outcome": "UNRESOLVED", "unresolvedDisclosed": true}],
+      "expected": {"canExclude": false, "canConfirm": true}
+    },
+    {
+      "id": "DG-08", "name": "解释受挑战不自动等于有怀疑依据",
+      "units": [{"outcome": "SUSPICIOUS", "suspicionBasisComplete": false}],
+      "expected": {"canExclude": false, "canConfirm": false}
+    },
+    {
+      "id": "DG-09", "name": "删除命中交易后范围未枚举",
+      "context": {"scopeEnumerated": false},
+      "units": [{"outcome": "EXPLAINED"}],
+      "expected": {"canExclude": false, "canConfirm": false}
+    },
+    {
+      "id": "DG-10", "name": "最终采用令牌已过期",
+      "context": {"reviewBasisCurrent": false},
+      "units": [{"outcome": "EXPLAINED"}],
+      "expected": {"canExclude": false, "canConfirm": false}
+    },
+    {
+      "id": "DG-11", "name": "最终复核人属于实质贡献人集合",
+      "context": {"reviewerIndependent": false},
+      "units": [{"outcome": "EXPLAINED"}],
+      "expected": {"canExclude": false, "canConfirm": false}
+    },
+    {
+      "id": "DG-12", "name": "换用不适用配方不能通过",
+      "context": {"policyApplicable": false},
+      "units": [{"outcome": "EXPLAINED"}],
+      "expected": {"canExclude": false, "canConfirm": false}
+    },
+    {
+      "id": "DG-13", "name": "填写已解释但仍有当前关键未知",
+      "units": [{"outcome": "EXPLAINED", "criticalUnknown": true}],
+      "expected": {"canExclude": false, "canConfirm": false}
+    },
+    {
+      "id": "DG-14", "name": "开放补件任务不能仅靠披露就被跳过",
+      "context": {"hasOpenDecisionSupportEdd": true, "continuationPlanReady": true},
+      "units": [{"outcome": "SUSPICIOUS", "suspicionBasisComplete": true}, {"outcome": "UNRESOLVED", "unresolvedDisclosed": true}],
+      "expected": {"canExclude": false, "canConfirm": false}
+    },
+    {
+      "id": "DG-15", "name": "开放义务有已校验的原子接续方案",
+      "context": {"hasOpenDecisionSupportEdd": true, "continuationPlanReady": true, "obligationTransferReady": true},
+      "units": [{"outcome": "SUSPICIOUS", "suspicionBasisComplete": true}, {"outcome": "UNRESOLVED", "unresolvedDisclosed": true}],
+      "expected": {"canExclude": false, "canConfirm": true}
+    },
+    {
+      "id": "DG-16", "name": "预付款尚缺有责任人的跟进安排",
+      "units": [{"outcome": "EXPLAINED", "followupRequired": true}],
+      "expected": {"canExclude": false, "canConfirm": false}
+    },
+    {
+      "id": "DG-17", "name": "拟采用的事实完整性不可靠",
+      "context": {"adoptedFactsUsable": false},
+      "units": [{"outcome": "SUSPICIOUS", "suspicionBasisComplete": true}],
+      "expected": {"canExclude": false, "canConfirm": false}
+    },
+    {
+      "id": "DG-18", "name": "不能绕过其他调查场景门禁",
+      "context": {"otherScenarioGateSatisfied": false},
+      "units": [{"outcome": "SUSPICIOUS", "suspicionBasisComplete": true}],
+      "expected": {"canExclude": false, "canConfirm": false}
+    },
+    {
+      "id": "DG-19", "name": "引用未解析而表单声称满足",
+      "units": [{"outcome": "EXPLAINED", "assessmentValid": false}],
+      "expected": {"canExclude": false, "canConfirm": false}
+    },
+    {
+      "id": "DG-20", "name": "已结束案件不能重新执行最终决定",
+      "context": {"caseStatus": "DONE"},
+      "units": [{"outcome": "EXPLAINED"}],
+      "expected": {"canExclude": false, "canConfirm": false}
+    },
+    {
+      "id": "DG-21", "name": "空单元集合不能因 allMatch 放行",
+      "units": [],
+      "expected": {"canExclude": false, "canConfirm": false}
+    }
+  ]
+}

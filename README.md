@@ -8,7 +8,7 @@ JWT 三角色认证、Outbox+Redis Streams 可靠任务、混合 RAG 证据追�
 Prometheus/Grafana 监控与自动化测试，并提供受 ADMIN 权限保护的客户主数据维护与 Excel 导入能力。
 名单筛查采用“模糊召回 → 身份要素评分 → 人工候选核验”三阶段流程；候选复核使用追加式 revision
 防止并发覆盖，只有算法确定命中或人工确认的候选才进入 Guardrail。工单详情可导出带 SHA-256
-完整性摘要的调查档案，集中交付快照元数据、工作流、工具轨迹、证据和两类人工复核历史。
+完整性摘要的调查档案，集中交付快照元数据、工作流、工具轨迹、证据、处置历史、补充尽调轮次及可疑交易报告状态。
 
 平台同时提供面向 ADMIN 的“当前客户 AI 小助”：在客户详情页进行只读、多轮、流式分析。会话由后端绑定当前客户，
 模型只接收脱敏冻结快照；七个工具均为只读且客户工具不接受 `customerId`。输入、跨 token 流式输出与最终回答经过
@@ -26,6 +26,9 @@ Prometheus/Grafana 监控与自动化测试，并提供受 ADMIN 权限保护的
   → 深度风险推理          模型综合研判，输出风险点与评级
   → Guardrails 规则护栏   配置化规则强制修正（一级制裁 → 高风险 + 转人工 HOLD）
   → 结构化报告            含证据链与法规证据 ID，实时 SSE 推送到前端
+  → 人工处置              合理排除，或创建限时、实名分派的补充尽调任务并在材料回传后再次复核
+  → 可疑报告闭环          确认可疑后进入待报送；登记外部系统受理编号后结案，支持退回补正
+  → 风险优先运营          按确定性风险评分、责任阶段与 SLA 逾期情况排序各角色待办
   → 调查档案导出          聚合流程/工具/快照/复核记录并生成 SHA-256 内容摘要
   → Agent / 规则 / RAG评测 独立案例夹具运行真实模型，原始结果与 Guardrails 分开计分
 ```
@@ -221,9 +224,20 @@ docker-compose.yml        MySQL + PostgreSQL(pgvector) + Redis
 | GET | /api/eval/agent/dataset | 独立 Agent 案例集元信息（含 datasetHash），不返回 TEST 标准答案（ADMIN） |
 | GET | /api/eval/reports?evalType=RULE_REGRESSION\|AGENT_DEV\|AGENT_TEST | 按类型查询历史评测报告（ADMIN） |
 | GET | /api/reviews/pending | 待复核队列（REVIEWER/ADMIN） |
-| POST | /api/reviews/{id} | 提交复核决定（APPROVE/REJECT/ESCALATE，REVIEWER/ADMIN） |
+| POST | /api/reviews/{id} | 提交人工处置（确认可疑/排除预警/补充尽调 + 原因码 + 分析记录，REVIEWER/ADMIN） |
 | GET | /api/reviews/{id} | 工单复核记录 |
 | GET | /api/reviews/stats | 复核反馈统计（一致率等） |
+| GET | /api/cases/{id}/edd | 查询工单补充尽调轮次与当前状态 |
+| POST | /api/cases/{id}/edd/{requestId}/submit | 回传材料说明、来源记录编号和内容 SHA-256（ANALYST/ADMIN） |
+| POST | /api/cases/{id}/edd/{requestId}/cancel | 撤销尚未提交的补充尽调任务并记录原因（REVIEWER/ADMIN） |
+| GET | /api/edd/tasks | 分析员本人待办；ADMIN 可查询全部待办（ANALYST/ADMIN） |
+| GET | /api/edd/assignees | 查询可分派的启用分析员（REVIEWER/ADMIN） |
+| GET | /api/reports/pending | 待报送与退回补正的可疑交易报告（REVIEWER/ADMIN） |
+| GET | /api/reports/{caseId} | 查询案件可疑交易报告状态（REVIEWER/ADMIN） |
+| POST | /api/reports/{caseId}/submit | 登记外部报告系统受理编号并结案（REVIEWER/ADMIN） |
+| POST | /api/reports/{caseId}/return | 将已报送报告退回补正并重开待报送状态（REVIEWER/ADMIN） |
+| GET | /api/case-operations | 当前角色的风险优先运营队列；支持优先级、阶段和逾期筛选 |
+| GET | /api/case-operations/{caseId} | 查询案件的确定性优先级、责任阶段和当前 SLA |
 | GET/POST | /api/admin/customers | 客户分页查询/新增（ADMIN） |
 | PUT/DELETE | /api/admin/customers/{id} | 客户编辑/软删除（ADMIN） |
 | PUT | /api/admin/customers/{id}/status | 启停客户（ADMIN） |
@@ -255,6 +269,18 @@ docker-compose.yml        MySQL + PostgreSQL(pgvector) + Redis
 - **生产 Agent 输出契约**：模型仅返回不含客户身份的 `AgentAnalysis`；生产与评测共用闭集词表、证据归属和事实前置条件校验。原始分析独立留痕，违规输出强制 HOLD；`FinalDecisionAssembler` 统一最终评级、人工复核、处置代码和结论，防止 Guardrail 上调后报告字段互相矛盾。
 - **Mock 可插拔数据层**：`MockDataSource` 内置交易/股权/黑名单演示数据；接入真实系统时替换实现即可，工具签名不变。
 - **客户主数据维护**：ADMIN 可分页增删改查、启停与 Excel 导入客户；导入限制文件类型/大小/行数并防公式与证件号数值精度丢失，数据库快照采用构建后原子切换，避免刷新期间读到半成品。
+- **人工处置闭环**：将技术执行状态与业务结论分离；调查契约 v1 案件的自动分析完成后统一进入 HOLD，
+  最终结案只能由复核员形成（合理排除直接完结，确认可疑进入 `REPORT_PENDING`，
+  只有登记外部报告系统受理编号后才完结，已报送报告可退回补正）。补充尽调会创建带材料清单、实名承办人/部门、截止时间和 revision 的独立任务；分析员工作台展示本人待办与逾期，复核员可有因撤销。材料回传必须覆盖每个必需项，并登记来源系统、来源记录编号与内容 SHA-256。
+- **统一调查就绪门禁**：详情页、运营队列与最终复核共用 `InvestigationReadinessEvaluator`；
+  假设改判会使引用其的覆盖结论失效（绑定假设版本，改判后要求重新确认），
+  旧版本或矛盾结论无法被最终处置采用；版本冲突返回 409 并保留用户输入。
+- **冻结关联预警输入**：Worker 抢占后一次性冻结案件的全部 LINKED 预警（含命中原因与版本，
+  `alertsDigest` 摘要），模型逐条收到预警事实而非规则编号摘要，法规主题按逐条原因与场景合并；
+  归并/拆分后两侧的模型输入与各自当前关联预警一致，档案可追溯到本次执行实际见到的预警版本。
+- **可靠高影响审计**：人工处置、补充尽调提交/撤销、报告报送/退回均在业务事务内写入独立审计 Outbox；写入失败使业务回滚，后台按事件键幂等投递 `audit_log`，避免审计故障被静默吞掉。
+- **严格调查档案**：处置、补充尽调分派/撤销、结构化证据元数据及报告状态均进入 SHA-256 覆盖范围；业务证据历史 JSON 损坏时拒绝导出，避免把损坏记录伪装成“无证据”。敏感材料正文不进入档案或操作审计。
+- **风险优先运营**：`P1_V1_DETERMINISTIC_CASE_PRIORITY` 只使用已落库业务事实评分，同场景重复预警不重复叠加；高风险和已确认可疑分别设置优先级下限。SLA 从预警进入系统、Agent 完成、EDD 提交/撤销或报告退回等真实阶段事件起算，EDD 使用人工明确截止时间，运营口径随档案 schema 1.5 一并归档。
 - **Mock 模型 agentic 循环**：无 API Key 时 Mock 模型模拟多轮工具调用，保证链路离线可演示。
 - **本地 embedding**：DeepSeek 无官方 embedding API，默认用 all-MiniLM-L6-v2 离线向量化，可在配置中切换中文 embedding 服务。
 - **安全加固**：登录失败速率限制（按 IP+用户名固定窗口计数，超限锁定 5 分钟，缓解暴力破解与撞库）；`X-Request-Id` 透传白名单校验（防日志注入），响应体/响应头/日志 MDC 三方 traceId 一致；JWT 走 HttpOnly Cookie，CSRF 双 Cookie，生产环境启动自检（强密钥/非默认口令/Flyway/真实 Key）。
