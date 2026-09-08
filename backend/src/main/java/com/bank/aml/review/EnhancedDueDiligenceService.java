@@ -67,6 +67,18 @@ public class EnhancedDueDiligenceService {
         return repository.findTopByCaseIdOrderByRoundNoDesc(caseId);
     }
 
+    /** 复核预检只读查询：原任务存在性/状态（不触发任何写路径）。 */
+    @Transactional(readOnly = true)
+    public Optional<EnhancedDueDiligenceRequest> lookupTask(Long caseId, Long requestId) {
+        return repository.findByIdAndCaseId(requestId, caseId);
+    }
+
+    /** 复核预检只读查询：本案件全部 OPEN 任务。 */
+    @Transactional(readOnly = true)
+    public List<EnhancedDueDiligenceRequest> openTasks(Long caseId) {
+        return repository.findByCaseIdAndStatusOrderByIdAsc(caseId, EnhancedDueDiligenceStatus.OPEN);
+    }
+
     @Transactional(readOnly = true)
     public List<EnhancedDueDiligenceView> pendingTasks(String operator, boolean allTasks) {
         List<EnhancedDueDiligenceRequest> tasks = allTasks

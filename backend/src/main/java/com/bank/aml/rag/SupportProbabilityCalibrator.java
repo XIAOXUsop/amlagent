@@ -34,6 +34,7 @@ public class SupportProbabilityCalibrator {
 
     private boolean fitted = false;
 
+    @org.springframework.beans.factory.annotation.Autowired
     public SupportProbabilityCalibrator(@Value("${aml.rag.support.calibration-method:platt}") String method) {
         this.method = method == null || method.isBlank() ? "platt" : method;
     }

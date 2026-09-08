@@ -47,6 +47,7 @@ public class InvestigationService {
                 playbooks, readinessEvaluator, auditOutbox, null);
     }
 
+    @org.springframework.beans.factory.annotation.Autowired
     public InvestigationService(CaseRepository caseRepository,
                                 AmlAlertRepository alertRepository,
                                 InvestigationHypothesisRepository hypothesisRepository,

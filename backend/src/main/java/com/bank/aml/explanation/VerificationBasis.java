@@ -31,10 +31,10 @@ public class VerificationBasis {
     @Column(nullable = false)
     private LocalDateTime sourceCutoff;
 
-    @Column(nullable = false, length = 64)
+    @Column(nullable = false, length = 64, columnDefinition = "CHAR(64)")
     private String scopeDigest;
 
-    @Column(nullable = false, length = 64)
+    @Column(nullable = false, length = 64, columnDefinition = "CHAR(64)")
     private String basisDigest;
 
     @Column(nullable = false, length = 64)

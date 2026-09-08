@@ -55,6 +55,96 @@ public class ReviewService {
     }
 
     /**
+     * 复核预检（v3 闭环方案 §6 / RC-08 前置）：只读模拟，不创建任务、不改任何状态。
+     * 输出：变更前 token 校验结果、案件与复核版本、拟议接续计划的逐项覆盖差异、
+     * 决策表可行性快照。页面在真正提交前用本接口校对计划。
+     */
+    @Transactional(readOnly = true)
+    public Map<String, Object> reviewPrecheck(Long caseId, String reviewer, ReviewDecision decision,
+                                              String reviewBasisToken,
+                                              List<EnhancedDueDiligenceService.ContinuationTaskPlan> plans) {
+        CaseEntity caseEntity = caseRepository.findById(caseId)
+                .orElseThrow(() -> new IllegalArgumentException("工单不存在：" + caseId));
+        boolean v2Case = caseEntity.getInvestigationContractVersion() == 2;
+        Map<String, Object> result = new java.util.LinkedHashMap<>();
+        result.put("caseId", caseId);
+        result.put("caseStatus", caseEntity.getStatus().name());
+        result.put("caseFactsEpoch", caseEntity.getCaseFactsEpoch());
+        result.put("reviewRevision", caseEntity.getReviewRevision());
+        result.put("decision", decision == null ? null : decision.name());
+
+        // token 一致性（只读比较，不因失败终止——预检的职责是暴露差异）
+        boolean tokenCurrent = true;
+        String tokenProblem = null;
+        if (v2Case && decision != ReviewDecision.REQUEST_ENHANCED_DUE_DILIGENCE) {
+            String expected = explanationWorkspaceService.reviewBasisToken(caseId);
+            tokenCurrent = reviewBasisToken != null && reviewBasisToken.trim().equals(expected);
+            if (!tokenCurrent) {
+                tokenProblem = "最终复核依据令牌与当前事实不一致（取号后案件事实已变化）";
+            }
+        }
+        result.put("tokenCurrent", tokenCurrent);
+        if (tokenProblem != null) {
+            result.put("tokenProblem", tokenProblem);
+        }
+
+        // 接续计划覆盖差异（只读模拟 transferObligations 的校验，不写库）
+        List<Map<String, Object>> planChecks = new java.util.ArrayList<>();
+        if (plans != null) {
+            for (EnhancedDueDiligenceService.ContinuationTaskPlan plan : plans) {
+                Map<String, Object> check = new java.util.LinkedHashMap<>();
+                check.put("originRequestId", plan.originRequestId());
+                if (plan.originRequestId() == null) {
+                    check.put("problem", "缺少 originRequestId（接续计划必须绑定原任务）");
+                } else {
+                    var origin = enhancedDueDiligenceService.lookupTask(caseId, plan.originRequestId());
+                    if (origin.isEmpty()) {
+                        check.put("problem", "原任务不存在或不属于本案件");
+                    } else if (origin.get().getStatus() != EnhancedDueDiligenceStatus.OPEN
+                            || origin.get().getPurpose() != com.bank.aml.explanation.EddTaskPurpose.DECISION_SUPPORT) {
+                        check.put("problem", "原任务不是待处理的决策支持任务（当前 "
+                                + origin.get().getStatus() + "/" + origin.get().getPurpose() + "）");
+                    } else {
+                        check.put("originRound", origin.get().getRoundNo());
+                        check.put("problem", null);
+                    }
+                }
+                check.put("assignedTo", plan.assignedTo());
+                check.put("dueAt", plan.dueAt());
+                check.put("completionStandardPresent", plan.completionStandard() != null
+                        && plan.completionStandard().trim().length() >= 10);
+                if (plan.completionStandard() == null || plan.completionStandard().trim().length() < 10) {
+                    check.put("standardProblem", "完成标准缺失或过短（至少 10 个字符）");
+                }
+                planChecks.add(check);
+            }
+        }
+        result.put("continuationPlanChecks", planChecks);
+
+        // 未被任何计划引用的 OPEN 决策支持任务（接续后仍会阻断）
+        List<EnhancedDueDiligenceRequest> openSupport = enhancedDueDiligenceService.openTasks(caseId);
+        java.util.Set<Long> referenced = plans == null ? java.util.Set.of()
+                : plans.stream().map(EnhancedDueDiligenceService.ContinuationTaskPlan::originRequestId)
+                        .filter(java.util.Objects::nonNull)
+                        .collect(java.util.stream.Collectors.toSet());
+        List<Long> uncovered = openSupport.stream()
+                .filter(task -> task.getPurpose() == com.bank.aml.explanation.EddTaskPurpose.DECISION_SUPPORT)
+                .map(EnhancedDueDiligenceRequest::getId)
+                .filter(id -> !referenced.contains(id)).toList();
+        result.put("uncoveredDecisionSupportTasks", uncovered);
+
+        // 决策表可行性快照（v2，reviewer 视角含自审限制）
+        if (v2Case) {
+            var readiness = explanationWorkspaceService.readinessResultForReviewer(caseId, reviewer);
+            result.put("canExclude", readiness.canExclude());
+            result.put("canConfirm", readiness.canConfirm());
+            result.put("excludeBlockers", readiness.excludeBlockers());
+            result.put("confirmBlockers", readiness.confirmBlockers());
+        }
+        return result;
+    }
+
+    /**
      * 提交复核决定：
      * 确认可疑/排除预警 → 工单完成；请求强化尽调 → 保持 HOLD，revision 自增。
      * <p>reviewerRiskLevel / decision 使用闭集校验（400）；所有决策均通过 reviewRevision 乐观锁

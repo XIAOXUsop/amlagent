@@ -10,7 +10,7 @@ import {
   listPendingReviews,
   listPendingSuspiciousReports,
   reviewStats,
-  submitReview, getExplanationReviewBasis,
+  submitReview, getExplanationReviewBasis, reviewPrecheck,
   submitSuspiciousReport,
   type CaseItem,
   type CaseInvestigation,
@@ -230,6 +230,22 @@ async function doSubmit() {
       if ((decision.value === 'EXCLUDE_FALSE_POSITIVE' && !basis.canExclude)
           || (decision.value === 'CONFIRM_SUSPICIOUS' && !basis.canConfirm)) {
         ElMessage.warning(`决策表未通过：${blockers.join('；') || '请先补齐单元提交与义务接续'}`)
+        submitting.value = false
+        return
+      }
+      // 复核预检（只读模拟，不创建任务）：暴露 token 陈旧与接续计划覆盖差异
+      const precheck = await reviewPrecheck(reviewing.value.id, {
+        decision: decision.value,
+        reviewBasisToken,
+      })
+      if (!precheck.tokenCurrent) {
+        ElMessage.warning(precheck.tokenProblem ?? '复核依据已变化，请刷新后重试')
+        submitting.value = false
+        return
+      }
+      if (precheck.uncoveredDecisionSupportTasks.length) {
+        ElMessage.warning(`存在未接续的待补件任务（#${precheck.uncoveredDecisionSupportTasks.join('、#')}）；`
+          + '请在复核中处理（补充尽调、确认可疑并接续或说明）')
         submitting.value = false
         return
       }

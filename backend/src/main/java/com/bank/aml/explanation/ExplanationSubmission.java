@@ -56,7 +56,7 @@ public class ExplanationSubmission {
     private Long basisId;
 
     /** 提交内容摘要：固定排序后的范围、问题、材料/核验版本、政策和声明未知。 */
-    @Column(nullable = false, length = 64)
+    @Column(nullable = false, length = 64, columnDefinition = "CHAR(64)")
     private String inputDigest;
 
     /** 幂等键（动作:操作者:目标:请求摘要）。 */

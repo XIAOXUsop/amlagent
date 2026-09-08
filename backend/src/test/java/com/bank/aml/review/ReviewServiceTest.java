@@ -157,4 +157,77 @@ class ReviewServiceTest {
         hold.setRawRiskLevel("中风险");
         return hold;
     }
+    // ---- 复核预检（v3 闭环方案 §6 / RC-08 前置）：只读模拟，暴露计划覆盖差异 ----
+
+    @org.junit.jupiter.api.Test
+    void precheckExposesPlanCoverageGapsAndTokenStaleness() {
+        CaseEntity hold = new CaseEntity();
+        hold.setStatus(CaseStatus.HOLD);
+        hold.setInvestigationContractVersion(2);
+        when(caseRepository.findById(1L)).thenReturn(Optional.of(hold));
+        com.bank.aml.explanation.ExplanationWorkspaceService workspace =
+                mock(com.bank.aml.explanation.ExplanationWorkspaceService.class);
+        when(workspace.reviewBasisToken(1L)).thenReturn("current-token");
+        com.bank.aml.explanation.ExplanationWorkspaceService.InvestigationReadinessResult readiness =
+                new com.bank.aml.explanation.ExplanationWorkspaceService.InvestigationReadinessResult(
+                        true, java.util.List.of(), java.util.List.of(), java.util.List.of(),
+                        true, false, true);
+        when(workspace.readinessResultForReviewer(eq(1L), any())).thenReturn(readiness);
+        ReviewService precheckService = new ReviewService(caseRepository, reviewRepository, eddService,
+                reportService, auditOutbox, investigationService, workspace);
+        // EDD：一个 OPEN 决策支持任务（id=22），预检计划只引用 999 → 22 未被覆盖
+        EnhancedDueDiligenceRequest openTask = new EnhancedDueDiligenceRequest();
+        try {
+            var idField = EnhancedDueDiligenceRequest.class.getDeclaredField("id");
+            idField.setAccessible(true);
+            idField.set(openTask, 22L);
+        } catch (ReflectiveOperationException e) {
+            throw new IllegalStateException(e);
+        }
+        openTask.setCaseId(1L);
+        openTask.setPurpose(com.bank.aml.explanation.EddTaskPurpose.DECISION_SUPPORT);
+        openTask.setStatus(EnhancedDueDiligenceStatus.OPEN);
+        when(eddService.lookupTask(1L, 999L)).thenReturn(java.util.Optional.empty());
+        when(eddService.openTasks(1L)).thenReturn(java.util.List.of(openTask));
+
+        java.util.List<EnhancedDueDiligenceService.ContinuationTaskPlan> plans = java.util.List.of(
+                new EnhancedDueDiligenceService.ContinuationTaskPlan(999L, "analyst", "team-a",
+                        java.time.LocalDateTime.now().plusDays(3), java.util.List.of("TRANSACTION_PURPOSE"),
+                        "核验第一项义务的完整记录", null));
+
+        java.util.Map<String, Object> result = precheckService.reviewPrecheck(
+                1L, "reviewer-b", ReviewDecision.CONFIRM_SUSPICIOUS, "stale-token", plans);
+
+        // token 过期被暴露（而非抛异常）
+        org.assertj.core.api.Assertions.assertThat(result.get("tokenCurrent")).isEqualTo(false);
+        // 计划引用的原任务不存在 → 逐项差异
+        java.util.List<?> planChecks = (java.util.List<?>) result.get("continuationPlanChecks");
+        org.assertj.core.api.Assertions.assertThat(planChecks).hasSize(1);
+        // 未被覆盖的 OPEN 决策支持任务（22）被点名
+        @SuppressWarnings("unchecked")
+        java.util.List<Long> uncovered = (java.util.List<Long>) result.get("uncoveredDecisionSupportTasks");
+        org.assertj.core.api.Assertions.assertThat(uncovered).containsExactly(22L);
+    }
+
+    @org.junit.jupiter.api.Test
+    void precheckDoesNotMutateAnything() {
+        CaseEntity hold = new CaseEntity();
+        hold.setStatus(CaseStatus.HOLD);
+        hold.setInvestigationContractVersion(2);
+        when(caseRepository.findById(1L)).thenReturn(Optional.of(hold));
+        com.bank.aml.explanation.ExplanationWorkspaceService workspace =
+                mock(com.bank.aml.explanation.ExplanationWorkspaceService.class);
+        when(workspace.readinessResultForReviewer(eq(1L), any())).thenReturn(
+                new com.bank.aml.explanation.ExplanationWorkspaceService.InvestigationReadinessResult(
+                        true, java.util.List.of(), java.util.List.of(), java.util.List.of(),
+                        true, false, true));
+        ReviewService precheckService = new ReviewService(caseRepository, reviewRepository, eddService,
+                reportService, auditOutbox, investigationService, workspace);
+        when(eddService.openTasks(1L)).thenReturn(java.util.List.of());
+
+        precheckService.reviewPrecheck(1L, "reviewer-b", ReviewDecision.EXCLUDE_FALSE_POSITIVE,
+                null, null);
+        // 只读：不触发任何写路径
+        verify(eddService, org.mockito.Mockito.never()).transferObligations(any(), any(), any(), any(), any());
+    }
 }

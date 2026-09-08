@@ -43,6 +43,7 @@ public class CaseIntakeService {
                 workflowCommandService, metrics, auditOutbox, alertAssembler, null);
     }
 
+    @org.springframework.beans.factory.annotation.Autowired
     public CaseIntakeService(CaseRepository caseRepository, AmlAlertRepository alertRepository,
                              CustomerDataPort customerData, InvestigationPlaybookCatalog playbooks,
                              InvestigationService investigationService,

@@ -853,6 +853,42 @@ export async function submitReview(
   return (await api.post(`/reviews/${caseId}`, body)).data
 }
 
+/** 复核预检（只读模拟，v3 闭环方案 §6）：不创建任务，返回计划覆盖差异与决策表快照。 */
+export interface ReviewPrecheckResult {
+  caseId: number
+  caseStatus: string
+  caseFactsEpoch: number
+  reviewRevision: number
+  decision: string | null
+  tokenCurrent: boolean
+  tokenProblem?: string
+  continuationPlanChecks: Array<{
+    originRequestId: number | null
+    problem: string | null
+    originRound?: number
+    assignedTo?: string
+    dueAt?: string
+    completionStandardPresent: boolean
+    standardProblem?: string
+  }>
+  uncoveredDecisionSupportTasks: number[]
+  canExclude?: boolean
+  canConfirm?: boolean
+  excludeBlockers?: string[]
+  confirmBlockers?: string[]
+}
+
+export async function reviewPrecheck(
+  caseId: number,
+  body: {
+    decision?: string
+    reviewBasisToken?: string
+    continuationTasks?: ExplanationContinuationTask[]
+  },
+): Promise<ReviewPrecheckResult> {
+  return (await api.post(`/reviews/${caseId}/prechecks`, body)).data
+}
+
 // ==================== 解释核验工作区（v2 计划 §13） ====================
 
 export interface ExplanationUnitView {

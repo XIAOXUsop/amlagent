@@ -2,6 +2,7 @@ package com.bank.aml.controller;
 
 import com.bank.aml.dto.CaseDto;
 import com.bank.aml.review.ManualReview;
+import com.bank.aml.review.ReviewDecision;
 import com.bank.aml.review.ReviewService;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.context.SecurityContextHolder;
@@ -60,6 +61,25 @@ public class ReviewController {
         return review;
     }
 
+    /**
+     * 复核预检（只读模拟，v3 闭环方案 §6）：不创建任务、不改状态；
+     * 返回 token 一致性、接续计划逐项覆盖差异、未覆盖的 OPEN 决策支持任务与决策表快照。
+     */
+    @PostMapping("/{caseId}/prechecks")
+    public Map<String, Object> precheck(@PathVariable Long caseId,
+                                        @RequestBody PrecheckRequest req) {
+        String reviewer = SecurityContextHolder.getContext().getAuthentication().getName();
+        ReviewDecision decision = req.decision() == null ? null : ReviewDecision.parse(req.decision());
+        return reviewService.reviewPrecheck(caseId, reviewer, decision, req.reviewBasisToken(),
+                req.continuationTasks() == null ? null
+                        : req.continuationTasks().stream()
+                                .map(item -> new com.bank.aml.review.EnhancedDueDiligenceService.ContinuationTaskPlan(
+                                        item.originRequestId(), item.assignedTo(), item.assignedUnit(),
+                                        item.dueAt(), item.requiredItems(), item.completionStandard(),
+                                        item.issueBindingsJson()))
+                                .toList());
+    }
+
     /** 工单复核记录 */
     @GetMapping("/{caseId}")
     @PreAuthorize("hasAnyRole('ANALYST','REVIEWER','ADMIN')")
@@ -85,5 +105,9 @@ public class ReviewController {
     public record ContinuationTaskRequest(Long originRequestId, String assignedTo, String assignedUnit,
                                           LocalDateTime dueAt, List<String> requiredItems,
                                           String completionStandard, String issueBindingsJson) {
+    }
+
+    public record PrecheckRequest(String decision, String reviewBasisToken,
+                                  List<ContinuationTaskRequest> continuationTasks) {
     }
 }
