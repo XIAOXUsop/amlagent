@@ -1,5 +1,6 @@
 package com.bank.aml.controller;
 
+import com.bank.aml.explanation.ExplanationClaimService;
 import com.bank.aml.explanation.ExplanationPolicyCatalog;
 import com.bank.aml.explanation.ExplanationViews;
 import com.bank.aml.explanation.ExplanationWorkspaceService;
@@ -33,15 +34,18 @@ public class ExplanationController {
     private final ExplanationPolicyCatalog policyCatalog;
     private final EnhancedDueDiligenceService eddService;
     private final PromptInjectionGuard injectionGuard;
+    private final com.bank.aml.explanation.ExplanationClaimService claimService;
 
     public ExplanationController(ExplanationWorkspaceService workspaceService,
                                  ExplanationPolicyCatalog policyCatalog,
                                  EnhancedDueDiligenceService eddService,
-                                 PromptInjectionGuard injectionGuard) {
+                                 PromptInjectionGuard injectionGuard,
+                                 com.bank.aml.explanation.ExplanationClaimService claimService) {
         this.workspaceService = workspaceService;
         this.policyCatalog = policyCatalog;
         this.eddService = eddService;
         this.injectionGuard = injectionGuard;
+        this.claimService = claimService;
     }
 
     private String operator() {
@@ -174,6 +178,33 @@ public class ExplanationController {
                 request.resolutionReason(), operator());
     }
 
+    /** Claim 声明（G1-2）：C1~C6 事实状态 + 材料关联（含来源家族）；覆盖式落库并冻结 revision。 */
+    @PutMapping("/units/{unitId}/claims")
+    @PreAuthorize("hasAnyRole('ANALYST','ADMIN')")
+    public List<ExplanationViews.ClaimView> declareClaims(@PathVariable Long caseId,
+                                                          @PathVariable Long unitId,
+                                                          @RequestBody ClaimsRequest request) {
+        return claimService.declareClaims(caseId, unitId,
+                request.claims() == null ? List.of() : request.claims().stream()
+                        .map(item -> new ExplanationClaimService.ClaimDeclaration(
+                                item.claimCode(), item.status(), item.importance(), item.judgement(),
+                                item.methodNote(), item.limitations(), item.notApplicableReason(),
+                                item.links() == null ? List.of() : item.links().stream()
+                                        .map(link -> new ExplanationClaimService.LinkDeclaration(
+                                                link.artifactVersionId(), link.direction(),
+                                                link.location(), link.note()))
+                                        .toList()))
+                        .toList(),
+                operator());
+    }
+
+    /** 读取单元 Claim 视图（含独立来源计数）。 */
+    @GetMapping("/units/{unitId}/claims")
+    public List<ExplanationViews.ClaimView> claims(@PathVariable Long caseId,
+                                                   @PathVariable Long unitId) {
+        return claimService.viewAll(caseId, unitId);
+    }
+
     /** 定向核验建议（v3 计划 §7）：下一动作按优先级排序；只对缺口发起可解释的补件。 */
     @GetMapping("/units/{unitId}/next-actions")
     public List<ExplanationViews.NextActionView> nextActions(@PathVariable Long caseId,
@@ -211,6 +242,17 @@ public class ExplanationController {
     }
 
     public record DraftRequest(int expectedDraftRevision, String draftJson) {
+    }
+
+    public record ClaimLinkRequest(Long artifactVersionId, String direction, String location, String note) {
+    }
+
+    public record ClaimRequest(String claimCode, String status, String importance, String judgement,
+                               String methodNote, String limitations, String notApplicableReason,
+                               List<ClaimLinkRequest> links) {
+    }
+
+    public record ClaimsRequest(List<ClaimRequest> claims) {
     }
 
     public record SubmitRequest(int expectedDraftRevision, String reviewBasisToken, String idempotencyKey) {

@@ -86,6 +86,7 @@ public class ExplanationWorkspaceService implements ExplanationReadinessPort {
     private final EvidenceSourcePort evidenceSourcePort;
     private final com.bank.aml.datasource.CustomerDataPort customerDataPort;
     private final com.bank.aml.investigation.AlertScopeService alertScopeService;
+    private final ExplanationClaimService claimService;
     private final ObjectMapper objectMapper;
     private final Clock clock;
 
@@ -109,14 +110,15 @@ public class ExplanationWorkspaceService implements ExplanationReadinessPort {
                                        EvidenceSourcePort evidenceSourcePort,
                                        com.bank.aml.datasource.CustomerDataPort customerDataPort,
                                        com.bank.aml.investigation.AlertScopeService alertScopeService,
+                                       ExplanationClaimService claimService,
                                        EvidenceAdmissibilityService admissibilityService,
                                        ObjectMapper objectMapper) {
         this(caseRepository, unitRepository, submissionRepository, issueRepository, basisRepository,
                 artifactRepository, verificationRepository, evidenceUseRepository, issueReviewRepository,
                 userAccountRepository, coverageRepository,
                 hypothesisRepository, alertRepository, eddRepository, policyCatalog, auditOutbox,
-                evidenceSourcePort, customerDataPort, alertScopeService, admissibilityService, objectMapper,
-                Clock.systemDefaultZone());
+                evidenceSourcePort, customerDataPort, alertScopeService, claimService,
+                admissibilityService, objectMapper, Clock.systemDefaultZone());
     }
 
     ExplanationWorkspaceService(CaseRepository caseRepository,
@@ -138,6 +140,7 @@ public class ExplanationWorkspaceService implements ExplanationReadinessPort {
                                 EvidenceSourcePort evidenceSourcePort,
                                 com.bank.aml.datasource.CustomerDataPort customerDataPort,
                                 com.bank.aml.investigation.AlertScopeService alertScopeService,
+                                ExplanationClaimService claimService,
                                 EvidenceAdmissibilityService admissibilityService,
                                 ObjectMapper objectMapper,
                                 Clock clock) {
@@ -160,6 +163,7 @@ public class ExplanationWorkspaceService implements ExplanationReadinessPort {
         this.evidenceSourcePort = evidenceSourcePort;
         this.customerDataPort = customerDataPort;
         this.alertScopeService = alertScopeService;
+        this.claimService = claimService;
         this.admissibilityService = admissibilityService;
         this.objectMapper = objectMapper;
         this.clock = clock;
@@ -180,8 +184,10 @@ public class ExplanationWorkspaceService implements ExplanationReadinessPort {
         List<ExplanationViews.EvidenceView> artifacts = artifactRepository
                 .findByCaseIdOrderByCapturedAtAsc(caseId).stream().map(this::evidenceView).toList();
         InvestigationReadinessResult readiness = evaluateReadiness(caseEntity, null);
+        List<ExplanationViews.ClaimView> claims = units.isEmpty() ? List.of()
+                : claimService.viewAll(caseId, units.get(0).unitId());
         return new ExplanationViews.WorkspaceView(caseId, caseEntity.getInvestigationContractVersion(),
-                caseEntity.getCaseFactsEpoch(), false, units, issues, artifacts,
+                caseEntity.getCaseFactsEpoch(), false, units, issues, artifacts, claims,
                 readiness.generalBlockers(), readiness.canExclude(), readiness.canConfirm(),
                 readiness.confirmBlockers(), readiness.excludeBlockers());
     }

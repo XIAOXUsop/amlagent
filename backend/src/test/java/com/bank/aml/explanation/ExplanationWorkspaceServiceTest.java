@@ -87,7 +87,10 @@ class ExplanationWorkspaceServiceTest {
             submissions, issues, bases, artifacts, verifications, evidenceUses,
             issueReviews, userAccounts, coverage, hypotheses,
             alerts, eddRequests, new ExplanationPolicyCatalog(), auditOutbox, evidenceSource,
-            customerData, alertScope, new EvidenceAdmissibilityService(artifacts, verifications),
+            customerData, alertScope,
+            new ExplanationClaimService(
+                    mock(ExplanationClaimRepository.class), mock(ClaimEvidenceLinkRepository.class), artifacts),
+            new EvidenceAdmissibilityService(artifacts, verifications),
             objectMapper, clock);
 
     private final CaseEntity caseEntity = v2Case();
@@ -610,8 +613,10 @@ class ExplanationWorkspaceServiceTest {
         var laterService = new ExplanationWorkspaceService(cases, units, submissions, issues, bases,
                 artifacts, verifications, evidenceUses, issueReviews, userAccounts, coverage, hypotheses,
                 alerts, eddRequests, new ExplanationPolicyCatalog(), auditOutbox, evidenceSource,
-                customerData, alertScope, new EvidenceAdmissibilityService(artifacts, verifications),
-                objectMapper, afterDue);
+                customerData, alertScope,
+                new ExplanationClaimService(
+                        mock(ExplanationClaimRepository.class), mock(ClaimEvidenceLinkRepository.class), artifacts),
+                new EvidenceAdmissibilityService(artifacts, verifications), objectMapper, afterDue);
 
         assertThatThrownBy(() -> laterService.validateReadyForReview(caseEntity,
                 com.bank.aml.review.ReviewDecision.EXCLUDE_FALSE_POSITIVE,

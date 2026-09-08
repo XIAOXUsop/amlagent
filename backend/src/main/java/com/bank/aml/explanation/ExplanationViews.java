@@ -36,6 +36,7 @@ public final class ExplanationViews {
             List<UnitView> units,
             List<IssueView> issues,
             List<EvidenceView> artifacts,
+            List<ClaimView> claims,
             List<String> generalBlockers,
             boolean canExclude,
             boolean canConfirm,
@@ -135,6 +136,33 @@ public final class ExplanationViews {
             String confirmedBy,
             String confirmedAt,
             String rejectedReason
+    ) {
+    }
+
+    /** Claim 视图（G1-2）：状态 + 关联（含来源家族）+ 独立来源计数（RF-20）。 */
+    public record ClaimView(
+            Long claimId,
+            String claimCode,
+            String status,
+            String importance,
+            String judgement,
+            String methodNote,
+            String limitations,
+            String notApplicableReason,
+            int claimRevision,
+            String updatedBy,
+            List<ClaimLinkView> links,
+            int independentSourceCount
+    ) {
+    }
+
+    public record ClaimLinkView(
+            Long linkId,
+            Long artifactVersionId,
+            String direction,
+            String sourceFamily,
+            String location,
+            String note
     ) {
     }
 

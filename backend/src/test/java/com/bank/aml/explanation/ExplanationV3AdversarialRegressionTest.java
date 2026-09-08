@@ -201,6 +201,8 @@ when(verifications.save(any())).thenAnswer(inv -> inv.getArgument(0));
                 verifications, evidenceUses, issueReviews, userAccounts, coverage, hypotheses, alerts, edd,
                 new ExplanationPolicyCatalog(), audit, source, customerData,
                 new com.bank.aml.investigation.AlertScopeService(alerts, mapper),
+                new ExplanationClaimService(
+                        mock(ExplanationClaimRepository.class), mock(ClaimEvidenceLinkRepository.class), artifacts),
                 new EvidenceAdmissibilityService(artifacts, verifications), mapper, CLOCK);
     }
 
