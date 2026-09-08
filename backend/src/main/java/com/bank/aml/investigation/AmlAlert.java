@@ -31,6 +31,35 @@ public class AmlAlert {
     @Column(nullable = false) private LocalDateTime createdAt;
     @Column(nullable = false) private LocalDateTime updatedAt;
 
+    /** 服务器冻结的预警命中交易（G1-1/V34：sourceRecordId JSON 数组；调查进度不定义全集）。 */
+    @Column(name = "trigger_transaction_ids", columnDefinition = "TEXT")
+    private String triggerTransactionIds;
+
+    /** 辅助交易（上下文，不计入命中全集）。 */
+    @Column(name = "auxiliary_transaction_ids", columnDefinition = "TEXT")
+    private String auxiliaryTransactionIds;
+
+    /** 范围来源版本（监测批次/上游版本；变更可检测）。 */
+    @Column(name = "scope_source_version", length = 64)
+    private String scopeSourceVersion;
+
+    @Column(name = "scope_frozen_at")
+    private LocalDateTime scopeFrozenAt;
+
+    @Column(name = "scope_frozen_by", length = 64)
+    private String scopeFrozenBy;
+
+    public String getTriggerTransactionIds() { return triggerTransactionIds; }
+    public void setTriggerTransactionIds(String value) { triggerTransactionIds = value; }
+    public String getAuxiliaryTransactionIds() { return auxiliaryTransactionIds; }
+    public void setAuxiliaryTransactionIds(String value) { auxiliaryTransactionIds = value; }
+    public String getScopeSourceVersion() { return scopeSourceVersion; }
+    public void setScopeSourceVersion(String value) { scopeSourceVersion = value; }
+    public LocalDateTime getScopeFrozenAt() { return scopeFrozenAt; }
+    public void setScopeFrozenAt(LocalDateTime value) { scopeFrozenAt = value; }
+    public String getScopeFrozenBy() { return scopeFrozenBy; }
+    public void setScopeFrozenBy(String value) { scopeFrozenBy = value; }
+
     @PrePersist void onCreate() {
         LocalDateTime now = LocalDateTime.now();
         if (occurredAt == null) occurredAt = now;

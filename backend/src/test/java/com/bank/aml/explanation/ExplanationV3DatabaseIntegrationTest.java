@@ -92,6 +92,8 @@ class ExplanationV3DatabaseIntegrationTest {
     private DemoEvidenceSourceAdapter evidenceSource;
     @Autowired
     private com.bank.aml.datasource.CustomerDataPort customerDataPort;
+    @Autowired
+    private com.bank.aml.investigation.AlertScopeService alertScopeService;
 
     // ==================== RC-02（A6-06）：未取得内容行级落库 + CHECK 生效 ====================
 
@@ -261,6 +263,10 @@ class ExplanationV3DatabaseIntegrationTest {
 
             service.ensureUnitsForLinkedAlerts(saved.getId(),
                     alertRepository.findByCaseIdOrderByOccurredAtAsc(saved.getId()), "analyst");
+            // G1-1/RF-05：服务器冻结预警命中范围（本演示预警命中第一笔来源交易）
+            alertScopeService.freezeScope(alert.getId(),
+                    List.of(firstSourceTransaction().sourceRecordId()), List.of(),
+                    "MONITOR-2026-09", "analyst");
             return saved.getId();
         });
     }

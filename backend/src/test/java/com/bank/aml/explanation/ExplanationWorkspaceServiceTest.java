@@ -79,13 +79,19 @@ class ExplanationWorkspaceServiceTest {
     private final List<ExplanationSubmission> currentSubmissions = new java.util.ArrayList<>();
     private final java.util.concurrent.atomic.AtomicLong idSeq = new java.util.concurrent.atomic.AtomicLong(1);
 
+    private final com.bank.aml.investigation.AmlAlertRepository scopeAlerts =
+            mock(com.bank.aml.investigation.AmlAlertRepository.class);
+    private final com.bank.aml.investigation.AlertScopeService alertScope =
+            new com.bank.aml.investigation.AlertScopeService(alerts, objectMapper);
     private final ExplanationWorkspaceService service = new ExplanationWorkspaceService(cases, units,
             submissions, issues, bases, artifacts, verifications, evidenceUses,
             issueReviews, userAccounts, coverage, hypotheses,
             alerts, eddRequests, new ExplanationPolicyCatalog(), auditOutbox, evidenceSource,
-            customerData, new EvidenceAdmissibilityService(artifacts, verifications), objectMapper, clock);
+            customerData, alertScope, new EvidenceAdmissibilityService(artifacts, verifications),
+            objectMapper, clock);
 
     private final CaseEntity caseEntity = v2Case();
+    private AmlAlert alertA;
     private final AlertExplanationUnit unit = unit(100L, 11L, 31L);
     private final AlertInvestigationCoverage coverageRow = coverage(11L, 31L);
     private final InvestigationHypothesis hypothesis = hypothesis(31L, HypothesisStatus.OPEN, 1);
@@ -152,7 +158,8 @@ class ExplanationWorkspaceServiceTest {
         when(hypotheses.save(any())).thenAnswer(inv -> inv.getArgument(0));
         when(hypotheses.findById(31L)).thenReturn(Optional.of(hypothesis));
         when(hypotheses.findByCaseIdOrderByIdAsc(CASE_ID)).thenReturn(List.of(hypothesis));
-        when(alerts.findById(11L)).thenReturn(Optional.of(alert(11L, "ALERT-A")));
+        this.alertA = alert(11L, "ALERT-A");
+        when(alerts.findById(11L)).thenReturn(Optional.of(alertA));
         when(alerts.findByCaseIdOrderByOccurredAtAsc(CASE_ID)).thenReturn(List.of(alert(11L, "ALERT-A")));
         when(eddRequests.findByCaseIdAndStatusOrderByIdAsc(ArgumentMatchers.eq(CASE_ID), any()))
                 .thenReturn(List.of());
@@ -603,7 +610,8 @@ class ExplanationWorkspaceServiceTest {
         var laterService = new ExplanationWorkspaceService(cases, units, submissions, issues, bases,
                 artifacts, verifications, evidenceUses, issueReviews, userAccounts, coverage, hypotheses,
                 alerts, eddRequests, new ExplanationPolicyCatalog(), auditOutbox, evidenceSource,
-                customerData, new EvidenceAdmissibilityService(artifacts, verifications), objectMapper, afterDue);
+                customerData, alertScope, new EvidenceAdmissibilityService(artifacts, verifications),
+                objectMapper, afterDue);
 
         assertThatThrownBy(() -> laterService.validateReadyForReview(caseEntity,
                 com.bank.aml.review.ReviewDecision.EXCLUDE_FALSE_POSITIVE,
@@ -694,6 +702,7 @@ class ExplanationWorkspaceServiceTest {
         ArrayNode allocations = (ArrayNode) draft.path("scope").path("allocations");
         allocations.removeAll();
         allocations.addObject().put("transactionId", "T-1001").put("amount", "999.00");
+        allocations.addObject().put("transactionId", "T-1002").put("amount", "120000.00");
         unit.setDraftJson(mapper.writeValueAsString(draft));
         unit.setDraftRevision(1);
 
@@ -850,6 +859,7 @@ class ExplanationWorkspaceServiceTest {
     private ObjectNode groupPaymentDraft(ObjectMapper mapper, String c3Status, String c4Status,
                                          String outcome, String authorityLimit,
                                          java.util.List<String> coveredTxs) throws Exception {
+
         ObjectNode draft = mapper.createObjectNode();
         ObjectNode policy = draft.putObject("policy");
         policy.put("businessRole", "境内贸易企业：自营商品采购与销售，销售货款由买方集团统一代付");
@@ -1038,15 +1048,20 @@ class ExplanationWorkspaceServiceTest {
         policy.put("payerMatchesContractBuyer", true);
         policy.put("payeeMatchesContractSeller", true);
         ObjectNode scope = draft.putObject("scope");
-        scope.putArray("reviewedTransactionIds").add("T-1001");
+        ArrayNode reviewed = scope.putArray("reviewedTransactionIds");
+        reviewed.add("T-1001");
+        reviewed.add("T-1002");
         scope.put("scopeEnumerationNote", "以监测系统 9 月冻结命中清单为准，逐笔核对交易流水后枚举");
         ObjectNode amounts = scope.putObject("transactionAmounts");
         amounts.put("T-1001", "320000.00");
+        amounts.put("T-1002", "120000.00");
         ArrayNode allocations = scope.putArray("allocations");
         ObjectNode allocation = allocations.addObject();
         allocation.put("transactionId", "T-1001");
         allocation.put("orderRef", "SO-2026-001");
         allocation.put("amount", "320000.00");
+        allocations.addObject().put("transactionId", "T-1002").put("orderRef", "SO-2026-002")
+                .put("amount", "120000.00");
         ObjectNode questions = draft.putObject("questions");
         addQuestion(questions, "Q1", "SATISFIED", "客户为成立 3 年的贸易企业，结算规模与近 12 个月申报营收相符",
                 "KYC 档案第 4 页 / 税务申报摘要", "OBSERVED_FACT", 1L);
@@ -1084,6 +1099,13 @@ class ExplanationWorkspaceServiceTest {
     }
 
     private ObjectNode prepayDraft(ObjectMapper mapper, String deliveryDueDate) throws Exception {
+        // 预付场景的预警命中集含预付款 T-2001（扩展默认两笔冻结集）
+        try {
+            alertA.setTriggerTransactionIds(objectMapper.writeValueAsString(
+                    List.of("T-1001", "T-1002", "T-2001")));
+        } catch (Exception e) {
+            throw new IllegalStateException(e);
+        }
         ObjectNode draft = mapper.createObjectNode();
         ObjectNode policy = draft.putObject("policy");
         policy.put("businessRole", "境内制造企业：向固定供应商预付采购原材料");
@@ -1093,15 +1115,22 @@ class ExplanationWorkspaceServiceTest {
         policy.put("contractNumber", "PO-2026-088");
         policy.put("deliveryDueDate", deliveryDueDate);
         ObjectNode scope = draft.putObject("scope");
-        scope.putArray("reviewedTransactionIds").add("T-2001");
-        scope.put("scopeEnumerationNote", "以合同 PO-2026-088 预付条款对应的付款流水逐笔枚举");
+        ArrayNode reviewed = scope.putArray("reviewedTransactionIds");
+        reviewed.add("T-1001");
+        reviewed.add("T-1002");
+        reviewed.add("T-2001");
+        scope.put("scopeEnumerationNote", "以监测冻结命中清单与合同 PO-2026-088 预付条款逐笔枚举");
         ObjectNode amounts = scope.putObject("transactionAmounts");
+        amounts.put("T-1001", "320000.00");
+        amounts.put("T-1002", "120000.00");
         amounts.put("T-2001", "500000.00");
         ArrayNode allocations = scope.putArray("allocations");
-        ObjectNode allocation = allocations.addObject();
-        allocation.put("transactionId", "T-2001");
-        allocation.put("orderRef", "PO-2026-088");
-        allocation.put("amount", "500000.00");
+        allocations.addObject().put("transactionId", "T-2001").put("orderRef", "PO-2026-088")
+                .put("amount", "500000.00");
+        allocations.addObject().put("transactionId", "T-1001").put("orderRef", "SO-2026-001")
+                .put("amount", "320000.00");
+        allocations.addObject().put("transactionId", "T-1002").put("orderRef", "SO-2026-002")
+                .put("amount", "120000.00");
         ObjectNode questions = draft.putObject("questions");
         addQuestion(questions, "Q1", "SATISFIED", "预付安排与近两年采购模式一致（同供应商历史预付记录）",
                 "采购台账", "OBSERVED_FACT", 1L);
@@ -1183,6 +1212,14 @@ class ExplanationWorkspaceServiceTest {
         entity.setCaseId(CASE_ID);
         entity.setStatus(AlertStatus.LINKED);
         entity.setRevision(0);
+        // G1-1/RF-05：默认冻结命中集为两笔货款（预付场景在测试内扩展为含 T-2001）
+        try {
+            entity.setTriggerTransactionIds(objectMapper.writeValueAsString(
+                    List.of("T-1001", "T-1002")));
+            entity.setScopeSourceVersion("MONITOR-2026-09");
+        } catch (Exception e) {
+            throw new IllegalStateException(e);
+        }
         return entity;
     }
 

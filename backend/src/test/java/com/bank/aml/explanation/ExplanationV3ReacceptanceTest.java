@@ -205,6 +205,13 @@ when(verifications.save(any())).thenAnswer(inv -> {
         alertRow.setExternalAlertId("ALERT-A");
         alertRow.setCaseId(CASE_ID);
         alertRow.setStatus(com.bank.aml.investigation.AlertStatus.LINKED);
+        // G1-1/RF-05：冻结命中范围（含草稿使用的交易；范围缺口用例单独覆盖）
+        try {
+            alertRow.setTriggerTransactionIds(mapper.writeValueAsString(java.util.List.of("T-1001", "T-1002")));
+            alertRow.setScopeSourceVersion("MONITOR-2026-09");
+        } catch (Exception e) {
+            throw new IllegalStateException(e);
+        }
         when(alerts.findById(11L)).thenReturn(Optional.of(alertRow));
         when(alerts.findByCaseIdOrderByOccurredAtAsc(CASE_ID)).thenReturn(List.of(alertRow));
         when(edd.findByCaseIdAndStatusOrderByIdAsc(ArgumentMatchers.eq(CASE_ID), any()))
@@ -213,6 +220,7 @@ when(verifications.save(any())).thenAnswer(inv -> {
         service = new ExplanationWorkspaceService(cases, units, submissions, issues, bases, artifacts,
                 verifications, evidenceUses, issueReviews, userAccounts, coverage, hypotheses, alerts, edd,
                 new ExplanationPolicyCatalog(), audit, source, customerData,
+                new com.bank.aml.investigation.AlertScopeService(alerts, mapper),
                 new EvidenceAdmissibilityService(artifacts, verifications), mapper, CLOCK);
     }
 
@@ -304,6 +312,63 @@ when(verifications.save(any())).thenAnswer(inv -> {
             }
         }
         assertThat(ExplanationPolicyCatalog.POLICY_VERSION).isNotBlank();
+    }
+
+    // ==================== RF-05（G1-1）：服务器冻结预警范围 ====================
+
+    /** 此前：客户端删去一笔命中交易 → 范围声明自洽即可提交。 */
+    @Test
+    void removingHitTransactionFromScopeIsRejectedByServerScope() throws Exception {
+        prepareVerifiedMaterial();
+        // alert 11 冻结集含 T-1001/T-1002；draft 只声明 T-1001 → T-1002 缺口
+        ObjectNode draft = explainedSettlementDraft(1L);
+        ((ArrayNode) draft.path("scope").path("reviewedTransactionIds")).remove(1);
+        ((ObjectNode) draft.path("scope").path("transactionAmounts")).remove("T-1002");
+        ArrayNode allocations = (ArrayNode) draft.path("scope").path("allocations");
+        allocations.remove(1);
+        unit.setDraftJson(mapper.writeValueAsString(draft));
+        assertThatThrownBy(() -> service.submitUnit(CASE_ID, 100L, 0,
+                service.reviewBasisToken(CASE_ID), "RF-05", "analyst"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("T-1002")
+                .hasMessageContaining("删去命中交易不能隐去缺口");
+    }
+
+    /** 范围未冻结 → 范围未知；EXPLAINED 被拒，UNRESOLVED 可保留调查现状（记录未知，不冒充完整）。 */
+    @Test
+    void unfrozenScopeBlocksExplainedButAllowsUnresolved() throws Exception {
+        prepareVerifiedMaterial();
+        // 解除 alert 11 冻结（模拟来源无法枚举/尚未冻结）
+        try {
+            com.bank.aml.investigation.AmlAlert unfrozen = new com.bank.aml.investigation.AmlAlert();
+            setId(unfrozen, 11L);
+            unfrozen.setExternalAlertId("ALERT-A");
+            unfrozen.setCaseId(CASE_ID);
+            unfrozen.setStatus(com.bank.aml.investigation.AlertStatus.LINKED);
+            when(alerts.findById(11L)).thenReturn(java.util.Optional.of(unfrozen));
+        } catch (Exception e) {
+            throw new IllegalStateException(e);
+        }
+        ObjectNode draft = explainedSettlementDraft(1L);
+        unit.setDraftJson(mapper.writeValueAsString(draft));
+        assertThatThrownBy(() -> service.submitUnit(CASE_ID, 100L, 0,
+                service.reviewBasisToken(CASE_ID), "RF-05-U", "analyst"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("尚未冻结");
+    }
+
+    /** 正常路径：范围冻结 API + 完整覆盖的提交成功（防"一律拒绝"）。 */
+    @Test
+    void frozenScopeWithFullCoveragePasses() {
+        com.bank.aml.investigation.AlertScopeService.ScopeSnapshot snapshot =
+                new com.bank.aml.investigation.AlertScopeService(alerts, mapper)
+                        .freezeScope(11L, List.of("T-1001", "T-1002"), List.of(), "MONITOR-2026-09", "analyst");
+        assertThat(snapshot.triggerTransactionIds()).containsExactly("T-1001", "T-1002");
+        // 空集冻结被拒
+        assertThatThrownBy(() -> new com.bank.aml.investigation.AlertScopeService(alerts, mapper)
+                .freezeScope(11L, List.of(), List.of(), "v2", "analyst"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("不能冻结空集冒充完整");
     }
 
     // ==================== RC-05（A6-02）：授权必填 + 资金腿全覆盖 ====================
@@ -578,11 +643,12 @@ when(verifications.save(any())).thenAnswer(inv -> {
         policy.put("payerMatchesContractBuyer", true);
         policy.put("payeeMatchesContractSeller", true);
         ObjectNode scope = draft.putObject("scope");
-        scope.putArray("reviewedTransactionIds").add("T-1001");
+        scope.putArray("reviewedTransactionIds").add("T-1001").add("T-1002");
         scope.put("scopeEnumerationNote", "以监测系统冻结命中清单为准，逐笔核对交易流水后枚举");
-        scope.putObject("transactionAmounts").put("T-1001", "320000.00");
-        scope.putArray("allocations").addObject().put("transactionId", "T-1001")
-                .put("amount", "320000.00");
+        scope.putObject("transactionAmounts").put("T-1001", "320000.00").put("T-1002", "120000.00");
+        ArrayNode allocations = scope.putArray("allocations");
+        allocations.addObject().put("transactionId", "T-1001").put("amount", "320000.00");
+        allocations.addObject().put("transactionId", "T-1002").put("amount", "120000.00");
         ObjectNode questions = draft.putObject("questions");
         for (String code : new String[]{"Q1", "Q2", "Q3", "Q4", "Q5", "Q6"}) {
             ObjectNode question = questions.putObject(code);
@@ -659,11 +725,12 @@ when(verifications.save(any())).thenAnswer(inv -> {
         policy.put("contractNumber", "PO-2026-088");
         policy.put("deliveryDueDate", deliveryDueDate);
         ObjectNode scope = draft.putObject("scope");
-        scope.putArray("reviewedTransactionIds").add("T-1001");
-        scope.put("scopeEnumerationNote", "以合同预付条款对应的付款流水逐笔枚举");
-        scope.putObject("transactionAmounts").put("T-1001", "320000.00");
-        scope.putArray("allocations").addObject().put("transactionId", "T-1001")
-                .put("amount", "320000.00");
+        scope.putArray("reviewedTransactionIds").add("T-1001").add("T-1002");
+        scope.put("scopeEnumerationNote", "以监测冻结命中清单与合同预付条款逐笔枚举");
+        scope.putObject("transactionAmounts").put("T-1001", "320000.00").put("T-1002", "120000.00");
+        ArrayNode allocations2 = scope.putArray("allocations");
+        allocations2.addObject().put("transactionId", "T-1001").put("amount", "320000.00");
+        allocations2.addObject().put("transactionId", "T-1002").put("amount", "120000.00");
         ObjectNode questions = draft.putObject("questions");
         for (String code : new String[]{"Q1", "Q2", "Q3", "Q4", "Q5", "Q6"}) {
             ObjectNode question = questions.putObject(code);

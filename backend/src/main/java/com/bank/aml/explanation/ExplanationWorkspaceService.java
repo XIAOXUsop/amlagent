@@ -85,6 +85,7 @@ public class ExplanationWorkspaceService implements ExplanationReadinessPort {
     private final AuditOutboxService auditOutbox;
     private final EvidenceSourcePort evidenceSourcePort;
     private final com.bank.aml.datasource.CustomerDataPort customerDataPort;
+    private final com.bank.aml.investigation.AlertScopeService alertScopeService;
     private final ObjectMapper objectMapper;
     private final Clock clock;
 
@@ -107,13 +108,14 @@ public class ExplanationWorkspaceService implements ExplanationReadinessPort {
                                        AuditOutboxService auditOutbox,
                                        EvidenceSourcePort evidenceSourcePort,
                                        com.bank.aml.datasource.CustomerDataPort customerDataPort,
+                                       com.bank.aml.investigation.AlertScopeService alertScopeService,
                                        EvidenceAdmissibilityService admissibilityService,
                                        ObjectMapper objectMapper) {
         this(caseRepository, unitRepository, submissionRepository, issueRepository, basisRepository,
                 artifactRepository, verificationRepository, evidenceUseRepository, issueReviewRepository,
                 userAccountRepository, coverageRepository,
                 hypothesisRepository, alertRepository, eddRepository, policyCatalog, auditOutbox,
-                evidenceSourcePort, customerDataPort, admissibilityService, objectMapper,
+                evidenceSourcePort, customerDataPort, alertScopeService, admissibilityService, objectMapper,
                 Clock.systemDefaultZone());
     }
 
@@ -135,6 +137,7 @@ public class ExplanationWorkspaceService implements ExplanationReadinessPort {
                                 AuditOutboxService auditOutbox,
                                 EvidenceSourcePort evidenceSourcePort,
                                 com.bank.aml.datasource.CustomerDataPort customerDataPort,
+                                com.bank.aml.investigation.AlertScopeService alertScopeService,
                                 EvidenceAdmissibilityService admissibilityService,
                                 ObjectMapper objectMapper,
                                 Clock clock) {
@@ -156,6 +159,7 @@ public class ExplanationWorkspaceService implements ExplanationReadinessPort {
         this.auditOutbox = auditOutbox;
         this.evidenceSourcePort = evidenceSourcePort;
         this.customerDataPort = customerDataPort;
+        this.alertScopeService = alertScopeService;
         this.admissibilityService = admissibilityService;
         this.objectMapper = objectMapper;
         this.clock = clock;
@@ -1676,6 +1680,8 @@ public class ExplanationWorkspaceService implements ExplanationReadinessPort {
                 }
             });
 
+        // criticalUnknown 提前声明：范围未知（G1-1）与六问题（§6.1）都会设置
+        boolean criticalUnknown = false;
         // 金额与对账：Decimal、两位小数、分配合计与交易金额差 0.00（§11.2）
         JsonNode amounts = scope.get("transactionAmounts");
         JsonNode allocations = scope.get("allocations");
@@ -1734,12 +1740,33 @@ public class ExplanationWorkspaceService implements ExplanationReadinessPort {
             }
         }
 
+        // G1-1/RF-05：服务器冻结的预警命中范围缺口校验——
+        // 客户端 reviewedTransactionIds 只表达调查进度；冻结全集中的命中交易必须被覆盖。
+        List<String> scopeGaps = alertScopeService.scopeGaps(unit.getAlertId(), uniqueReviewed);
+        if (!scopeGaps.isEmpty() && scopeGaps.get(0).startsWith("预警 ") && scopeGaps.size() == 1
+                && scopeGaps.get(0).contains("尚未由服务器冻结")) {
+            // 范围未知（未冻结）：保留问题路径——登记 OPEN 范围缺口问题，阻断 EXPLAINED 但允许 UNRESOLVED
+            ensureIssue(caseEntity.getId(), unit.getId(), "SCOPE_UNFROZEN:" + unit.getId(),
+                    IssueSeverity.DECISION_CRITICAL, null,
+                    "预警命中范围尚未由服务器冻结（RF-05）：需先枚举并冻结命中交易全集，"
+                            + "调查进度不能定义预警全集。", "system");
+            if (outcome == ExplanationOutcome.EXPLAINED) {
+                throw new IllegalArgumentException("预警 " + unit.getAlertId()
+                        + " 的命中范围尚未冻结，不能建议 EXPLAINED；请先完成范围冻结（RF-05）");
+            }
+            criticalUnknown = true;
+        } else if (!scopeGaps.isEmpty()) {
+            // 冻结后仍有缺口：客户端删去命中交易不能隐去（RF-05 主断言）
+            throw new IllegalArgumentException("命中范围缺口：服务器冻结的命中交易未被解释范围覆盖："
+                    + String.join("、", scopeGaps) + "；删去命中交易不能隐去缺口（RF-05），"
+                    + "需补充对应交易或申请来源更正");
+        }
+
         // 六问题
         JsonNode questions = draft.get("questions");
         if (questions == null || !questions.isObject()) {
             throw new IllegalArgumentException("草稿缺少六问题（questions）");
         }
-        boolean criticalUnknown = false;
         List<Long> artifactIds = new ArrayList<>();
         List<Long> issueIds = new ArrayList<>();
         for (String code : new String[]{"Q1", "Q2", "Q3", "Q4", "Q5", "Q6"}) {

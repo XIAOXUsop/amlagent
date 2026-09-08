@@ -12,6 +12,7 @@ import com.bank.aml.review.EnhancedDueDiligenceRequestRepository;
 import com.bank.aml.review.EnhancedDueDiligenceStatus;
 import com.bank.aml.review.EnhancedDueDiligenceRequest;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentMatchers;
@@ -61,6 +62,7 @@ class ExplanationV3AdversarialRegressionTest {
     private com.bank.aml.datasource.CustomerDataPort customerData =
             mock(com.bank.aml.datasource.CustomerDataPort.class);
     private ObjectMapper mapper = new ObjectMapper();
+    private com.bank.aml.investigation.AmlAlert alertRow;
 
     private final CaseEntity caseEntity = v2Case();
     private final AlertExplanationUnit unit = unit(100L, 11L);
@@ -179,18 +181,26 @@ when(verifications.save(any())).thenAnswer(inv -> inv.getArgument(0));
         when(coverage.findByAlertId(11L)).thenReturn(Optional.empty());
         when(hypotheses.save(any())).thenAnswer(inv -> inv.getArgument(0));
         when(hypotheses.findByCaseIdOrderByIdAsc(CASE_ID)).thenReturn(List.of());
-        when(alerts.findById(11L)).thenReturn(Optional.empty());
-        com.bank.aml.investigation.AmlAlert alertRow = new com.bank.aml.investigation.AmlAlert();
+        alertRow = new com.bank.aml.investigation.AmlAlert();
         setId(alertRow, 11L);
         alertRow.setExternalAlertId("ALERT-A");
         alertRow.setCaseId(CASE_ID);
         alertRow.setStatus(com.bank.aml.investigation.AlertStatus.LINKED);
+        // G1-1/RF-05：冻结命中范围（含草稿使用的交易；范围缺口用例单独覆盖）
+        try {
+            alertRow.setTriggerTransactionIds(mapper.writeValueAsString(java.util.List.of("T-1001", "T-1002")));
+            alertRow.setScopeSourceVersion("MONITOR-2026-09");
+        } catch (Exception e) {
+            throw new IllegalStateException(e);
+        }
         when(alerts.findByCaseIdOrderByOccurredAtAsc(CASE_ID)).thenReturn(List.of(alertRow));
+        when(alerts.findById(11L)).thenReturn(Optional.of(alertRow));
         when(edd.findByCaseIdAndStatusOrderByIdAsc(ArgumentMatchers.eq(CASE_ID), any())).thenReturn(List.of());
 
         service = new ExplanationWorkspaceService(cases, units, submissions, issues, bases, artifacts,
                 verifications, evidenceUses, issueReviews, userAccounts, coverage, hypotheses, alerts, edd,
                 new ExplanationPolicyCatalog(), audit, source, customerData,
+                new com.bank.aml.investigation.AlertScopeService(alerts, mapper),
                 new EvidenceAdmissibilityService(artifacts, verifications), mapper, CLOCK);
     }
 
@@ -333,7 +343,9 @@ when(verifications.save(any())).thenAnswer(inv -> inv.getArgument(0));
         AlertExplanationUnit unitB = unit(101L, 12L);
         when(units.findByIdAndCaseId(101L, CASE_ID)).thenReturn(Optional.of(unitB));
         when(units.findById(101L)).thenReturn(Optional.of(unitB));
-        saveGroupPaymentDraft(unitB, List.of("T-1001"));
+        // 预警 12 的冻结命中集与 11 相同（共享命中的同一批交易）
+        when(alerts.findById(12L)).thenReturn(java.util.Optional.of(alertRow));
+        saveGroupPaymentDraft(unitB, List.of("T-1001", "T-1002"));
         ExplanationViews.SubmissionResult unitBResult = service.submitUnit(CASE_ID, 101L, 0,
                 service.reviewBasisToken(CASE_ID), "DUP-B", "analyst");
         assertThat(unitBResult.outcome()).isEqualTo(ExplanationOutcome.EXPLAINED);
@@ -365,11 +377,12 @@ when(verifications.save(any())).thenAnswer(inv -> inv.getArgument(0));
         policy.put("payeeMatchesContractSeller", true);
         policy.put("groupRelationshipStatus", "GROUP_RELATIONSHIP_CONFIRMED");
         ObjectNode scope = draft.putObject("scope");
-        scope.putArray("reviewedTransactionIds").add("T-1001");
+        scope.putArray("reviewedTransactionIds").add("T-1001").add("T-1002");
         scope.put("scopeEnumerationNote", "以监测系统冻结命中清单为准，逐笔核对交易流水后枚举");
-        scope.putObject("transactionAmounts").put("T-1001", "320000.00");
-        scope.putArray("allocations").addObject().put("transactionId", "T-1001")
-                .put("amount", "320000.00");
+        scope.putObject("transactionAmounts").put("T-1001", "320000.00").put("T-1002", "120000.00");
+        ArrayNode allocations = scope.putArray("allocations");
+        allocations.addObject().put("transactionId", "T-1001").put("amount", "320000.00");
+        allocations.addObject().put("transactionId", "T-1002").put("amount", "120000.00");
         ObjectNode claims = draft.putObject("claims");
         claims.putObject("C1").put("status", "SUPPORTED")
                 .put("judgement", "核心流水付款账户归属丙集团公司，KYC 档案确认同属一集团");
@@ -408,10 +421,12 @@ when(verifications.save(any())).thenAnswer(inv -> inv.getArgument(0));
         policy.put("payerMatchesContractBuyer", true);
         policy.put("payeeMatchesContractSeller", true);
         ObjectNode scope = draft.putObject("scope");
-        scope.putArray("reviewedTransactionIds").add("T-1001");
+        scope.putArray("reviewedTransactionIds").add("T-1001").add("T-1002");
         scope.put("scopeEnumerationNote", "以监测系统冻结命中清单为准，逐笔核对交易流水后枚举");
-        scope.putObject("transactionAmounts").put("T-1001", "320000.00");
-        scope.putArray("allocations").addObject().put("transactionId", "T-1001").put("amount", "320000.00");
+        scope.putObject("transactionAmounts").put("T-1001", "320000.00").put("T-1002", "120000.00");
+        ArrayNode allocations = scope.putArray("allocations");
+        allocations.addObject().put("transactionId", "T-1001").put("amount", "320000.00");
+        allocations.addObject().put("transactionId", "T-1002").put("amount", "120000.00");
         ObjectNode questions = draft.putObject("questions");
         for (String code : new String[]{"Q1", "Q2", "Q3", "Q4", "Q5", "Q6"}) {
             ObjectNode question = questions.putObject(code);
