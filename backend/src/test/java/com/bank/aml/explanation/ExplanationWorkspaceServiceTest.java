@@ -139,6 +139,9 @@ class ExplanationWorkspaceServiceTest {
             return Optional.ofNullable(artifactStore.get(caseId + "|" + key));
         });
         when(artifacts.findByIdAndCaseId(1L, CASE_ID)).thenReturn(Optional.of(artifact(1L)));
+        // A6-01：SATISFIED 引用的材料必须有核验记录（材料 1 已核验 CONFIRMED）
+        when(verifications.findByArtifactVersionIdOrderByEventTimeAsc(1L)).thenReturn(List.of(
+                verificationEvent(1L, "CONFIRMED")));
         when(coverage.save(any())).thenAnswer(inv -> inv.getArgument(0));
         when(coverage.findByAlertId(11L)).thenReturn(Optional.of(coverageRow));
         when(hypotheses.save(any())).thenAnswer(inv -> inv.getArgument(0));
@@ -612,7 +615,34 @@ class ExplanationWorkspaceServiceTest {
     void prepayNotYetDuePassesFinalExclusionWithClock() {
         saveDraft(prepayDraft("2026-12-01"), 0);
         service.submitUnit(CASE_ID, 100L, 1, service.reviewBasisToken(CASE_ID), "A5-06-OK", "analyst");
-        // 提交时与最终复核都在交期内（Clock 固定 2026-09-10）→ 排除可行
+        // A6-03/RC-07：未到期 ≠ 已安排——无承接任务时最终排除被阻断
+        assertThatThrownBy(() -> service.validateReadyForReview(caseEntity,
+                com.bank.aml.review.ReviewDecision.EXCLUDE_FALSE_POSITIVE,
+                "reviewer-b", service.reviewBasisToken(CASE_ID)))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("未到期不等于已安排");
+        // 有合格承接任务（OPEN CONTINUING_REVIEW + 有效承办人 + 未来期限 + 完成标准）→ 排除可行
+        com.bank.aml.security.UserAccount assignee = new com.bank.aml.security.UserAccount();
+        assignee.setUsername("analyst");
+        assignee.setRole("ANALYST");
+        assignee.setEnabled(true);
+        when(userAccounts.findByUsername("analyst")).thenReturn(Optional.of(assignee));
+        EnhancedDueDiligenceRequest continuing = new EnhancedDueDiligenceRequest();
+        setId(continuing, 66L);
+        continuing.setCaseId(CASE_ID);
+        continuing.setRoundNo(2);
+        continuing.setReasonCode("CONTINUING_REVIEW");
+        continuing.setRequiredItemsJson("[\"TRANSACTION_PURPOSE\"]");
+        continuing.setRequestedBy("reviewer-b");
+        continuing.setRequestedAt(java.time.LocalDateTime.now(clock));
+        continuing.setAssignedTo("analyst");
+        continuing.setAssignedUnit("调查一组");
+        continuing.setDueAt(java.time.LocalDateTime.now(clock).plusDays(30));
+        continuing.setStatus(EnhancedDueDiligenceStatus.OPEN);
+        continuing.setPurpose(EddTaskPurpose.CONTINUING_REVIEW);
+        continuing.setCompletionStandard("2026-12-01 交付核验：核对签收记录与入账，观察与限制已记录");
+        when(eddRequests.findByCaseIdAndStatusOrderByIdAsc(ArgumentMatchers.eq(CASE_ID), any()))
+                .thenReturn(List.of(continuing));
         service.validateReadyForReview(caseEntity,
                 com.bank.aml.review.ReviewDecision.EXCLUDE_FALSE_POSITIVE,
                 "reviewer-b", service.reviewBasisToken(CASE_ID));
@@ -844,6 +874,7 @@ class ExplanationWorkspaceServiceTest {
                 .put("judgement", "两笔收款在授权范围内履行乙的付款义务，逐笔分配一致");
         ObjectNode authority = draft.putObject("authority");
         if (authorityLimit != null) {
+            authority.put("authorityRef", "AU-01");
             authority.put("limitAmount", authorityLimit);
             ArrayNode covered = authority.putArray("coveredTransactionIds");
             coveredTxs.forEach(covered::add);
@@ -888,13 +919,29 @@ class ExplanationWorkspaceServiceTest {
         unit.setDraftJson(mapper.writeValueAsString(draft));
         unit.setDraftRevision(1);
 
+        // A6-02/RC-05：授权只覆盖 T-1001（320,000），T-1002（120,000）缺口稳定阻断；
+        // 缺口先于额度比较暴露——不能靠缩小覆盖集合隐去未授权金额。
         assertThatThrownBy(() -> service.submitUnit(CASE_ID, 100L, 1,
                 service.reviewBasisToken(CASE_ID), "TP-10", "analyst"))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("TP-10")
+                .hasMessageContaining("T-1002")
+                .hasMessageContaining("未被授权覆盖");
+    }
+
+    /** TP-10 额度语义：全覆盖集合但授权额度不足 → 超出部分缺口阻断。 */
+    @Test
+    void authorityLimitExceededEvenWithFullCoverage() throws Exception {
+        ObjectMapper mapper = new ObjectMapper();
+        ObjectNode draft = groupPaymentDraft(mapper, "SUPPORTED", "SUPPORTED", "EXPLAINED",
+                "400000.00", List.of("T-1001", "T-1002"));
+        unit.setDraftJson(mapper.writeValueAsString(draft));
+        unit.setDraftRevision(1);
+
+        assertThatThrownBy(() -> service.submitUnit(CASE_ID, 100L, 1,
+                service.reviewBasisToken(CASE_ID), "TP-10-LIMIT", "analyst"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("低于已覆盖交易合计")
                 .hasMessageContaining("不得整笔解释成立");
-        verify(issues).save(ArgumentMatchers.argThat(issue -> issue instanceof ExplanationIssue i
-                && i.getIssueKey().startsWith("AUTHORITY_LIMIT_EXCEEDED")));
     }
 
     /** TP-11：C4 UNRESOLVED（第二笔未被授权覆盖）→ 不得 EXPLAINED；缺口登记。 */
@@ -1158,6 +1205,20 @@ class ExplanationWorkspaceServiceTest {
         entity.setIntegrityStatus("MATCH");
         entity.setCapturedBy("analyst");
         return entity;
+    }
+
+    /** A6-01：SATISFIED 引用的材料必须有核验记录。 */
+    private EvidenceVerificationEvent verificationEvent(Long artifactVersionId, String result) {
+        EvidenceVerificationEvent event = new EvidenceVerificationEvent();
+        setId(event, idSeq.incrementAndGet() + 9000);
+        event.setCaseId(CASE_ID);
+        event.setArtifactVersionId(artifactVersionId);
+        event.setMethod("INDEPENDENT_SOURCE_CHECK");
+        event.setObservedFacts("来源内容与业务事实核对一致，观察与限制已记录");
+        event.setResult(result);
+        event.setActor("verifier-x");
+        event.setEventTime(java.time.LocalDateTime.now(clock));
+        return event;
     }
 
     /** 实体主键无 setter：测试用反射设置。 */

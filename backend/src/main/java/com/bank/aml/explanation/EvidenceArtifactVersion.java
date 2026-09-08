@@ -40,8 +40,8 @@ public class EvidenceArtifactVersion {
     @Column(length = 255)
     private String contentLocation;
 
-    /** 实际取得内容哈希。 */
-    @Column(nullable = false, length = 64)
+    /** 实际取得内容哈希；未取得内容（NOT_FOUND/UNAVAILABLE/FORBIDDEN）时为 null（A6-06/V31：列已放宽 + CHECK 保证 RESOLVED 必有摘要）。 */
+    @Column(length = 64)
     private String contentSha256;
 
     /** 来源声称的内容哈希；与实际不一致 → integrity=MISMATCH（完整性问题）。 */

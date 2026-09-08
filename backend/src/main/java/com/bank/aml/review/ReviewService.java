@@ -102,9 +102,11 @@ public class ReviewService {
             throw new WorkflowStateConflictException(caseId, c.getStatus(),
                     java.util.Set.of(CaseStatus.HOLD));
         }
-        // A5-07 顺序修复：先验证用户看到的依据令牌（基于变更前事实），再做任何任务变更；
-        // 接续改变 OPEN 任务集合后不得用"变更后 token"回填校验。
-        if (v2Case) {
+        // A6-04/RC-01：只有最终确认/排除强制最终依据 token；REQUEST_ENHANCED_DUE_DILIGENCE
+        // 是补齐尚不足调查的动作，豁免"最终依据 token"（其页面协议本就不取号），
+        // 但保留案件锁、expectedReviewRevision 条件更新、角色与任务状态检查。
+        // 补件请求不能要求调查已满足最终决定条件，因此也不走决策表校验。
+        if (v2Case && normalizedDecision != ReviewDecision.REQUEST_ENHANCED_DUE_DILIGENCE) {
             explanationWorkspaceService.validateReviewBasisToken(caseId, reviewBasisToken);
         }
         // v2 义务接续在同一事务内完成（§8.2.2）：创建 CONTINUING_REVIEW + 接替被引用的

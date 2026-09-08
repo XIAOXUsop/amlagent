@@ -354,6 +354,18 @@ public class ExplanationWorkspaceService implements ExplanationReadinessPort {
             artifact.setIntegrityStatus("NOT_CHECKED");
         }
         EvidenceArtifactVersion saved = artifactRepository.save(artifact);
+        // 持久化不变式（A6-06/RC-02）：RESOLVED 必须有服务器计算的摘要；未取得内容必须无摘要。
+        // 不用伪造摘要凑非空约束；冲突立即暴露而不是等真实 MySQL 才失败。
+        if ("RESOLVED".equals(saved.getAvailability())) {
+            if (saved.getContentSha256() == null
+                    || !saved.getContentSha256().matches("[a-f0-9]{64}")) {
+                throw new IllegalStateException("RESOLVED 材料缺少服务器计算的摘要（持久化不变式冲突）："
+                        + artifactKey);
+            }
+        } else if (saved.getContentSha256() != null) {
+            throw new IllegalStateException("未取得内容的材料不应有摘要（持久化不变式冲突）："
+                    + artifactKey + " 状态 " + saved.getAvailability());
+        }
         // 来源不可用/不存在：登记问题提示人工，不得就此形成最终决定。
         if (!"RESOLVED".equals(saved.getAvailability())) {
             ensureIssue(caseId, null, "SOURCE_UNAVAILABLE:" + artifactKey + ":v1",
@@ -417,6 +429,18 @@ public class ExplanationWorkspaceService implements ExplanationReadinessPort {
                     IssueSeverity.INTEGRITY_BLOCKER, null,
                     "核验发现材料内容与独立来源不一致（方法 " + normalizedMethod + "），不得作为已核实依据。",
                     actor);
+        }
+        // A6-05/RC-06：核验更正/撤销/失去支持（MISMATCH/UNRESOLVED）→ 依赖该材料版本的
+        // 采用提交置 STALE（与材料内容变更同一失效通道）；刷新 token 只能更新版本，不能把事实缺口消掉。
+        if ("MISMATCH".equals(normalizedResult) || "UNRESOLVED".equals(normalizedResult)) {
+            List<Long> affected = staleSubmissionsUsingArtifact(caseId, artifactVersionId,
+                    "VERIFICATION_LOST_SUPPORT:" + saved.getId() + ":" + normalizedResult, actor);
+            if (!affected.isEmpty()) {
+                auditOutbox.enqueue("EXPLANATION_STALE:" + caseId + ":" + artifactVersionId,
+                        actor, "EXPLANATION_SUBMISSION_STALE", "CASE", String.valueOf(caseId),
+                        "reason=verification_" + normalizedResult + ",verificationEventId=" + saved.getId()
+                                + ",affectedSubmissions=" + affected);
+            }
         }
         bumpEpoch(caseId, "ARTIFACT_VERIFIED:" + artifactVersionId + ":" + saved.getId());
         auditOutbox.enqueue("EXPLANATION_VERIFICATION:" + caseId + ":" + saved.getId(),
@@ -1070,6 +1094,10 @@ public class ExplanationWorkspaceService implements ExplanationReadinessPort {
         }
         // 时间即时重评（A5-06）：预付交期在最终事务内按当前 Clock 重新评估。
         reevaluatePrepayDue(caseEntity);
+        // A6-03/RC-07：逐义务覆盖校验——从 CURRENT 提交提取 followupRequired 义务，
+        // 逐项匹配 OPEN CONTINUING_REVIEW 任务（同案件、有效承办人、未来期限、完成标准）。
+        // 能力值由实际覆盖计算：禁止通过"处于最终事务"推定任务已经安排。
+        List<String> obligationBlockers = validateObligationCoverage(caseEntity);
         // 义务接续已在同一事务内先行完成（ReviewService 先调用 transferObligations），
         // 因此按"接续已安排"口径评估任务门槛；OPEN DECISION_SUPPORT 且无计划时仍被阻断。
         InvestigationReadinessResult readiness = evaluateReadiness(caseEntity, reviewer, true);
@@ -1078,8 +1106,12 @@ public class ExplanationWorkspaceService implements ExplanationReadinessPort {
             case EXCLUDE_FALSE_POSITIVE -> readiness.excludeBlockers();
             default -> List.of();
         };
-        if (!blockers.isEmpty()) {
-            throw new IllegalStateException("调查尚未满足最终处置条件：" + String.join("；", blockers));
+        // 逐义务覆盖缺口进入最终 blocker（A6-03）：任一 followupRequired 义务无承接任务，
+        // 确认与排除都被阻断——"未到期"不等于"已安排"。
+        List<String> combined = new ArrayList<>(blockers);
+        combined.addAll(obligationBlockers);
+        if (!combined.isEmpty()) {
+            throw new IllegalStateException("调查尚未满足最终处置条件：" + String.join("；", combined));
         }
         if (!tokenAlreadyValidated) {
             String expectedToken = reviewBasisToken(caseEntity.getId());
@@ -1096,6 +1128,55 @@ public class ExplanationWorkspaceService implements ExplanationReadinessPort {
      * 交期已过且未提供交付/合理延期依据 → 恢复 DELIVERY_OVERDUE 关键问题并推进 epoch；
      * 该问题随后阻断最终排除（不自动变可疑，由人工判断）。
      */
+    /**
+     * 逐义务覆盖校验（A6-03/RC-07）：
+     * 从 CURRENT 提交提取 followupRequired 义务（预付交期跟进等），
+     * 逐项匹配 OPEN 的 CONTINUING_REVIEW 任务：同案件、有效承办人（启用 ANALYST/ADMIN）、
+     * 期限在未来、完成标准非空。任意一项无承接 → 义务缺口 blocker。
+     * 一条 CONTINUING_REVIEW 不能覆盖整个案件的多项义务（每项义务至少一个专属承接）。
+     */
+    private List<String> validateObligationCoverage(CaseEntity caseEntity) {
+        List<EnhancedDueDiligenceRequest> openTasks = eddRepository
+                .findByCaseIdAndStatusOrderByIdAsc(caseEntity.getId(),
+                        EnhancedDueDiligenceStatus.OPEN).stream()
+                .filter(task -> task.getPurpose() == EddTaskPurpose.CONTINUING_REVIEW)
+                .toList();
+        List<String> blockers = new ArrayList<>();
+        Set<Long> claimedTaskIds = new LinkedHashSet<>();
+        Set<Long> assessedSubmissionIds = new LinkedHashSet<>();
+        for (ExplanationSubmission current : submissionRepository
+                .findByCaseIdAndStateOrderByIdAsc(caseEntity.getId(), SubmissionState.CURRENT)) {
+            if (!current.isFollowupRequired() || !assessedSubmissionIds.add(current.getId())) {
+                continue; // 每个采用提交评估一次（同事务内重复 save 不重复计义务）
+            }
+            EnhancedDueDiligenceRequest matched = null;
+            for (EnhancedDueDiligenceRequest task : openTasks) {
+                if (claimedTaskIds.contains(task.getId())) {
+                    continue; // 每项义务至少一个专属承接；一条任务不覆盖多项义务
+                }
+                boolean assignedOk = task.getAssignedTo() != null
+                        && userAccountRepository.findByUsername(task.getAssignedTo())
+                        .filter(user -> user.isEnabled())
+                        .filter(user -> java.util.Set.of("ANALYST", "ADMIN").contains(user.getRole()))
+                        .isPresent();
+                boolean dueOk = task.getDueAt() != null && task.getDueAt().isAfter(LocalDateTime.now(clock));
+                boolean standardOk = task.getCompletionStandard() != null
+                        && task.getCompletionStandard().trim().length() >= 10;
+                if (assignedOk && dueOk && standardOk) {
+                    matched = task;
+                    claimedTaskIds.add(task.getId());
+                    break;
+                }
+            }
+            if (matched == null) {
+                blockers.add("采用提交 #" + current.getId() + " 含未完成跟进义务（followupRequired），"
+                        + "但没有满足条件的持续核验任务承接（需要：同案件 OPEN CONTINUING_REVIEW、"
+                        + "有效承办人、未来期限、明确完成标准）；未到期不等于已安排（A6-03）");
+            }
+        }
+        return blockers;
+    }
+
     private void reevaluatePrepayDue(CaseEntity caseEntity) {
         for (AlertExplanationUnit unit : unitRepository.findByCaseIdOrderByIdAsc(caseEntity.getId())) {
             if (unit.getCurrentSubmissionId() == null
@@ -1333,39 +1414,71 @@ public class ExplanationWorkspaceService implements ExplanationReadinessPort {
                         + "不能建议 EXPLAINED；需先处理矛盾或改判 SUSPICIOUS");
             }
         }
-        // 授权额度缺口（TP-10）：声明授权额度 < 已覆盖交易合计（按服务器来源金额）→
-        // 超出部分保留缺口，不得整笔解释成立。
+        // A6-02/RC-05：授权必填——C3 SUPPORTED 不能凭空成立；authority 结构、
+        // 可定位授权编号、额度与覆盖集合缺一即拒，不能整体省略。
         JsonNode authority = draft.get("authority");
-        if (authority != null && authority.isObject()) {
-            String limitText = text(authority, "limitAmount");
-            if (!limitText.isBlank()) {
-                java.math.BigDecimal limit;
-                try {
-                    limit = new java.math.BigDecimal(limitText.trim());
-                } catch (NumberFormatException e) {
-                    throw new IllegalArgumentException("授权额度需为定点数字符串：" + limitText);
-                }
-                java.math.BigDecimal covered = java.math.BigDecimal.ZERO;
-                JsonNode coveredTxs = authority.get("coveredTransactionIds");
-                if (coveredTxs != null && coveredTxs.isArray()) {
-                    Map<String, java.math.BigDecimal> sourceAmounts = serverTransactionAmounts(caseEntity);
-                    for (JsonNode tx : coveredTxs) {
-                        java.math.BigDecimal amount = sourceAmounts.get(tx.asText());
-                        if (amount == null) {
-                            throw new IllegalArgumentException("授权覆盖的交易 " + tx.asText()
-                                    + " 不属于服务器冻结的交易来源集合");
-                        }
-                        covered = covered.add(amount);
-                    }
-                }
-                java.math.BigDecimal gap = limit.subtract(covered);
-                if (gap.compareTo(java.math.BigDecimal.ZERO) < 0) {
-                    throw new IllegalArgumentException("代付授权额度 " + limit.toPlainString()
-                            + " 低于已覆盖交易合计 " + covered.toPlainString() + "；超出部分 "
-                            + gap.negate().toPlainString() + " 保留缺口，不得整笔解释成立"
-                            + "（TP-10）；请提交 UNRESOLVED 并说明缺口处理安排");
-                }
+        if (authority == null || !authority.isObject()) {
+            throw new IllegalArgumentException("集团代付配方必须声明代付授权（authority）："
+                    + "可定位授权编号、额度与覆盖交易集合；C3 的 SUPPORTED 声明不能替代授权记录（A6-02）");
+        }
+        String authorityRef = text(authority, "authorityRef");
+        if (authorityRef.length() < 3) {
+            throw new IllegalArgumentException("代付授权需提供可定位的授权编号（authorityRef，"
+                    + "至少 3 个字符）；授权身份缺失时 C3 不能成立");
+        }
+        String limitText = text(authority, "limitAmount");
+        if (limitText.isBlank()) {
+            throw new IllegalArgumentException("代付授权需声明额度（limitAmount）；无额度的授权"
+                    + "不能确定覆盖边界（A6-02）");
+        }
+        java.math.BigDecimal limit;
+        try {
+            limit = new java.math.BigDecimal(limitText.trim());
+        } catch (NumberFormatException e) {
+            throw new IllegalArgumentException("授权额度需为定点数字符串：" + limitText);
+        }
+        // 服务端派生需要代付解释的资金腿全集（不从客户端 coveredTransactionIds 反向定义）：
+        // 集合 = 本次提交 scope.reviewedTransactionIds（提交前已通过服务器来源对账）。
+        JsonNode scopeNode = draft.get("scope");
+        List<String> requiredLegs = scopeNode == null ? List.of()
+                : stringList(scopeNode, "reviewedTransactionIds");
+        JsonNode coveredTxs = authority.get("coveredTransactionIds");
+        if (coveredTxs == null || !coveredTxs.isArray() || coveredTxs.size() == 0) {
+            throw new IllegalArgumentException("代付授权需声明覆盖交易集合（coveredTransactionIds）；"
+                    + "空覆盖不能支撑 C4 的 SUPPORTED（A6-02）");
+        }
+        Map<String, java.math.BigDecimal> sourceAmounts = serverTransactionAmounts(caseEntity);
+        Set<String> coveredSet = new LinkedHashSet<>();
+        java.math.BigDecimal covered = java.math.BigDecimal.ZERO;
+        for (JsonNode tx : coveredTxs) {
+            String txId = tx.asText();
+            java.math.BigDecimal amount = sourceAmounts.get(txId);
+            if (amount == null) {
+                throw new IllegalArgumentException("授权覆盖的交易 " + txId
+                        + " 不属于服务器冻结的交易来源集合");
             }
+            if (!coveredSet.add(txId)) {
+                throw new IllegalArgumentException("授权覆盖集合存在重复交易：" + txId
+                        + "（去重计量，TP-31）");
+            }
+            covered = covered.add(amount);
+        }
+        // 逐笔比对：全部需要解释的代付资金腿必须被授权覆盖；未覆盖的具体交易保留缺口
+        //（TP-11：第二笔不得继承第一笔结论；TP-10：不得整笔解释成立）。
+        List<String> uncovered = requiredLegs.stream()
+                .filter(tx -> !coveredSet.contains(tx)).toList();
+        if (!uncovered.isEmpty()) {
+            throw new IllegalArgumentException("以下待解释的代付资金腿未被授权覆盖："
+                    + String.join("、", uncovered) + "；未覆盖金额不能隐去（A6-02/TP-11），"
+                    + "需补充授权或把缺口交易移出命中范围（后者需来源更正）");
+        }
+        // 授权额度缺口：授权额度 < 覆盖交易合计 → 超出部分保留缺口，不得整笔解释成立（TP-10）。
+        java.math.BigDecimal gap = limit.subtract(covered);
+        if (gap.compareTo(java.math.BigDecimal.ZERO) < 0) {
+            throw new IllegalArgumentException("代付授权额度 " + limit.toPlainString()
+                    + " 低于已覆盖交易合计 " + covered.toPlainString() + "；超出部分 "
+                    + gap.negate().toPlainString() + " 保留缺口，不得整笔解释成立"
+                    + "（TP-10）；请提交 UNRESOLVED 并说明缺口处理安排");
         }
     }
 
@@ -1411,10 +1524,14 @@ public class ExplanationWorkspaceService implements ExplanationReadinessPort {
                 }
             }
             if (!overlaps.isEmpty()) {
+                // TP-31/v3 §5.4：同一交易命中多个预警时复用解释引用、去重计量——共享命中
+                // 本身不是重复用款，不阻断 EXPLAINED；登记背景问题供人工核对去重口径
+                //（额度使用按唯一交易计一次，档案按 sourceRecordId 去重统计）。
                 ensureIssue(caseEntity.getId(), unit.getId(),
-                        "AUTHORITY_DOUBLE_ALLOCATION:" + unit.getId(), IssueSeverity.DECISION_CRITICAL, "Q4",
-                        "交易 " + String.join("、", overlaps) + " 已被其他单元的采用提交声明为授权覆盖；"
-                                + "同一交易不能重复计入授权使用量（TP-31），需重新划分授权范围。",
+                        "AUTHORITY_SHARED_REFERENCE:" + unit.getId(), IssueSeverity.CONTEXT_GAP, "Q4",
+                        "交易 " + String.join("、", overlaps) + " 同时出现在其他单元的授权覆盖声明中；"
+                                + "若为同一笔资金的共享命中，按唯一交易去重计量（不重复消耗额度）；"
+                                + "若为不同资金，需更正声明。请人工核对后处置该问题。",
                         actor);
             }
         }
@@ -1595,6 +1712,7 @@ public class ExplanationWorkspaceService implements ExplanationReadinessPort {
             if (assessment == QuestionAssessment.UNKNOWN || factKind == FactKind.UNKNOWN) {
                 criticalUnknown = true;
             }
+            boolean questionHasEvidence = false;
             for (JsonNode artifactId : intList(question, "artifactVersionIds")) {
                 long id = artifactId.asLong();
                 EvidenceArtifactVersion artifact = artifactRepository.findByIdAndCaseId(id, caseEntity.getId())
@@ -1604,7 +1722,15 @@ public class ExplanationWorkspaceService implements ExplanationReadinessPort {
                     throw new IllegalArgumentException("问题 " + code + " 引用了完整性不符（MISMATCH）的材料："
                             + artifact.getArtifactKey() + "；需先更正来源（INTEGRITY_BLOCKER）");
                 }
+                // A6-01/RC-03：只有 RESOLVED 的材料可作为可采用的解释依据；
+                // NOT_FOUND/UNAVAILABLE/FORBIDDEN 的登记不能凑数（声明 ≠ 已核验）。
+                if (!"RESOLVED".equals(artifact.getAvailability())) {
+                    throw new IllegalArgumentException("问题 " + code + " 引用的材料未取得内容（"
+                            + artifact.getAvailability() + "）：" + artifact.getArtifactKey()
+                            + "；需先重试来源或更换替代来源");
+                }
                 artifactIds.add(id);
+                questionHasEvidence = true;
             }
             for (JsonNode issueId : intList(question, "issueIds")) {
                 long id = issueId.asLong();
@@ -1612,6 +1738,23 @@ public class ExplanationWorkspaceService implements ExplanationReadinessPort {
                         .orElseThrow(() -> new IllegalArgumentException(
                                 "问题 " + code + " 引用的问题不属于当前案件：" + id));
                 issueIds.add(id);
+            }
+            // A6-01/RC-03：可采用的结论（SATISFIED/NOT_SATISFIED）必须引用至少一份 RESOLVED 材料
+            // 且该材料有满足用途的核验记录；人工声明（SATISFIED 字符串）不能替代来源核验。
+            // 例外：NOT_APPLICABLE 不需要材料（以明确的适用理由成立）；UNKNOWN 允许无材料（关键未知路径）。
+            if (assessment == QuestionAssessment.SATISFIED || assessment == QuestionAssessment.NOT_SATISFIED) {
+                if (!questionHasEvidence) {
+                    throw new IllegalArgumentException("问题 " + code + " 评估为 " + assessment
+                            + " 但未引用任何已取得（RESOLVED）的材料；空引用不能形成可采用结论"
+                            + "（A6-01），请先抓取来源材料并在问题中引用");
+                }
+                boolean hasVerification = artifactIds.stream()
+                        .anyMatch(artifactId -> !verificationRepository
+                                .findByArtifactVersionIdOrderByEventTimeAsc(artifactId).isEmpty());
+                if (!hasVerification) {
+                    throw new IllegalArgumentException("问题 " + code + " 引用的材料尚无任何核验记录；"
+                            + "登记材料 ≠ 已核验（A6-01），请先记录具体核验动作（方法/观察/结果）再提交");
+                }
             }
         }
         // OPEN 的关键问题阻断 EXPLAINED（未评估默认关键，§6.1）
@@ -2067,9 +2210,10 @@ public class ExplanationWorkspaceService implements ExplanationReadinessPort {
             }
         }
         if (!wrote) {
-            // 无任何引用的提交也显式留痕（依赖链完整可查询），并阻断可解释结论：
-            // A5-01 要求关键事实有可定位来源；完全无引用的 EXPLAINED 已被六问题校验拒绝，
-            // 此处仅记录方向性记录保证反查表有行。
+            // 无任何引用的提交显式留痕（依赖链完整可查询）。
+            // A6-01：SATISFIED/NOT_SATISFIED 必须引用 RESOLVED 材料 + 核验记录，无引用的
+            // EXPLAINED/SUSPICIOUS 已被六问题校验拒绝；本 CONTEXT 记录只可能出现在
+            // UNRESOLVED 提交（保留未知调查现状），不会升级为可采用解释。
             ExplanationEvidenceUse use = new ExplanationEvidenceUse();
             use.setSubmissionId(submissionId);
             use.setCaseId(caseId);

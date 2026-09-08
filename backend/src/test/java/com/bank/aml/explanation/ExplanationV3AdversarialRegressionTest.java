@@ -143,6 +143,17 @@ class ExplanationV3AdversarialRegressionTest {
             Long id = inv.getArgument(0);
             return Optional.ofNullable(artifactById.get(id));
         });
+        com.bank.aml.explanation.EvidenceVerificationEvent preVerified =
+                new com.bank.aml.explanation.EvidenceVerificationEvent();
+        setId(preVerified, 900L);
+        preVerified.setCaseId(CASE_ID);
+        preVerified.setArtifactVersionId(1L);
+        preVerified.setMethod("INDEPENDENT_SOURCE_CHECK");
+        preVerified.setObservedFacts("来源内容与业务事实核对一致，观察与限制已记录");
+        preVerified.setResult("CONFIRMED");
+        preVerified.setActor("verifier-x");
+        when(verifications.findByArtifactVersionIdOrderByEventTimeAsc(1L))
+                .thenReturn(List.of(preVerified));
         when(verifications.save(any())).thenAnswer(inv -> inv.getArgument(0));
         when(evidenceUses.save(any())).thenAnswer(inv -> {
             ExplanationEvidenceUse saved = inv.getArgument(0);
@@ -309,19 +320,21 @@ class ExplanationV3AdversarialRegressionTest {
         service.submitUnit(CASE_ID, 100L, 0, service.reviewBasisToken(CASE_ID), "DUP-A", "analyst");
         savedIssues.clear(); // 排除提交过程中的其他问题，聚焦跨单元检查
 
-        // 单元 101（同案另一预警）再次声明覆盖 T-1001 → 必须登记 AUTHORITY_DOUBLE_ALLOCATION，
-        // 且该关键问题使 EXPLAINED 不能提交（TP-31：重复声明不能规避额度上限）
+        // 单元 101（同案另一预警）再次声明覆盖 T-1001：
+        // TP-31 语义修正（对抗性审查 D6 后再修正）：同一交易命中多个预警时复用解释引用、
+        // 去重计量——共享命中不是重复用款，EXPLAINED 仍可提交；登记 CONTEXT_GAP 背景问题
+        // 供人工核对去重口径。
         AlertExplanationUnit unitB = unit(101L, 12L);
         when(units.findByIdAndCaseId(101L, CASE_ID)).thenReturn(Optional.of(unitB));
         when(units.findById(101L)).thenReturn(Optional.of(unitB));
         saveGroupPaymentDraft(unitB, List.of("T-1001"));
-        assertThatThrownBy(() -> service.submitUnit(CASE_ID, 101L, 0,
-                service.reviewBasisToken(CASE_ID), "DUP-B", "analyst"))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("关键未知");
+        ExplanationViews.SubmissionResult unitBResult = service.submitUnit(CASE_ID, 101L, 0,
+                service.reviewBasisToken(CASE_ID), "DUP-B", "analyst");
+        assertThat(unitBResult.outcome()).isEqualTo(ExplanationOutcome.EXPLAINED);
 
         assertThat(savedIssues.stream().anyMatch(issue ->
-                issue.getIssueKey().startsWith("AUTHORITY_DOUBLE_ALLOCATION"))).isTrue();
+                issue.getIssueKey().startsWith("AUTHORITY_SHARED_REFERENCE")
+                        && issue.getSeverity() == IssueSeverity.CONTEXT_GAP)).isTrue();
     }
 
     // ---- 辅助 ----
@@ -361,6 +374,7 @@ class ExplanationV3AdversarialRegressionTest {
         claims.putObject("C4").put("status", "SUPPORTED")
                 .put("judgement", "本单元收款在授权范围内履行乙的付款义务，逐笔分配一致");
         ObjectNode authority = draft.putObject("authority");
+        authority.put("authorityRef", "AU-01");
         authority.put("limitAmount", "440000.00");
         com.fasterxml.jackson.databind.node.ArrayNode coveredNode = authority.putArray("coveredTransactionIds");
         covered.forEach(coveredNode::add);
