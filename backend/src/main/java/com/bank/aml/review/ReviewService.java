@@ -140,6 +140,11 @@ public class ReviewService {
             result.put("canConfirm", readiness.canConfirm());
             result.put("excludeBlockers", readiness.excludeBlockers());
             result.put("confirmBlockers", readiness.confirmBlockers());
+            // G3-1/RF-26：拟态义务覆盖计算——假设 plans 全部按声明创建后，
+            // 各项义务是否被有效承接（factKey 匹配 + 有效承办人 + 未来期限 + 完成标准）。
+            // 不写库；预检结果与最终提交可能因并发变化产生 BASIS_CONFLICT（RF-23 语义）。
+            result.put("simulatedObligationCoverage",
+                    explanationWorkspaceService.simulateObligationCoverage(caseId, reviewer, plans));
         }
         return result;
     }

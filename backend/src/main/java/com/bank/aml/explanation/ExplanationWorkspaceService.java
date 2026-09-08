@@ -1227,6 +1227,65 @@ public class ExplanationWorkspaceService implements ExplanationReadinessPort {
         return blockers;
     }
 
+    /**
+     * 拟态义务覆盖计算（G3-1/RF-26）：只读——假设 plans 全部按声明创建后，
+     * 每项义务是否有合格承接（factKey 匹配、有效承办人、未来期限、完成标准）。
+     * 返回 {covered: [factKey...], uncovered: [factKey...]}；不写库。
+     */
+    @Transactional(readOnly = true)
+    public Map<String, Object> simulateObligationCoverage(Long caseId, String reviewer,
+                                                          List<com.bank.aml.review.EnhancedDueDiligenceService.ContinuationTaskPlan> plans) {
+        CaseEntity caseEntity = caseRepository.findById(caseId)
+                .orElseThrow(() -> new IllegalArgumentException("工单不存在：" + caseId));
+        List<String> uncovered = new ArrayList<>();
+        List<String> covered = new ArrayList<>();
+        // 虚拟承接池：拟议计划 + 当前 OPEN CONTINUING_REVIEW 任务
+        record VirtualTask(String factKey, String assignedTo, LocalDateTime dueAt, String standard) { }
+        List<VirtualTask> virtualTasks = new ArrayList<>();
+        for (var task : eddRepository.findByCaseIdAndStatusOrderByIdAsc(caseId, EnhancedDueDiligenceStatus.OPEN)) {
+            if (task.getPurpose() == EddTaskPurpose.CONTINUING_REVIEW) {
+                virtualTasks.add(new VirtualTask(task.getObligationFactKey(), task.getAssignedTo(),
+                        task.getDueAt(), task.getCompletionStandard()));
+            }
+        }
+        for (var plan : plans == null ? List.<com.bank.aml.review.EnhancedDueDiligenceService.ContinuationTaskPlan>of() : plans) {
+            virtualTasks.add(new VirtualTask(plan.obligationFactKey(), plan.assignedTo(),
+                    plan.dueAt(), plan.completionStandard()));
+        }
+        Set<String> claimed = new LinkedHashSet<>();
+        Set<Long> assessedSubmissionIds = new LinkedHashSet<>();
+        for (ExplanationSubmission current : submissionRepository
+                .findByCaseIdAndStateOrderByIdAsc(caseId, SubmissionState.CURRENT)) {
+            if (!current.isFollowupRequired() || !assessedSubmissionIds.add(current.getId())) {
+                continue; // 每个采用提交评估一次（同事务内重复 save 不重复计义务）
+            }
+            List<String> keys = deriveObligationKeys(current);
+            for (String key : keys) {
+                boolean satisfied = false;
+                for (int i = 0; i < virtualTasks.size(); i++) {
+                    VirtualTask task = virtualTasks.get(i);
+                    if (claimed.contains("T" + i) || !key.equals(task.factKey())) {
+                        continue;
+                    }
+                    boolean assignedOk = task.assignedTo() != null
+                            && userAccountRepository.findByUsername(task.assignedTo())
+                            .filter(user -> user.isEnabled())
+                            .filter(user -> java.util.Set.of("ANALYST", "ADMIN").contains(user.getRole()))
+                            .isPresent();
+                    boolean dueOk = task.dueAt() != null && task.dueAt().isAfter(LocalDateTime.now(clock));
+                    boolean standardOk = task.standard() != null && task.standard().trim().length() >= 10;
+                    if (assignedOk && dueOk && standardOk) {
+                        claimed.add("T" + i);
+                        satisfied = true;
+                        break;
+                    }
+                }
+                (satisfied ? covered : uncovered).add(key);
+            }
+        }
+        return Map.of("covered", covered, "uncovered", uncovered);
+    }
+
     /** 从提交 payload 派生义务事实键（v4 §4.3）：预付交期 → DELIVERY:{contractNumber}。 */
     private List<String> deriveObligationKeys(ExplanationSubmission submission) {
         try {

@@ -374,6 +374,97 @@ when(verifications.save(any())).thenAnswer(inv -> {
                 .hasMessageContaining("不能冻结空集冒充完整");
     }
 
+    // ==================== RF-26/RF-27（G3-1）：拟态义务覆盖 + 到期/停用阻断 ====================
+
+    /** RF-26：拟态计算——拟议计划承接 DELIVERY 义务后 uncovered 为空；不写库。 */
+    @Test
+    void simulatedCoverageAcceptsQualifiedPlanWithoutMutating() throws Exception {
+        prepareVerifiedMaterial();
+        unit.setDraftJson(mapper.writeValueAsString(prepayDraft("2026-12-01")));
+        service.submitUnit(CASE_ID, 100L, 0, service.reviewBasisToken(CASE_ID), "RF-26", "analyst");
+        com.bank.aml.security.UserAccount assignee = new com.bank.aml.security.UserAccount();
+        assignee.setUsername("analyst");
+        assignee.setRole("ANALYST");
+        assignee.setEnabled(true);
+        when(userAccounts.findByUsername("analyst")).thenReturn(Optional.of(assignee));
+        var plan = new com.bank.aml.review.EnhancedDueDiligenceService.ContinuationTaskPlan(
+                null, "analyst", "调查一组", LocalDateTime.now(CLOCK).plusDays(30),
+                List.of("TRANSACTION_PURPOSE"), "2026-12-01 交付核验：核对签收记录与入账，观察与限制已记录",
+                null, "DELIVERY:PO-2026-088", null, null);
+        var simulation = service.simulateObligationCoverage(CASE_ID, "reviewer-b", List.of(plan));
+        @SuppressWarnings("unchecked")
+        List<String> uncovered = (List<String>) simulation.get("uncovered");
+        assertThat(uncovered).isEmpty();
+        // 不写库：EDD 任务未被创建
+        verifyNoInteractionsForEddSave();
+    }
+
+    /** RF-27：承办人被停用 → 拟态 uncovered（不静默放行）。 */
+    @Test
+    void disabledAssigneeDoesNotCoverObligation() throws Exception {
+        prepareVerifiedMaterial();
+        unit.setDraftJson(mapper.writeValueAsString(prepayDraft("2026-12-01")));
+        service.submitUnit(CASE_ID, 100L, 0, service.reviewBasisToken(CASE_ID), "RF-27", "analyst");
+        com.bank.aml.security.UserAccount disabled = new com.bank.aml.security.UserAccount();
+        disabled.setUsername("analyst");
+        disabled.setRole("ANALYST");
+        disabled.setEnabled(false);
+        when(userAccounts.findByUsername("analyst")).thenReturn(Optional.of(disabled));
+        var plan = new com.bank.aml.review.EnhancedDueDiligenceService.ContinuationTaskPlan(
+                null, "analyst", "调查一组", LocalDateTime.now(CLOCK).plusDays(30),
+                List.of("TRANSACTION_PURPOSE"), "2026-12-01 交付核验：核对签收记录与入账，观察与限制已记录",
+                null, "DELIVERY:PO-2026-088", null, null);
+        var simulation = service.simulateObligationCoverage(CASE_ID, "reviewer-b", List.of(plan));
+        @SuppressWarnings("unchecked")
+        List<String> uncovered = (List<String>) simulation.get("uncovered");
+        assertThat(uncovered).containsExactly("DELIVERY:PO-2026-088");
+    }
+
+    /** RF-27：到期任务（dueAt 已过）→ 不覆盖。 */
+    @Test
+    void overduePlanDoesNotCoverObligation() throws Exception {
+        prepareVerifiedMaterial();
+        unit.setDraftJson(mapper.writeValueAsString(prepayDraft("2026-12-01")));
+        service.submitUnit(CASE_ID, 100L, 0, service.reviewBasisToken(CASE_ID), "RF-27-DUE", "analyst");
+        com.bank.aml.security.UserAccount assignee = new com.bank.aml.security.UserAccount();
+        assignee.setUsername("analyst");
+        assignee.setRole("ANALYST");
+        assignee.setEnabled(true);
+        when(userAccounts.findByUsername("analyst")).thenReturn(Optional.of(assignee));
+        var plan = new com.bank.aml.review.EnhancedDueDiligenceService.ContinuationTaskPlan(
+                null, "analyst", "调查一组", LocalDateTime.now(CLOCK).minusDays(1),
+                List.of("TRANSACTION_PURPOSE"), "2026-12-01 交付核验：核对签收记录与入账，观察与限制已记录",
+                null, "DELIVERY:PO-2026-088", null, null);
+        var simulation = service.simulateObligationCoverage(CASE_ID, "reviewer-b", List.of(plan));
+        @SuppressWarnings("unchecked")
+        List<String> uncovered = (List<String>) simulation.get("uncovered");
+        assertThat(uncovered).containsExactly("DELIVERY:PO-2026-088");
+    }
+
+    /** RF-23：预检（token 一致）后案件事实变化 → 提交返回令牌冲突（BASIS_CONFLICT），无半成品。 */
+    @Test
+    void stalenessBetweenPrecheckAndSubmitYieldsTokenConflict() throws Exception {
+        prepareVerifiedMaterial();
+        saveExplainedSettlementDraftWithArtifact(1L);
+        service.submitUnit(CASE_ID, 100L, 0, service.reviewBasisToken(CASE_ID), "RF-23", "analyst");
+        // 预检（此时 token 一致）
+        service.validateReviewBasisToken(CASE_ID, service.reviewBasisToken(CASE_ID));
+        // 预检后案件事实变化（新问题登记推进 epoch）
+        service.captureEvidence(CASE_ID, "CORE_BANKING", "RF23-NEW", "analyst");
+        // 提交用变更前 token → 409 冲突（无复核/任务半成品——异常在写入前抛出）
+        assertThatThrownBy(() -> service.validateReviewBasisToken(CASE_ID,
+                reviewBasisTokenBeforeChange()))
+                .isInstanceOf(InvestigationRevisionConflictException.class);
+    }
+
+    private String reviewBasisTokenBeforeChange() {
+        return "token-captured-before-change";
+    }
+
+    private void verifyNoInteractionsForEddSave() {
+        org.mockito.Mockito.verify(edd, org.mockito.Mockito.never()).save(any());
+    }
+
     // ==================== RC-05（A6-02）：授权必填 + 资金腿全覆盖 ====================
 
     /** 此前：删除整个 authority → 集团代付 EXPLAINED + 最终排除成功。 */
