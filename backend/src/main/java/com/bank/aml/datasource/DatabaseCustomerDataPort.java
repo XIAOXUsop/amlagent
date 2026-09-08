@@ -170,18 +170,18 @@ public class DatabaseCustomerDataPort implements CustomerDataPort, CustomerDataR
         // 保留既有演示客户的特征；新客户生成一组正常的确定性交易，保证 Agent 流程可演示
         switch (c.id()) {
             case "C001" -> {
-                return txns(120, 0.50, 0.33, 50_000, 8_000_000, List.of(
+                return txns(c.id(), 120, 0.50, 0.33, 50_000, 8_000_000, List.of(
                         CountryRegion.HK, CountryRegion.IRAN, CountryRegion.UAE), true, 987654321L);
             }
             case "C002" -> {
-                return txns(80, 0.30, 0.00, 20_000, 300_000, List.of(CountryRegion.CHINA), true, 123456789L);
+                return txns(c.id(), 80, 0.30, 0.00, 20_000, 300_000, List.of(CountryRegion.CHINA), true, 123456789L);
             }
             case "C003" -> {
-                return txns(15, 0.05, 0.00, 2_000, 80_000, List.of(CountryRegion.CHINA), false, 555555555L);
+                return txns(c.id(), 15, 0.05, 0.00, 2_000, 80_000, List.of(CountryRegion.CHINA), false, 555555555L);
             }
             default -> {
                 long seed = c.id().hashCode() & 0x7fffffffL;
-                return txns(20, 0.10, 0.05, 5_000, 200_000, List.of(CountryRegion.CHINA, CountryRegion.HK), false, seed);
+                return txns(c.id(), 20, 0.10, 0.05, 5_000, 200_000, List.of(CountryRegion.CHINA, CountryRegion.HK), false, seed);
             }
         }
     }
@@ -208,9 +208,9 @@ public class DatabaseCustomerDataPort implements CustomerDataPort, CustomerDataR
         }
     }
 
-    private List<TransactionRecord> txns(int count, double nightRatio, double crossBorderRatio,
-                                         double minAmount, double maxAmount, List<CountryRegion> countries,
-                                         boolean structured, long seed) {
+    private List<TransactionRecord> txns(String customerId, int count, double nightRatio,
+                                         double crossBorderRatio, double minAmount, double maxAmount,
+                                         List<CountryRegion> countries, boolean structured, long seed) {
         Random rand = new Random(seed);
         List<TransactionRecord> list = new ArrayList<>();
         String[] counterparties = {"贸易客户A", "供应链B", "代付平台C", "境外买方D", "关联企业E", "个人往来户F"};
@@ -232,7 +232,8 @@ public class DatabaseCustomerDataPort implements CustomerDataPort, CustomerDataR
                     : counterparties[rand.nextInt(counterparties.length)];
             list.add(new TransactionRecord(date, BigDecimal.valueOf(amount).setScale(2, RoundingMode.HALF_UP),
                     "转出", counterparty, country,
-                    channels[rand.nextInt(channels.length)], scenes[rand.nextInt(scenes.length)], currency));
+                    channels[rand.nextInt(channels.length)], scenes[rand.nextInt(scenes.length)], currency,
+                    "MOCK-" + customerId + "-" + (i + 1)));
         }
         list.sort((a, b) -> a.date().compareTo(b.date()));
         return list;
