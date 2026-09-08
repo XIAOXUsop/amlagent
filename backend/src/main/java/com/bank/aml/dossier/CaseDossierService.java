@@ -71,6 +71,7 @@ public class CaseDossierService {
     private final com.bank.aml.explanation.ExplanationClaimRepository explanationClaimRepository;
     private final com.bank.aml.explanation.ExplanationIssueRepository explanationIssueRepository;
     private final com.bank.aml.explanation.VerificationBasisRepository explanationBasisRepository;
+    private final com.bank.aml.explanation.ExplanationSubmissionRepository explanationSubmissionRepository;
     private final ObjectMapper objectMapper;
 
     public CaseDossierService(CaseRepository caseRepository,
@@ -82,7 +83,7 @@ public class CaseDossierService {
                               ObjectMapper objectMapper) {
         this(caseRepository, caseLogRepository, executionRepository, toolTraceRepository, reviewRepository,
                 snapshotRepository, null, null, null, null, null, null, null, null, null,
-                null, null, null, null, objectMapper);
+                null, null, null, null, null, objectMapper);
     }
 
     public CaseDossierService(CaseRepository caseRepository,
@@ -95,7 +96,7 @@ public class CaseDossierService {
                               ObjectMapper objectMapper) {
         this(caseRepository, caseLogRepository, executionRepository, toolTraceRepository, reviewRepository,
                 snapshotRepository, sanctionReviewRepository, null, null, null,
-                null, null, null, null, null, null, null, null, null, objectMapper);
+                null, null, null, null, null, null, null, null, null, null, objectMapper);
     }
 
     public CaseDossierService(CaseRepository caseRepository,
@@ -109,7 +110,7 @@ public class CaseDossierService {
                               ObjectMapper objectMapper) {
         this(caseRepository, caseLogRepository, executionRepository, toolTraceRepository, reviewRepository,
                 snapshotRepository, sanctionReviewRepository, enhancedDueDiligenceRepository, null, null,
-                null, null, null, null, null, null, null, null, null, objectMapper);
+                null, null, null, null, null, null, null, null, null, null, objectMapper);
     }
 
     @Autowired
@@ -134,7 +135,7 @@ public class CaseDossierService {
                 enhancedDueDiligenceEvidenceRepository, suspiciousTransactionReportRepository,
                 alertRepository, hypothesisRepository, investigationEvidenceRepository,
                 alertCoverageRepository, caseOperationsService,
-                null, null, null, null, objectMapper);
+                null, null, null, null, null, objectMapper);
     }
 
     public CaseDossierService(CaseRepository caseRepository,
@@ -156,6 +157,7 @@ public class CaseDossierService {
                               com.bank.aml.explanation.ExplanationClaimRepository explanationClaimRepository,
                               com.bank.aml.explanation.ExplanationIssueRepository explanationIssueRepository,
                               com.bank.aml.explanation.VerificationBasisRepository explanationBasisRepository,
+                              com.bank.aml.explanation.ExplanationSubmissionRepository explanationSubmissionRepository,
                               ObjectMapper objectMapper) {
         this.caseRepository = caseRepository;
         this.caseLogRepository = caseLogRepository;
@@ -176,6 +178,7 @@ public class CaseDossierService {
         this.explanationClaimRepository = explanationClaimRepository;
         this.explanationIssueRepository = explanationIssueRepository;
         this.explanationBasisRepository = explanationBasisRepository;
+        this.explanationSubmissionRepository = explanationSubmissionRepository;
         this.objectMapper = objectMapper;
     }
 
@@ -226,16 +229,27 @@ public class CaseDossierService {
                 sha256(content), content);
     }
 
-    /** 解释核验档案段（v3 §11）：历史档案保持原貌；无解释数据（v0/v1 案件）返回 null。 */
+    /** 解释核验档案段（v3 §11 / G3-3）：按采用提交的冻结 payload 回放——禁止可变草稿替代历史决定依据。 */
     private CaseDossier.ExplanationSection explanationSection(CaseEntity caseEntity, Long caseId) {
         if (caseEntity.getInvestigationContractVersion() < 2 || explanationUnitRepository == null) {
             return null;
         }
         List<CaseDossier.ExplanationUnitRecord> units = explanationUnitRepository
                 .findByCaseIdOrderByIdAsc(caseId).stream()
-                .map(unit -> new CaseDossier.ExplanationUnitRecord(unit.getId(), unit.getAlertId(),
-                        unit.getPolicyCode(), unit.getDraftRevision(), unit.getCurrentSubmissionId(),
-                        null, unit.getDraftJson(), unit.getCreatedBy(), unit.getUpdatedAt()))
+                .map(unit -> {
+                    // RF-28：只回放已采用提交的不可变 payload；无采用提交时保留草稿状态标记，
+                    // 不能拿当前 draftJson 冒充历史决定依据。
+                    com.bank.aml.explanation.ExplanationSubmission adopted =
+                            unit.getCurrentSubmissionId() == null ? null
+                                    : explanationSubmissionRepository
+                                    .findById(unit.getCurrentSubmissionId()).orElse(null);
+                    return new CaseDossier.ExplanationUnitRecord(unit.getId(), unit.getAlertId(),
+                            unit.getPolicyCode(), unit.getDraftRevision(), unit.getCurrentSubmissionId(),
+                            adopted == null ? null : adopted.getOutcome().name(),
+                            adopted == null ? null : adopted.getPayloadJson(),
+                            adopted == null ? unit.getCreatedBy() : adopted.getSubmittedBy(),
+                            adopted == null ? unit.getUpdatedAt() : adopted.getSubmittedAt());
+                })
                 .toList();
         List<CaseDossier.ExplanationClaimRecord> claims = explanationClaimRepository == null ? List.of()
                 : explanationClaimRepository.findByCaseIdOrderByIdAsc(caseId).stream()

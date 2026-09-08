@@ -134,6 +134,54 @@ class CaseDossierServiceTest {
         assertThat(first.content().snapshot().sourceDigest()).isEqualTo("a".repeat(64));
         assertThat(first.content().sanctionReviewHistory()).singleElement()
                 .satisfies(review -> assertThat(review.reviewDecision()).isEqualTo("CONFIRM"));
+        // RF-28（G3-3）：解释段按采用提交冻结 payload 回放，不用当前 draftJson 冒充
+        var unitRepo = org.mockito.Mockito.mock(com.bank.aml.explanation.AlertExplanationUnitRepository.class);
+        var claimRepo = org.mockito.Mockito.mock(com.bank.aml.explanation.ExplanationClaimRepository.class);
+        var issueRepo = org.mockito.Mockito.mock(com.bank.aml.explanation.ExplanationIssueRepository.class);
+        var basisRepo = org.mockito.Mockito.mock(com.bank.aml.explanation.VerificationBasisRepository.class);
+        var submissionRepo = org.mockito.Mockito.mock(com.bank.aml.explanation.ExplanationSubmissionRepository.class);
+        var unit = new com.bank.aml.explanation.AlertExplanationUnit();
+        setId(unit, 100L);
+        unit.setCaseId(7L);
+        unit.setAlertId(11L);
+        unit.setPolicyCode("GOODS_SETTLED_V1");
+        unit.setDraftRevision(5);
+        unit.setDraftJson("{\"outcome\":\"SUSPICIOUS\",\"tampered\":true}"); // 草稿被改写
+        unit.setCurrentSubmissionId(900L);
+        unit.setCreatedBy("analyst");
+        unit.setUpdatedAt(LocalDateTime.of(2026, 9, 8, 0, 0));
+        var adopted = new com.bank.aml.explanation.ExplanationSubmission();
+        setId(adopted, 900L);
+        adopted.setUnitId(100L);
+        adopted.setCaseId(7L);
+        adopted.setSubmissionNo(1);
+        adopted.setPayloadJson("{\"outcome\":\"EXPLAINED\",\"frozen\":true}");
+        adopted.setOutcome(com.bank.aml.explanation.ExplanationOutcome.EXPLAINED);
+        adopted.setState(com.bank.aml.explanation.SubmissionState.CURRENT);
+        adopted.setInputDigest("a".repeat(64));
+        adopted.setSubmittedBy("analyst");
+        adopted.setSubmittedAt(LocalDateTime.of(2026, 9, 5, 0, 0));
+        when(unitRepo.findByCaseIdOrderByIdAsc(7L)).thenReturn(List.of(unit));
+        when(submissionRepo.findById(900L)).thenReturn(Optional.of(adopted));
+        when(claimRepo.findByCaseIdOrderByIdAsc(7L)).thenReturn(List.of());
+        when(issueRepo.findByCaseIdOrderByIdAsc(7L)).thenReturn(List.of());
+        when(basisRepo.findTopByCaseIdOrderByBasisRevisionDesc(7L)).thenReturn(Optional.empty());
+
+        caseEntity.setInvestigationContractVersion(2); // RF-28 场景：v2 契约案件才输出解释段
+        CaseDossierService replayService = new CaseDossierService(cases, logs, executions, traces, reviews,
+                snapshots, sanctionReviews, eddRequests, eddEvidence, suspiciousReports, alerts, hypotheses,
+                investigationEvidence, alertCoverage, operations, unitRepo, claimRepo, issueRepo, basisRepo,
+                submissionRepo, mapper);
+        CaseDossier replayed = replayService.export(7L);
+        assertThat(replayed.content().explanation()).isNotNull();
+        assertThat(replayed.content().explanation().units()).singleElement().satisfies(record -> {
+            // 冻结 payload（EXPLAINED）被回放，而非被改写的草稿（SUSPICIOUS）
+            assertThat(record.currentPayloadJson()).contains("EXPLAINED").contains("frozen");
+            assertThat(record.currentPayloadJson()).doesNotContain("tampered");
+            assertThat(record.currentOutcome()).isEqualTo("EXPLAINED");
+            assertThat(record.submittedBy()).isEqualTo("analyst");
+        });
+
         assertThat(first.content().operations()).satisfies(operation -> {
             assertThat(operation.priority()).isEqualTo(com.bank.aml.operations.CasePriority.CRITICAL);
             assertThat(operation.priorityPolicy()).isEqualTo("P1_V1_DETERMINISTIC_CASE_PRIORITY");
@@ -202,5 +250,14 @@ class CaseDossierServiceTest {
         assertThatThrownBy(() -> service.export(11L))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("enhancedDueDiligence.requiredItems");
+    }
+    private static void setId(Object entity, Long id) {
+        try {
+            var field = entity.getClass().getDeclaredField("id");
+            field.setAccessible(true);
+            field.set(entity, id);
+        } catch (ReflectiveOperationException e) {
+            throw new IllegalStateException(e);
+        }
     }
 }
