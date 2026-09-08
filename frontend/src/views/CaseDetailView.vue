@@ -47,6 +47,7 @@ import { coverageGap, coverageGapText, expectedConclusionFor, isInvestigationRev
 import { Back, Download, RefreshRight, VideoPlay } from '@element-plus/icons-vue'
 import { currentUser } from '../auth'
 import ExplanationWorkspace from './ExplanationWorkspace.vue'
+import RefundPanel from './RefundPanel.vue'
 
 const props = defineProps<{ caseId: number }>()
 const emit = defineEmits<{ (e: 'back'): void; (e: 'open-case', id: number): void }>()
@@ -1341,6 +1342,8 @@ const reviewReasonText: Record<string, string> = {
 
     <ExplanationWorkspace v-if="investigation && investigation.contractVersion >= 2"
       :case-id="props.caseId" />
+
+    <RefundPanel v-if="investigation && investigation.contractVersion >= 2" :case-id="props.caseId" />
 
     <div v-if="reviewHistory.length" class="card">
       <h3 class="card-title">人工处置记录</h3>

@@ -889,6 +889,83 @@ export async function reviewPrecheck(
   return (await api.post(`/reviews/${caseId}/prechecks`, body)).data
 }
 
+// ==================== 退款事件（v4 计划 §7.1 / G3-2） ====================
+
+export interface RefundAllocationInput {
+  originalTransactionId: string
+  originalAllocationKey: string
+  allocatedAmount: string
+  returnedObligationRef?: string
+}
+
+export interface RefundRegistrationInput {
+  sourceSystem: string
+  externalEventId: string
+  eventStatus?: 'REQUESTED' | 'POSTED' | 'REVERSED'
+  payerSubject: string
+  payeeSubject: string
+  payeeAccountRef?: string
+  amount: string
+  currency: string
+  effectiveAt: string
+  allocations?: RefundAllocationInput[]
+}
+
+export interface RefundRegistrationResult {
+  eventId: number
+  idempotentReplay: boolean
+  unallocatedAmount: string
+  eventStatus: string
+}
+
+export async function registerRefundEvent(
+  caseId: number, body: RefundRegistrationInput,
+): Promise<RefundRegistrationResult> {
+  return (await api.post(`/cases/${caseId}/refund-events`, body)).data
+}
+
+export interface RefundLedgerResult {
+  originalByTransaction: Record<string, string>
+  refundedByTransaction: Record<string, string>
+  pendingRefundByTransaction: Record<string, string>
+  totalOriginal: string
+  totalRefunded: string
+  totalPendingRefund: string
+  totalRetained: string
+  overAllocations: Record<string, string>
+}
+
+export async function getRefundLedger(
+  caseId: number, originalTransactionIds: string[], originalAmounts: string[],
+): Promise<RefundLedgerResult> {
+  return (await api.get(`/cases/${caseId}/refund-events/ledger`, {
+    params: { originalTransactionIds, originalAmounts },
+  })).data
+}
+
+export interface RefundAdmissibilityResult {
+  admissible: boolean
+  blockerCode: string | null
+  explanation: string
+}
+
+export async function assessRefundAuthority(
+  caseId: number,
+  body: {
+    recipientAuthority: 'ORIGINAL_PAYER_VERIFIED' | 'BUYER_VERIFIED' | 'UNRESOLVED' | 'CONTRADICTED'
+    commercialReason: 'VERIFIED' | 'UNVERIFIED' | 'MISSING'
+  },
+): Promise<RefundAdmissibilityResult> {
+  return (await api.post(`/cases/${caseId}/refund-events/authority-assessment`, body)).data
+}
+
+export async function reverseRefundEvent(
+  caseId: number,
+  body: { sourceSystem: string; originalExternalEventId: string; reversalExternalEventId: string },
+) {
+  return (await api.post(`/cases/${caseId}/refund-events/reversals`, body)).data
+}
+
 // ==================== 解释核验工作区（v2 计划 §13） ====================
 
 export interface ExplanationUnitView {
