@@ -107,6 +107,18 @@ public class EnhancedDueDiligenceRequest {
     @Column(columnDefinition = "TEXT")
     private String completionStandard;
 
+    /** 义务事实键（FR-03/V33）：本任务承接的具体义务（如 DELIVERY:PO-001）；错绑视为未覆盖。 */
+    @Column(name = "obligation_fact_key", length = 96)
+    private String obligationFactKey;
+
+    /** 义务关联金额（定点十进制；可选）。 */
+    @Column(name = "obligation_amount", precision = 20, scale = 2)
+    private java.math.BigDecimal obligationAmount;
+
+    /** 义务关联交易（sourceRecordId 逗号分隔；可选）。 */
+    @Column(name = "obligation_transaction_ids", length = 500)
+    private String obligationTransactionIds;
+
     @Column(nullable = false)
     private LocalDateTime createdAt;
 
@@ -183,6 +195,12 @@ public class EnhancedDueDiligenceRequest {
     public void setResolutionReason(String value) { resolutionReason = value; }
     public String getCompletionStandard() { return completionStandard; }
     public void setCompletionStandard(String value) { completionStandard = value; }
+    public String getObligationFactKey() { return obligationFactKey; }
+    public void setObligationFactKey(String value) { obligationFactKey = value; }
+    public java.math.BigDecimal getObligationAmount() { return obligationAmount; }
+    public void setObligationAmount(java.math.BigDecimal value) { obligationAmount = value; }
+    public String getObligationTransactionIds() { return obligationTransactionIds; }
+    public void setObligationTransactionIds(String value) { obligationTransactionIds = value; }
     public LocalDateTime getCreatedAt() { return createdAt; }
     public LocalDateTime getUpdatedAt() { return updatedAt; }
 }

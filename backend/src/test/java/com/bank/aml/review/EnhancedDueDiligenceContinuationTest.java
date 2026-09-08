@@ -98,7 +98,8 @@ class EnhancedDueDiligenceContinuationTest {
                 new EnhancedDueDiligenceService.ContinuationTaskPlan(22L, "analyst", "调查一组",
                         LocalDateTime.now().plusDays(5), List.of("TRANSACTION_PURPOSE"),
                         "完成收款主体与合同买方一致性的独立核验并记录方法与观察",
-                        "{\"issueIds\":[9],\"standard\":\"核验完成并复核\"}"));
+                        "{\"issueIds\":[9],\"standard\":\"核验完成并复核\"}",
+                        "DELIVERY:PO-001", null, null));
 
         service.transferObligations(CASE_ID, "reviewer", LocalDateTime.now(), plans, 88L);
 
@@ -116,7 +117,8 @@ class EnhancedDueDiligenceContinuationTest {
     void continuationPlanWithoutCompletionStandardIsRejected() {
         List<EnhancedDueDiligenceService.ContinuationTaskPlan> plans = List.of(
                 new EnhancedDueDiligenceService.ContinuationTaskPlan(22L, "analyst", "调查一组",
-                        LocalDateTime.now().plusDays(5), List.of(), "以后再查", null));
+                        LocalDateTime.now().plusDays(5), List.of(), "以后再查", null,
+                        "DELIVERY:PO-001", null, null));
 
         assertThatThrownBy(() -> service.transferObligations(CASE_ID, "reviewer", LocalDateTime.now(),
                 plans, null))
@@ -156,7 +158,8 @@ class EnhancedDueDiligenceContinuationTest {
         when(repository.findByIdAndCaseId(23L, CASE_ID)).thenReturn(Optional.of(second));
         var plan = new EnhancedDueDiligenceService.ContinuationTaskPlan(22L, "analyst", "team-a",
                 LocalDateTime.now().plusDays(3), List.of("TRANSACTION_PURPOSE"),
-                "核验第一项义务：收款主体一致性，观察与方法已记录", "{\"issueIds\":[9]}");
+                "核验第一项义务：收款主体一致性，观察与方法已记录", "{\"issueIds\":[9]}",
+                "DELIVERY:PO-001", null, null);
         service.transferObligations(CASE_ID, "reviewer", LocalDateTime.now(), List.of(plan), 88L);
         // 只有被引用的 first 被取消；second 保持 OPEN（义务守恒）
         assertThat(first.getStatus()).isEqualTo(EnhancedDueDiligenceStatus.CANCELLED);
@@ -172,10 +175,12 @@ class EnhancedDueDiligenceContinuationTest {
         when(repository.findByIdAndCaseId(22L, CASE_ID)).thenReturn(Optional.of(origin));
         var plan1 = new EnhancedDueDiligenceService.ContinuationTaskPlan(22L, "analyst", "team-a",
                 LocalDateTime.now().plusDays(3), List.of("TRANSACTION_PURPOSE"),
-                "核验第一项：收款主体一致性的完整记录", null);
+                "核验第一项：收款主体一致性的完整记录", null,
+                "DELIVERY:PO-001", null, null);
         var plan2 = new EnhancedDueDiligenceService.ContinuationTaskPlan(22L, "analyst", "team-b",
                 LocalDateTime.now().plusDays(4), List.of("SOURCE_OF_FUNDS"),
-                "核验第二项：资金来源的完整记录", null);
+                "核验第二项：资金来源的完整记录", null,
+                "DELIVERY:PO-001", null, null);
         assertThatThrownBy(() -> service.transferObligations(CASE_ID, "reviewer",
                 LocalDateTime.now(), List.of(plan1, plan2), 88L))
                 .isInstanceOf(IllegalArgumentException.class)

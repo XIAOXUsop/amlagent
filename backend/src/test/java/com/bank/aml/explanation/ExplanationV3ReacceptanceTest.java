@@ -159,7 +159,13 @@ class ExplanationV3ReacceptanceTest {
         when(artifacts.findByIdAndCaseId(any(), ArgumentMatchers.eq(CASE_ID))).thenAnswer(inv ->
                 Optional.ofNullable(artifactById.get(inv.getArgument(0, Long.class))));
         when(verifications.findByArtifactVersionIdOrderByEventTimeAsc(any())).thenReturn(List.of());
-        when(verifications.save(any())).thenAnswer(inv -> {
+                // FR-01 评估器链查询：材料级通用核验（subjectFactKey=NULL 兼容路径）
+        when(verifications.findByArtifactVersionIdAndSubjectFactKeyOrderByEventTimeAscIdAsc(
+                ArgumentMatchers.eq(1L), any())).thenReturn(List.of());
+        // 材料级通用核验链随 save 动态更新（与 FR-01 评估器一致：任一题目事实键均可读链）
+        when(verifications.findByArtifactVersionIdAndSubjectFactKeyIsNullOrderByEventTimeAscIdAsc(any()))
+                .thenAnswer(inv -> allEventsFor(inv.getArgument(0, Long.class)));
+when(verifications.save(any())).thenAnswer(inv -> {
             EvidenceVerificationEvent saved = inv.getArgument(0);
             if (saved.getId() == null) {
                 setId(saved, idSeq.incrementAndGet());
@@ -206,7 +212,8 @@ class ExplanationV3ReacceptanceTest {
 
         service = new ExplanationWorkspaceService(cases, units, submissions, issues, bases, artifacts,
                 verifications, evidenceUses, issueReviews, userAccounts, coverage, hypotheses, alerts, edd,
-                new ExplanationPolicyCatalog(), audit, source, customerData, mapper, CLOCK);
+                new ExplanationPolicyCatalog(), audit, source, customerData,
+                new EvidenceAdmissibilityService(artifacts, verifications), mapper, CLOCK);
     }
 
     private final java.util.Map<Long, java.util.List<EvidenceVerificationEvent>> eventStore =
@@ -243,10 +250,11 @@ class ExplanationV3ReacceptanceTest {
     void referencedMaterialWithoutVerificationIsRejected() throws Exception {
         service.captureEvidence(CASE_ID, "CORE_BANKING", "TXN-DOC-001", "analyst");
         saveExplainedSettlementDraftWithArtifact(1L);
+        // FR-01：错误消息更新为"本题事实尚无有效 CONFIRMED 核验"（其它题的核验不能替代）
         assertThatThrownBy(() -> service.submitUnit(CASE_ID, 100L, 0,
                 service.reviewBasisToken(CASE_ID), "RC-03-V", "analyst"))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("尚无任何核验记录");
+                .hasMessageContaining("尚无有效 CONFIRMED 核验");
     }
 
     /** 正常成功样例：RESOLVED 材料 + CONFIRMED 核验 → EXPLAINED 可提交、最终排除通过。 */
@@ -260,6 +268,42 @@ class ExplanationV3ReacceptanceTest {
         assertThatCode(() -> service.validateReadyForReview(caseEntity,
                 ReviewDecision.EXCLUDE_FALSE_POSITIVE, "reviewer-b",
                 service.reviewBasisToken(CASE_ID))).doesNotThrowAnyException();
+    }
+
+    // ==================== RF-02（FR-02）：整体不适用必须拒绝 ====================
+
+    /** 此前：NOT_APPLICABLE 只需理由文字即可跳过。 */
+    @Test
+    void allQuestionsNotApplicableIsRejected() throws Exception {
+        prepareVerifiedMaterial();
+        ObjectNode draft = explainedSettlementDraft(1L);
+        for (String code : List.of("Q1", "Q2", "Q3", "Q4", "Q5", "Q6")) {
+            ((ObjectNode) draft.path("questions").path(code)).put("assessment", "NOT_APPLICABLE")
+                    .put("judgement", "本案不适用该问题");
+            ((ObjectNode) draft.path("questions").path(code)).putArray("artifactVersionIds");
+        }
+        unit.setDraftJson(mapper.writeValueAsString(draft));
+        assertThatThrownBy(() -> service.submitUnit(CASE_ID, 100L, 0,
+                service.reviewBasisToken(CASE_ID), "RF-02", "analyst"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("不允许整体不适用")
+                .hasMessageContaining("FR-02");
+    }
+
+    /** FR-02 政策核定矩阵：当前政策全部六题必答；notApplicableAllowed 对任意配方/题目返回 false。 */
+    @Test
+    void policyExceptionMatrixAllCoreQuestions() {
+        ExplanationPolicyCatalog catalog = new ExplanationPolicyCatalog();
+        for (String policy : List.of(ExplanationPolicyCatalog.GOODS_SETTLED_V1,
+                ExplanationPolicyCatalog.GOODS_PREPAY_V1,
+                ExplanationPolicyCatalog.GOODS_GROUP_PAYMENT_V1)) {
+            for (String code : List.of("Q1", "Q2", "Q3", "Q4", "Q5", "Q6")) {
+                assertThat(catalog.notApplicableAllowed(policy, code))
+                        .as(policy + " / " + code)
+                        .isFalse();
+            }
+        }
+        assertThat(ExplanationPolicyCatalog.POLICY_VERSION).isNotBlank();
     }
 
     // ==================== RC-05（A6-02）：授权必填 + 资金腿全覆盖 ====================
@@ -361,6 +405,45 @@ class ExplanationV3ReacceptanceTest {
                 .hasMessageContaining("未到期不等于已安排");
     }
 
+    /** RF-04（FR-03）：无关任务（factKey 不匹配）承接交付义务 → 视为未覆盖，最终排除拒绝。 */
+    @Test
+    void mismatchedObligationTaskDoesNotCoverDeliveryObligation() throws Exception {
+        prepareVerifiedMaterial();
+        unit.setDraftJson(mapper.writeValueAsString(prepayDraft("2026-12-01")));
+        service.submitUnit(CASE_ID, 100L, 0, service.reviewBasisToken(CASE_ID), "RF-04", "analyst");
+
+        com.bank.aml.security.UserAccount assignee = new com.bank.aml.security.UserAccount();
+        assignee.setUsername("analyst");
+        assignee.setRole("ANALYST");
+        assignee.setEnabled(true);
+        when(userAccounts.findByUsername("analyst")).thenReturn(Optional.of(assignee));
+        // 任务一切合格，但 obligationFactKey 绑定的是另一个义务（退款权限，非本提交的交付义务）
+        EnhancedDueDiligenceRequest mismatched = new EnhancedDueDiligenceRequest();
+        setId(mismatched, 67L);
+        mismatched.setCaseId(CASE_ID);
+        mismatched.setRoundNo(2);
+        mismatched.setReasonCode("CONTINUING_REVIEW");
+        mismatched.setRequiredItemsJson("[\"SOURCE_OF_FUNDS\"]");
+        mismatched.setRequestedBy("reviewer-b");
+        mismatched.setRequestedAt(LocalDateTime.now(CLOCK));
+        mismatched.setAssignedTo("analyst");
+        mismatched.setAssignedUnit("调查一组");
+        mismatched.setDueAt(LocalDateTime.now(CLOCK).plusDays(30));
+        mismatched.setStatus(EnhancedDueDiligenceStatus.OPEN);
+        mismatched.setPurpose(EddTaskPurpose.CONTINUING_REVIEW);
+        mismatched.setCompletionStandard("退款收款权限核验：核对主体与账户归属，观察与限制已记录");
+        mismatched.setObligationFactKey("REFUND_AUTHORITY:T-1002");
+        when(edd.findByCaseIdAndStatusOrderByIdAsc(ArgumentMatchers.eq(CASE_ID), any()))
+                .thenReturn(List.of(mismatched));
+
+        assertThatThrownBy(() -> service.validateReadyForReview(caseEntity,
+                ReviewDecision.EXCLUDE_FALSE_POSITIVE, "reviewer-b",
+                service.reviewBasisToken(CASE_ID)))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("DELIVERY:PO-2026-088")
+                .hasMessageContaining("错绑任务不能替代本义务");
+    }
+
     /** 合格承接任务存在 → 预付解释的最终排除通过（成功样例，防"一律拒绝"）。 */
     @Test
     void prepayWithQualifyingContinuingTaskPasses() throws Exception {
@@ -387,6 +470,8 @@ class ExplanationV3ReacceptanceTest {
         continuing.setStatus(EnhancedDueDiligenceStatus.OPEN);
         continuing.setPurpose(EddTaskPurpose.CONTINUING_REVIEW);
         continuing.setCompletionStandard("2026-12-01 交付核验：核对签收记录与入账，观察与限制已记录");
+        // FR-03：义务事实键必须与提交派生的 DELIVERY:PO-2026-088 匹配
+        continuing.setObligationFactKey("DELIVERY:PO-2026-088");
         when(edd.findByCaseIdAndStatusOrderByIdAsc(ArgumentMatchers.eq(CASE_ID), any()))
                 .thenReturn(List.of(continuing));
 

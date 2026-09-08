@@ -81,6 +81,7 @@ public class ExplanationWorkspaceService implements ExplanationReadinessPort {
     private final com.bank.aml.investigation.AmlAlertRepository alertRepository;
     private final EnhancedDueDiligenceRequestRepository eddRepository;
     private final ExplanationPolicyCatalog policyCatalog;
+    private final EvidenceAdmissibilityService admissibilityService;
     private final AuditOutboxService auditOutbox;
     private final EvidenceSourcePort evidenceSourcePort;
     private final com.bank.aml.datasource.CustomerDataPort customerDataPort;
@@ -106,12 +107,14 @@ public class ExplanationWorkspaceService implements ExplanationReadinessPort {
                                        AuditOutboxService auditOutbox,
                                        EvidenceSourcePort evidenceSourcePort,
                                        com.bank.aml.datasource.CustomerDataPort customerDataPort,
+                                       EvidenceAdmissibilityService admissibilityService,
                                        ObjectMapper objectMapper) {
         this(caseRepository, unitRepository, submissionRepository, issueRepository, basisRepository,
                 artifactRepository, verificationRepository, evidenceUseRepository, issueReviewRepository,
                 userAccountRepository, coverageRepository,
                 hypothesisRepository, alertRepository, eddRepository, policyCatalog, auditOutbox,
-                evidenceSourcePort, customerDataPort, objectMapper, Clock.systemDefaultZone());
+                evidenceSourcePort, customerDataPort, admissibilityService, objectMapper,
+                Clock.systemDefaultZone());
     }
 
     ExplanationWorkspaceService(CaseRepository caseRepository,
@@ -132,6 +135,7 @@ public class ExplanationWorkspaceService implements ExplanationReadinessPort {
                                 AuditOutboxService auditOutbox,
                                 EvidenceSourcePort evidenceSourcePort,
                                 com.bank.aml.datasource.CustomerDataPort customerDataPort,
+                                EvidenceAdmissibilityService admissibilityService,
                                 ObjectMapper objectMapper,
                                 Clock clock) {
         this.caseRepository = caseRepository;
@@ -152,6 +156,7 @@ public class ExplanationWorkspaceService implements ExplanationReadinessPort {
         this.auditOutbox = auditOutbox;
         this.evidenceSourcePort = evidenceSourcePort;
         this.customerDataPort = customerDataPort;
+        this.admissibilityService = admissibilityService;
         this.objectMapper = objectMapper;
         this.clock = clock;
     }
@@ -392,6 +397,15 @@ public class ExplanationWorkspaceService implements ExplanationReadinessPort {
                                                                 String method, String observedFacts,
                                                                 String limitations, String result,
                                                                 String actor) {
+        return recordVerification(caseId, artifactVersionId, method, observedFacts, limitations, result,
+                actor, null);
+    }
+
+    /** FR-01：带核验对象（questionCode/claim 事实键）的核验记录；同一材料可面向不同事实分别核验。 */
+    public ExplanationViews.VerificationView recordVerification(Long caseId, Long artifactVersionId,
+                                                                String method, String observedFacts,
+                                                                String limitations, String result,
+                                                                String actor, String subjectFactKey) {
         EvidenceArtifactVersion artifact = artifactRepository.findByIdAndCaseId(artifactVersionId, caseId)
                 .orElseThrow(() -> new IllegalArgumentException("材料版本不存在：" + artifactVersionId));
         if (!"RESOLVED".equals(artifact.getAvailability())) {
@@ -420,6 +434,8 @@ public class ExplanationWorkspaceService implements ExplanationReadinessPort {
         event.setResult(normalizedResult);
         event.setActor(actor);
         event.setPreviousEventId(previous);
+        event.setSubjectFactKey(subjectFactKey == null || subjectFactKey.isBlank()
+                ? null : subjectFactKey.trim());
         event.setEventTime(LocalDateTime.now(clock));
         EvidenceVerificationEvent saved = verificationRepository.save(event);
         if ("MISMATCH".equals(normalizedResult)) {
@@ -1135,6 +1151,13 @@ public class ExplanationWorkspaceService implements ExplanationReadinessPort {
      * 期限在未来、完成标准非空。任意一项无承接 → 义务缺口 blocker。
      * 一条 CONTINUING_REVIEW 不能覆盖整个案件的多项义务（每项义务至少一个专属承接）。
      */
+    /**
+     * 逐义务覆盖校验（FR-03/v4 §4.3 强化）：
+     * 从 CURRENT 提交的 payload 派生义务事实键（如 DELIVERY:PO-001 / REFUND_AUTHORITY:T-1002），
+     * 逐项匹配 OPEN CONTINUING_REVIEW 任务——同案件、同 obligationFactKey、有效承办人、
+     * 未来期限、完成标准。错绑任务（factKey 不匹配）视为未覆盖（RF-04）。
+     * 无 factKey 的存量任务不参与新语义匹配（不能因为任务数等于义务数就视为覆盖）。
+     */
     private List<String> validateObligationCoverage(CaseEntity caseEntity) {
         List<EnhancedDueDiligenceRequest> openTasks = eddRepository
                 .findByCaseIdAndStatusOrderByIdAsc(caseEntity.getId(),
@@ -1149,32 +1172,64 @@ public class ExplanationWorkspaceService implements ExplanationReadinessPort {
             if (!current.isFollowupRequired() || !assessedSubmissionIds.add(current.getId())) {
                 continue; // 每个采用提交评估一次（同事务内重复 save 不重复计义务）
             }
-            EnhancedDueDiligenceRequest matched = null;
-            for (EnhancedDueDiligenceRequest task : openTasks) {
-                if (claimedTaskIds.contains(task.getId())) {
-                    continue; // 每项义务至少一个专属承接；一条任务不覆盖多项义务
-                }
-                boolean assignedOk = task.getAssignedTo() != null
-                        && userAccountRepository.findByUsername(task.getAssignedTo())
-                        .filter(user -> user.isEnabled())
-                        .filter(user -> java.util.Set.of("ANALYST", "ADMIN").contains(user.getRole()))
-                        .isPresent();
-                boolean dueOk = task.getDueAt() != null && task.getDueAt().isAfter(LocalDateTime.now(clock));
-                boolean standardOk = task.getCompletionStandard() != null
-                        && task.getCompletionStandard().trim().length() >= 10;
-                if (assignedOk && dueOk && standardOk) {
-                    matched = task;
-                    claimedTaskIds.add(task.getId());
-                    break;
-                }
+            List<String> obligationKeys = deriveObligationKeys(current);
+            if (obligationKeys.isEmpty()) {
+                // payload 未声明义务键（存量提交）：保持提交级义务语义（一项提交一项义务）
+                obligationKeys = List.of("SUBMISSION:" + current.getId());
             }
-            if (matched == null) {
-                blockers.add("采用提交 #" + current.getId() + " 含未完成跟进义务（followupRequired），"
-                        + "但没有满足条件的持续核验任务承接（需要：同案件 OPEN CONTINUING_REVIEW、"
-                        + "有效承办人、未来期限、明确完成标准）；未到期不等于已安排（A6-03）");
+            for (String obligationKey : obligationKeys) {
+                EnhancedDueDiligenceRequest matched = null;
+                for (EnhancedDueDiligenceRequest task : openTasks) {
+                    if (claimedTaskIds.contains(task.getId())) {
+                        continue; // 每项义务至少一个专属承接；一条任务不覆盖多项义务
+                    }
+                    // FR-03：义务事实键必须匹配——用无关任务承接交付/退款义务视为未覆盖
+                    if (!obligationKey.equals(task.getObligationFactKey())) {
+                        continue;
+                    }
+                    boolean assignedOk = task.getAssignedTo() != null
+                            && userAccountRepository.findByUsername(task.getAssignedTo())
+                            .filter(user -> user.isEnabled())
+                            .filter(user -> java.util.Set.of("ANALYST", "ADMIN").contains(user.getRole()))
+                            .isPresent();
+                    boolean dueOk = task.getDueAt() != null
+                            && task.getDueAt().isAfter(LocalDateTime.now(clock));
+                    boolean standardOk = task.getCompletionStandard() != null
+                            && task.getCompletionStandard().trim().length() >= 10;
+                    if (assignedOk && dueOk && standardOk) {
+                        matched = task;
+                        claimedTaskIds.add(task.getId());
+                        break;
+                    }
+                }
+                if (matched == null) {
+                    blockers.add("义务 " + obligationKey + "（提交 #" + current.getId() + "）无有效承接任务"
+                            + "（需要：同案件 OPEN CONTINUING_REVIEW、obligationFactKey 匹配 " + obligationKey
+                            + "、有效承办人、未来期限、明确完成标准）；未到期不等于已安排、"
+                            + "错绑任务不能替代本义务（FR-03/RF-04）");
+                }
             }
         }
         return blockers;
+    }
+
+    /** 从提交 payload 派生义务事实键（v4 §4.3）：预付交期 → DELIVERY:{contractNumber}。 */
+    private List<String> deriveObligationKeys(ExplanationSubmission submission) {
+        try {
+            JsonNode draft = objectMapper.readTree(submission.getPayloadJson());
+            JsonNode policy = draft.get("policy");
+            if (policy != null && policy.isObject()
+                    && ExplanationPolicyCatalog.STAGE_ADVANCE_PAYMENT.equalsIgnoreCase(
+                    text(policy, "paymentStage"))) {
+                String contract = text(policy, "contractNumber");
+                if (!contract.isBlank()) {
+                    return List.of("DELIVERY:" + contract.trim());
+                }
+            }
+        } catch (Exception ignored) {
+            // payload 损坏 → 空列表走提交级兜底键
+        }
+        return List.of();
     }
 
     private void reevaluatePrepayDue(CaseEntity caseEntity) {
@@ -1696,6 +1751,12 @@ public class ExplanationWorkspaceService implements ExplanationReadinessPort {
                     text(question, "assessment"), "问题 " + code + " 评估");
             String judgement = text(question, "judgement");
             if (assessment == QuestionAssessment.NOT_APPLICABLE) {
+                // FR-02/RF-02：NOT_APPLICABLE 是"服务端核定通过的例外"，不是用户可自由勾选的跳过；
+                // 政策未允许该题例外时，整体不适用必须拒绝（"没有证据解释"≠"已有证据证实例外"）。
+                if (!policyCatalog.notApplicableAllowed(policyCode, code)) {
+                    throw new IllegalArgumentException("问题 " + code + " 在配方 " + policyCode
+                            + " 中是核心问题，不允许整体不适用（FR-02）；请补充核验或提交 UNRESOLVED 保留未知");
+                }
                 if (judgement.length() < 4) {
                     throw new IllegalArgumentException("问题 " + code + " 不适用时需说明不适用理由");
                 }
@@ -1712,25 +1773,14 @@ public class ExplanationWorkspaceService implements ExplanationReadinessPort {
             if (assessment == QuestionAssessment.UNKNOWN || factKind == FactKind.UNKNOWN) {
                 criticalUnknown = true;
             }
-            boolean questionHasEvidence = false;
+            List<Long> questionArtifacts = new ArrayList<>();
             for (JsonNode artifactId : intList(question, "artifactVersionIds")) {
                 long id = artifactId.asLong();
                 EvidenceArtifactVersion artifact = artifactRepository.findByIdAndCaseId(id, caseEntity.getId())
                         .orElseThrow(() -> new IllegalArgumentException(
                                 "问题 " + code + " 引用的材料不属于当前案件：" + id));
-                if ("MISMATCH".equals(artifact.getIntegrityStatus())) {
-                    throw new IllegalArgumentException("问题 " + code + " 引用了完整性不符（MISMATCH）的材料："
-                            + artifact.getArtifactKey() + "；需先更正来源（INTEGRITY_BLOCKER）");
-                }
-                // A6-01/RC-03：只有 RESOLVED 的材料可作为可采用的解释依据；
-                // NOT_FOUND/UNAVAILABLE/FORBIDDEN 的登记不能凑数（声明 ≠ 已核验）。
-                if (!"RESOLVED".equals(artifact.getAvailability())) {
-                    throw new IllegalArgumentException("问题 " + code + " 引用的材料未取得内容（"
-                            + artifact.getAvailability() + "）：" + artifact.getArtifactKey()
-                            + "；需先重试来源或更换替代来源");
-                }
                 artifactIds.add(id);
-                questionHasEvidence = true;
+                questionArtifacts.add(id);
             }
             for (JsonNode issueId : intList(question, "issueIds")) {
                 long id = issueId.asLong();
@@ -1739,21 +1789,16 @@ public class ExplanationWorkspaceService implements ExplanationReadinessPort {
                                 "问题 " + code + " 引用的问题不属于当前案件：" + id));
                 issueIds.add(id);
             }
-            // A6-01/RC-03：可采用的结论（SATISFIED/NOT_SATISFIED）必须引用至少一份 RESOLVED 材料
-            // 且该材料有满足用途的核验记录；人工声明（SATISFIED 字符串）不能替代来源核验。
-            // 例外：NOT_APPLICABLE 不需要材料（以明确的适用理由成立）；UNKNOWN 允许无材料（关键未知路径）。
+            // FR-01（v4 §4.1）：可采用的结论（SATISFIED/NOT_SATISFIED）逐题独立评估——
+            // 由统一评估器核验"RESOLVED 材料 + 本题事实上的有效 CONFIRMED 核验链"；
+            // 不共享其它题的累积材料集合（Q1 的核验不能替 Q2 通过），同一材料不同事实
+            // 的核验链互不错误覆盖；UNRESOLVED/MISMATCH 使该题失去肯定支持。
             if (assessment == QuestionAssessment.SATISFIED || assessment == QuestionAssessment.NOT_SATISFIED) {
-                if (!questionHasEvidence) {
-                    throw new IllegalArgumentException("问题 " + code + " 评估为 " + assessment
-                            + " 但未引用任何已取得（RESOLVED）的材料；空引用不能形成可采用结论"
-                            + "（A6-01），请先抓取来源材料并在问题中引用");
-                }
-                boolean hasVerification = artifactIds.stream()
-                        .anyMatch(artifactId -> !verificationRepository
-                                .findByArtifactVersionIdOrderByEventTimeAsc(artifactId).isEmpty());
-                if (!hasVerification) {
-                    throw new IllegalArgumentException("问题 " + code + " 引用的材料尚无任何核验记录；"
-                            + "登记材料 ≠ 已核验（A6-01），请先记录具体核验动作（方法/观察/结果）再提交");
+                EvidenceAdmissibilityService.AdmissibilityResult verdict =
+                        admissibilityService.assessQuestion(caseEntity.getId(),
+                                new EvidenceAdmissibilityService.SubjectEvidence(code, questionArtifacts));
+                if (!verdict.admissible()) {
+                    throw new IllegalArgumentException(verdict.remediation());
                 }
             }
         }

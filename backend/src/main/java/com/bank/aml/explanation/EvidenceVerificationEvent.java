@@ -44,6 +44,10 @@ public class EvidenceVerificationEvent {
 
     private Long previousEventId;
 
+    /** 核验对象/事实键（FR-01/V32）：Q1~Q6 或 Claim 事实键；NULL=材料级通用核验（存量兼容）。 */
+    @Column(name = "subject_fact_key", length = 96)
+    private String subjectFactKey;
+
     @Column(nullable = false)
     private LocalDateTime eventTime;
 
@@ -63,6 +67,8 @@ public class EvidenceVerificationEvent {
     public String getActor() { return actor; }
     public void setActor(String value) { actor = value; }
     public Long getPreviousEventId() { return previousEventId; }
+    public String getSubjectFactKey() { return subjectFactKey; }
+    public void setSubjectFactKey(String value) { subjectFactKey = value; }
     public void setPreviousEventId(Long value) { previousEventId = value; }
     public LocalDateTime getEventTime() { return eventTime; }
     public void setEventTime(LocalDateTime value) { eventTime = value; }

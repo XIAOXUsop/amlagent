@@ -72,7 +72,8 @@ public class ExplanationController {
             throw new IllegalArgumentException("核验事实包含不被允许的内容");
         }
         return workspaceService.recordVerification(caseId, versionId, request.method(),
-                request.observedFacts(), request.limitations(), request.result(), operator());
+                request.observedFacts(), request.limitations(), request.result(), operator(),
+                request.subjectFactKey());
     }
 
     /** 保存六问题草稿（expectedDraftRevision 乐观锁；不产生最终结论）。 */
@@ -204,7 +205,9 @@ public class ExplanationController {
     public record CaptureRequest(String sourceSystem, String sourceReference) {
     }
 
-    public record VerificationRequest(String method, String observedFacts, String limitations, String result) {
+    public record VerificationRequest(String method, String observedFacts, String limitations, String result,
+                                      /** FR-01：核验对象（Q1~Q6 或 Claim 事实键）；空为材料级通用核验。 */
+                                      String subjectFactKey) {
     }
 
     public record DraftRequest(int expectedDraftRevision, String draftJson) {

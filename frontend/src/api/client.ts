@@ -999,7 +999,9 @@ export async function captureExplanationEvidence(
 
 export async function recordEvidenceVerification(
   caseId: number, versionId: number,
-  body: { method: string; observedFacts: string; limitations?: string; result: string },
+  body: { method: string; observedFacts: string; limitations?: string; result: string;
+          /** FR-01：核验对象（Q1~Q6 或 Claim 事实键）；空为材料级通用核验。 */
+          subjectFactKey?: string },
 ) {
   return (await api.post(`/cases/${caseId}/investigation/evidence/${versionId}/verifications`, body)).data
 }

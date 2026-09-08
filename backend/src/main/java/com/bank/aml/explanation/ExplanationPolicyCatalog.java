@@ -116,6 +116,24 @@ public class ExplanationPolicyCatalog {
         return due != null && !due.isBefore(evaluateDate);
     }
 
+    /**
+     * NOT_APPLICABLE 例外核定（FR-02/v4 §4.2）：
+     * 用户只能请求例外，服务端按政策版本输出核定结果。
+     * 第一版：三种已支持配方的全部六题均为核心问题，不允许整体不适用——
+     * "没有证据解释"不等于"已有证据证实例外"。
+     * 政策版本随提交冻结（payload 不可变），当前政策被修改不影响历史提交的解释（RF-28 语义前置）。
+     */
+    public static final String POLICY_VERSION = "EXPLANATION-POLICY-2026-09-08-V1";
+
+    /** 政策允许例外的问题清单；空集=全部六题必答（第一版）。 */
+    private static final java.util.Map<String, java.util.Set<String>> NOT_APPLICABLE_ALLOWED =
+            java.util.Map.of(); // 预留：如后续允许 GOODS_SETTLED_V1 的 Q6 部分例外，在此登记
+
+    public boolean notApplicableAllowed(String policyCode, String questionCode) {
+        java.util.Set<String> allowed = NOT_APPLICABLE_ALLOWED.get(policyCode);
+        return allowed != null && allowed.contains(questionCode);
+    }
+
     /** 与已核定配方不一致的声明：提交时拒绝，不自动切换配方。 */
     public boolean matchesDeclared(String policyCode, Applicability input) {
         Resolution resolution = resolve(input);

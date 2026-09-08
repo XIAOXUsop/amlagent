@@ -56,7 +56,8 @@ public class ReviewController {
                                 .map(item -> new com.bank.aml.review.EnhancedDueDiligenceService.ContinuationTaskPlan(
                                         item.originRequestId(), item.assignedTo(), item.assignedUnit(),
                                         item.dueAt(), item.requiredItems(), item.completionStandard(),
-                                        item.issueBindingsJson()))
+                                        item.issueBindingsJson(), item.obligationFactKey(),
+                                        item.obligationAmount(), item.obligationTransactionIds()))
                                 .toList());
         return review;
     }
@@ -76,7 +77,8 @@ public class ReviewController {
                                 .map(item -> new com.bank.aml.review.EnhancedDueDiligenceService.ContinuationTaskPlan(
                                         item.originRequestId(), item.assignedTo(), item.assignedUnit(),
                                         item.dueAt(), item.requiredItems(), item.completionStandard(),
-                                        item.issueBindingsJson()))
+                                        item.issueBindingsJson(), item.obligationFactKey(),
+                                        item.obligationAmount(), item.obligationTransactionIds()))
                                 .toList());
     }
 
@@ -104,7 +106,11 @@ public class ReviewController {
 
     public record ContinuationTaskRequest(Long originRequestId, String assignedTo, String assignedUnit,
                                           LocalDateTime dueAt, List<String> requiredItems,
-                                          String completionStandard, String issueBindingsJson) {
+                                          String completionStandard, String issueBindingsJson,
+                                          /** FR-03/V33：本任务承接的义务事实键。 */
+                                          String obligationFactKey,
+                                          java.math.BigDecimal obligationAmount,
+                                          String obligationTransactionIds) {
     }
 
     public record PrecheckRequest(String decision, String reviewBasisToken,

@@ -212,6 +212,15 @@ public class EnhancedDueDiligenceService {
             task.setIssueBindings(plan.issueBindingsJson());
             // A5-07：完成标准完整保存（长度审计不等于保存）。
             task.setCompletionStandard(plan.completionStandard().trim());
+            // FR-03：义务事实键/金额/交易随任务保存；无 factKey 的接续不能通过义务覆盖校验。
+            if (plan.obligationFactKey() == null || plan.obligationFactKey().isBlank()) {
+                throw new IllegalArgumentException("接续任务必须绑定义务事实键（obligationFactKey，"
+                        + "如 DELIVERY:PO-001）；无绑定的任务不能视为义务已承接（FR-03）");
+            }
+            task.setObligationFactKey(plan.obligationFactKey().trim());
+            task.setObligationAmount(plan.obligationAmount());
+            task.setObligationTransactionIds(plan.obligationTransactionIds() == null ? null
+                    : plan.obligationTransactionIds().trim());
             task.setDueCalendarVersion(com.bank.aml.explanation.ExplanationWorkspaceService.DEFAULT_CALENDAR_VERSION);
             repository.save(task);
             auditOutbox.enqueue("EDD_CONTINUATION:" + caseId + ":" + task.getRoundNo(),
@@ -249,8 +258,19 @@ public class EnhancedDueDiligenceService {
             LocalDateTime dueAt,
             List<String> requiredItems,
             String completionStandard,
-            String issueBindingsJson
+            String issueBindingsJson,
+            /** FR-03/V33：本任务承接的义务事实键（如 DELIVERY:PO-001）；错绑视为未覆盖。 */
+            String obligationFactKey,
+            java.math.BigDecimal obligationAmount,
+            String obligationTransactionIds
     ) {
+        /** 兼容既有调用（无义务字段）。 */
+        public ContinuationTaskPlan(Long originRequestId, String assignedTo, String assignedUnit,
+                                    LocalDateTime dueAt, List<String> requiredItems,
+                                    String completionStandard, String issueBindingsJson) {
+            this(originRequestId, assignedTo, assignedUnit, dueAt, requiredItems, completionStandard,
+                    issueBindingsJson, null, null, null);
+        }
     }
 
     @Transactional

@@ -83,7 +83,7 @@ class ExplanationWorkspaceServiceTest {
             submissions, issues, bases, artifacts, verifications, evidenceUses,
             issueReviews, userAccounts, coverage, hypotheses,
             alerts, eddRequests, new ExplanationPolicyCatalog(), auditOutbox, evidenceSource,
-            customerData, objectMapper, clock);
+            customerData, new EvidenceAdmissibilityService(artifacts, verifications), objectMapper, clock);
 
     private final CaseEntity caseEntity = v2Case();
     private final AlertExplanationUnit unit = unit(100L, 11L, 31L);
@@ -142,6 +142,11 @@ class ExplanationWorkspaceServiceTest {
         // A6-01：SATISFIED 引用的材料必须有核验记录（材料 1 已核验 CONFIRMED）
         when(verifications.findByArtifactVersionIdOrderByEventTimeAsc(1L)).thenReturn(List.of(
                 verificationEvent(1L, "CONFIRMED")));
+        // FR-01 评估器链查询：材料 1 在任意题目事实键上的材料级核验（subjectFactKey=NULL 兼容路径）
+        when(verifications.findByArtifactVersionIdAndSubjectFactKeyOrderByEventTimeAscIdAsc(
+                ArgumentMatchers.eq(1L), any())).thenReturn(List.of());
+        when(verifications.findByArtifactVersionIdAndSubjectFactKeyIsNullOrderByEventTimeAscIdAsc(1L))
+                .thenAnswer(inv -> List.of(verificationEvent(1L, "CONFIRMED")));
         when(coverage.save(any())).thenAnswer(inv -> inv.getArgument(0));
         when(coverage.findByAlertId(11L)).thenReturn(Optional.of(coverageRow));
         when(hypotheses.save(any())).thenAnswer(inv -> inv.getArgument(0));
@@ -598,7 +603,7 @@ class ExplanationWorkspaceServiceTest {
         var laterService = new ExplanationWorkspaceService(cases, units, submissions, issues, bases,
                 artifacts, verifications, evidenceUses, issueReviews, userAccounts, coverage, hypotheses,
                 alerts, eddRequests, new ExplanationPolicyCatalog(), auditOutbox, evidenceSource,
-                customerData, objectMapper, afterDue);
+                customerData, new EvidenceAdmissibilityService(artifacts, verifications), objectMapper, afterDue);
 
         assertThatThrownBy(() -> laterService.validateReadyForReview(caseEntity,
                 com.bank.aml.review.ReviewDecision.EXCLUDE_FALSE_POSITIVE,
@@ -641,6 +646,8 @@ class ExplanationWorkspaceServiceTest {
         continuing.setStatus(EnhancedDueDiligenceStatus.OPEN);
         continuing.setPurpose(EddTaskPurpose.CONTINUING_REVIEW);
         continuing.setCompletionStandard("2026-12-01 交付核验：核对签收记录与入账，观察与限制已记录");
+        // FR-03：义务事实键必须与提交派生的 DELIVERY:PO-2026-088 匹配
+        continuing.setObligationFactKey("DELIVERY:PO-2026-088");
         when(eddRequests.findByCaseIdAndStatusOrderByIdAsc(ArgumentMatchers.eq(CASE_ID), any()))
                 .thenReturn(List.of(continuing));
         service.validateReadyForReview(caseEntity,

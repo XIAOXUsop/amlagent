@@ -154,7 +154,12 @@ class ExplanationV3AdversarialRegressionTest {
         preVerified.setActor("verifier-x");
         when(verifications.findByArtifactVersionIdOrderByEventTimeAsc(1L))
                 .thenReturn(List.of(preVerified));
-        when(verifications.save(any())).thenAnswer(inv -> inv.getArgument(0));
+                // FR-01 评估器链查询：材料级通用核验（subjectFactKey=NULL 兼容路径）
+        when(verifications.findByArtifactVersionIdAndSubjectFactKeyOrderByEventTimeAscIdAsc(
+                ArgumentMatchers.eq(1L), any())).thenReturn(List.of());
+        when(verifications.findByArtifactVersionIdAndSubjectFactKeyIsNullOrderByEventTimeAscIdAsc(1L))
+                .thenReturn(List.of(preVerified));
+when(verifications.save(any())).thenAnswer(inv -> inv.getArgument(0));
         when(evidenceUses.save(any())).thenAnswer(inv -> {
             ExplanationEvidenceUse saved = inv.getArgument(0);
             if (saved.getId() == null) {
@@ -185,7 +190,8 @@ class ExplanationV3AdversarialRegressionTest {
 
         service = new ExplanationWorkspaceService(cases, units, submissions, issues, bases, artifacts,
                 verifications, evidenceUses, issueReviews, userAccounts, coverage, hypotheses, alerts, edd,
-                new ExplanationPolicyCatalog(), audit, source, customerData, mapper, CLOCK);
+                new ExplanationPolicyCatalog(), audit, source, customerData,
+                new EvidenceAdmissibilityService(artifacts, verifications), mapper, CLOCK);
     }
 
     private final java.util.concurrent.atomic.AtomicLong idSeq = new java.util.concurrent.atomic.AtomicLong(0);

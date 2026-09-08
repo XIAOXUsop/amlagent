@@ -86,8 +86,24 @@ public class RagEvaluator {
             String datasetHash,
             String reviewStatus,
             List<PerCase> details,
-            String pipeline
+            String pipeline,
+            /** FR-04：本次评测中 rerank 分段实际执行的样本数（A/B 中 HYBRID_RERANK 必须可验证）。 */
+            int rerankInvocations,
+            /** FR-04/RF-29：环境失败（配置要求重排/检索但实际未发生，如模型未加载）——
+             *  此时质量指标不代表检索能力，不能当作 A/B 的"零召回成功"或合格基线。 */
+            boolean environmentFailure
     ) {
+        /** 兼容既有调用（未记录实际管线的旧构造点）。 */
+        public RagEvalReport(int totalCases, double recallAt5, double top3HitRate, double mrr,
+                             double ndcgAt5, double abstentionAccuracy, double noAnswerRefusalRate,
+                             double p95DurationMs, double coldP50Ms, double coldP95Ms, double coldP99Ms,
+                             double warmP50Ms, double warmP95Ms, double warmP99Ms,
+                             SegmentedLatency segmentedMs, String datasetVersion, String datasetHash,
+                             String reviewStatus, List<PerCase> details, String pipeline) {
+            this(totalCases, recallAt5, top3HitRate, mrr, ndcgAt5, abstentionAccuracy, noAnswerRefusalRate,
+                    p95DurationMs, coldP50Ms, coldP95Ms, coldP99Ms, warmP50Ms, warmP95Ms, warmP99Ms,
+                    segmentedMs, datasetVersion, datasetHash, reviewStatus, details, pipeline, -1, false);
+        }
     }
 
     /** 当前生效索引评测（生产管线，语义上绕过缓存）。 */
@@ -130,6 +146,7 @@ public class RagEvaluator {
         List<Double> warmTimes = new ArrayList<>();
         Map<String, Long> segmentedSum = new LinkedHashMap<>();
         int segmentedCount = 0;
+        int rerankInvocations = 0;
 
         for (RagEvalDataset.RagEvalCase c : cases) {
             RetrievalRequest request = new RetrievalRequest(c.question(), c.question(),
@@ -183,6 +200,7 @@ public class RagEvaluator {
                 segmentedSum.merge(entry.getKey(), entry.getValue(), Long::sum);
             }
             if (!segmented.isEmpty()) segmentedCount++;
+            if (segmented.containsKey("rerank")) rerankInvocations++;
             details.add(new PerCase(c.id(), c.question(), c.answerable(), rank, abstained, coldMs,
                     cold.status().name(), cold.indexVersion(),
                     cold.hits().stream().map(hit -> hit.document().evidenceId()).toList(),
@@ -211,13 +229,16 @@ public class RagEvaluator {
             }
         }
 
+        // FR-04/RF-29：A/B 管线声称包含重排时必须记录实际重排调用；重排一次未发生
+        //（如本地模型制品缺失/熔断常闭）→ 环境失败，质量指标不代表检索能力。
+        boolean environmentFailure = pipeline == RetrievalPipeline.HYBRID_RERANK && rerankInvocations == 0;
         return new RagEvalReport(n, round1(recallAt5), round1(top3), round1(mrr * 100),
                 round1(ndcg * 100), round1(abstention), round1(noAnswerRefusal),
                 percentile(cold, 0.95), percentile(cold, 0.50), percentile(cold, 0.95), percentile(cold, 0.99),
                 percentile(warm, 0.50), percentile(warm, 0.95), percentile(warm, 0.99),
                 new SegmentedLatency(Map.copyOf(segmentedAverage)),
                 dataset.datasetVersion(), datasetHash, dataset.reviewStatus(), List.copyOf(details),
-                pipelineLabel);
+                pipelineLabel, rerankInvocations, environmentFailure);
     }
 
     private EnterpriseLegalRetriever effectiveRetriever(RetrievalPipeline pipeline) {
