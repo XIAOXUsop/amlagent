@@ -47,18 +47,25 @@ public class DemoEvidenceSourceAdapter implements EvidenceSourcePort {
                         + "有效期至 2026-12-31（客户上传，演示夹具）");
     }
 
+    /** 不可用标记（ConcurrentHashMap 不允许 null value，用独立集合记录）。 */
+    private final Set<String> unavailable = ConcurrentHashMap.newKeySet();
+
     /** 注册/更新受控夹具内容（测试与演示编排用；生产不调用）。 */
     public void putFixture(String sourceSystem, String sourceReference, String content) {
-        fixtures.put(fixtureKey(sourceSystem, sourceReference), content);
+        String key = fixtureKey(sourceSystem, sourceReference);
+        unavailable.remove(key);
+        fixtures.put(key, content);
     }
 
     /** 模拟来源系统暂不可用（不判虚假，等待或换替代来源）。 */
     public void markUnavailable(String sourceSystem, String sourceReference) {
-        fixtures.put(fixtureKey(sourceSystem, sourceReference), null);
+        unavailable.add(fixtureKey(sourceSystem, sourceReference));
     }
 
     public void removeFixture(String sourceSystem, String sourceReference) {
-        fixtures.remove(fixtureKey(sourceSystem, sourceReference));
+        String key = fixtureKey(sourceSystem, sourceReference);
+        fixtures.remove(key);
+        unavailable.remove(key);
     }
 
     @Override
@@ -67,12 +74,13 @@ public class DemoEvidenceSourceAdapter implements EvidenceSourcePort {
         if (!supportedSystems().contains(system)) {
             return Optional.empty();
         }
-        String content = fixtures.get(fixtureKey(system, sourceReference));
-        if (content == null && fixtures.containsKey(fixtureKey(system, sourceReference))) {
+        String key = fixtureKey(system, sourceReference);
+        if (unavailable.contains(key)) {
             // 已注册但标记不可用：UNAVAILABLE ≠ 虚假，不产生任何 RESOLVED 记录。
             return Optional.of(new FetchedContent(system, sourceReference, null, null,
                     Availability.UNAVAILABLE));
         }
+        String content = fixtures.get(key);
         if (content == null) {
             return Optional.of(new FetchedContent(system, sourceReference, null, null,
                     Availability.NOT_FOUND));

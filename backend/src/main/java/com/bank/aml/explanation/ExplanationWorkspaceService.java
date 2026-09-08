@@ -298,11 +298,16 @@ public class ExplanationWorkspaceService implements ExplanationReadinessPort {
                 next.setCapturedBy(actor);
                 next.setCapturedAt(LocalDateTime.now(clock));
                 EvidenceArtifactVersion savedNext = artifactRepository.save(next);
+                // TP-16/A5-05 语义：来源内容变更（新版本）→ 依赖旧版本的采用提交必须 STALE；
+                // 旧版本仍可回放，新版本待重新核验后由新提交引用。
+                List<Long> affected = staleSubmissionsUsingArtifact(caseId, existing.getId(),
+                        "ARTIFACT_CONTENT_CHANGED:" + artifactKey + ":v" + next.getVersion(), actor);
                 bumpEpoch(caseId, "ARTIFACT_CONTENT_CHANGED:" + artifactKey + ":v" + next.getVersion());
                 auditOutbox.enqueue("EXPLANATION_ARTIFACT:" + caseId + ":" + artifactKey + ":v"
                                 + next.getVersion(),
                         actor, "EXPLANATION_ARTIFACT_CONTENT_CHANGED", "CASE", String.valueOf(caseId),
-                        "artifactKey=" + artifactKey + ",previousHash=" + existing.getContentSha256());
+                        "artifactKey=" + artifactKey + ",previousHash=" + existing.getContentSha256()
+                                + ",affectedSubmissions=" + affected);
                 return evidenceView(savedNext);
             }
             // 来源不可用/不存在：保持旧版本可回放，只记录最新状态问题（幂等返回旧版本 + 刷新问题）。
@@ -429,6 +434,19 @@ public class ExplanationWorkspaceService implements ExplanationReadinessPort {
                                              String actor) {
         EvidenceArtifactVersion artifact = artifactRepository.findByIdAndCaseId(artifactVersionId, caseId)
                 .orElseThrow(() -> new IllegalArgumentException("材料版本不存在：" + artifactVersionId));
+        List<Long> affected = staleSubmissionsUsingArtifact(caseId, artifactVersionId,
+                "ARTIFACT_SUPERSEDED:" + artifact.getArtifactKey() + (reason == null ? "" : ":" + reason),
+                actor);
+        bumpEpoch(caseId, "ARTIFACT_SUPERSEDED:" + artifact.getArtifactKey());
+        auditOutbox.enqueue("EXPLANATION_STALE:" + caseId + ":" + artifactVersionId,
+                actor, "EXPLANATION_SUBMISSION_STALE", "CASE", String.valueOf(caseId),
+                "artifactVersionId=" + artifactVersionId + ",affectedSubmissions=" + affected);
+        return affected;
+    }
+
+    /** 按反向引用把引用该材料版本的 CURRENT 提交置 STALE 并复位覆盖（A5-05/TP-16 共用）。 */
+    private List<Long> staleSubmissionsUsingArtifact(Long caseId, Long artifactVersionId,
+                                                     String supersededReason, String actor) {
         List<Long> affected = new ArrayList<>();
         for (ExplanationEvidenceUse use : evidenceUseRepository
                 .findByCaseIdAndArtifactVersionId(caseId, artifactVersionId)) {
@@ -438,8 +456,7 @@ public class ExplanationWorkspaceService implements ExplanationReadinessPort {
                 continue;
             }
             submission.setState(SubmissionState.STALE);
-            submission.setSupersededReason("ARTIFACT_SUPERSEDED:" + artifact.getArtifactKey()
-                    + (reason == null ? "" : ":" + reason));
+            submission.setSupersededReason(supersededReason);
             submissionRepository.save(submission);
             affected.add(submission.getId());
             unitRepository.findById(submission.getUnitId()).ifPresent(unit -> {
@@ -452,10 +469,6 @@ public class ExplanationWorkspaceService implements ExplanationReadinessPort {
                 resetCoverageToPending(unit);
             });
         }
-        bumpEpoch(caseId, "ARTIFACT_SUPERSEDED:" + artifact.getArtifactKey());
-        auditOutbox.enqueue("EXPLANATION_STALE:" + caseId + ":" + artifactVersionId,
-                actor, "EXPLANATION_SUBMISSION_STALE", "CASE", String.valueOf(caseId),
-                "artifactVersionId=" + artifactVersionId + ",affectedSubmissions=" + affected);
         return affected;
     }
 
@@ -702,6 +715,12 @@ public class ExplanationWorkspaceService implements ExplanationReadinessPort {
         IssueSeverity target = parseEnum(IssueSeverity.class, downgradeTo, "目标重要性");
         if (target == IssueSeverity.INTEGRITY_BLOCKER || issue.getSeverity() == IssueSeverity.INTEGRITY_BLOCKER) {
             throw new IllegalArgumentException("完整性/身份错误不允许降级");
+        }
+        // 提案基于问题现状：已处置（RESOLVED/DISCLOSED/NOT_RELEVANT）的问题不再提案降级，
+        // 需先重开（REOPEN）再评估（A5-04 审查补强）。
+        if (issue.getDisposition() != IssueDisposition.OPEN) {
+            throw new IllegalStateException("问题当前处置状态为 " + issue.getDisposition()
+                    + "，不能提案降级；请先重开问题");
         }
         if (rank(target) >= rank(issue.getSeverity())) {
             throw new IllegalArgumentException("只能向更低重要性降级");
@@ -1009,6 +1028,13 @@ public class ExplanationWorkspaceService implements ExplanationReadinessPort {
         return evaluateReadiness(caseEntity, null);
     }
 
+    /** 按当前操作者视角的就绪结论：canExclude/canConfirm 含自审限制（v3 计划 §8）。 */
+    @Transactional(readOnly = true)
+    public InvestigationReadinessResult readinessResultForReviewer(Long caseId, String reviewer) {
+        CaseEntity caseEntity = requireCase(caseId);
+        return evaluateReadiness(caseEntity, reviewer);
+    }
+
     /**
      * 仅校验依据令牌（A5-07 顺序修复）：在案件锁内、任何任务变更之前调用；
      * 用户提交时看到的令牌必须与当前案件事实一致。
@@ -1239,9 +1265,12 @@ public class ExplanationWorkspaceService implements ExplanationReadinessPort {
             exclude.add("最终复核人属于本次采用提交的实质贡献人（自审限制）");
         }
         boolean ready = confirm.isEmpty() || exclude.isEmpty();
-        // readyForFinalReview 语义与 v1 一致：两种结案路径至少一条可走。
+        // v3 计划 §8：canExclude/canConfirm 必须同时考虑当前操作者独立性——
+        // blocker 显示自审冲突时能力值不得为 true（防止 UI 按钮可用性与阻断列表矛盾）。
+        boolean canExclude = decision.canExclude() && (reviewer == null || reviewerIndependent);
+        boolean canConfirm = decision.canConfirm() && (reviewer == null || reviewerIndependent);
         return new InvestigationReadinessResult(ready, dedupe(general), dedupe(confirm), dedupe(exclude),
-                decision.canExclude(), decision.canConfirm(), reviewerIndependent);
+                canExclude, canConfirm, reviewerIndependent);
     }
 
     private record UnitAssessmentRow(AlertExplanationUnit unit, ExplanationDecisionRules.UnitAssessment assessment) {
@@ -1344,12 +1373,50 @@ public class ExplanationWorkspaceService implements ExplanationReadinessPort {
      * 代付配方的缺口登记（TP-10/TP-11/TP-12 语义）：
      * 授权额度不足、部分订单未被授权覆盖、授权状态 CONTRADICTED 等，
      * 任何 outcome 下都产生 DECISION_CRITICAL 问题；不因多数金额已解释吞掉缺口。
+     * 跨单元额度去重（v3 §6.1/TP-31）：同一交易不得被两个 CURRENT 代付提交重复声明覆盖。
      */
     private void registerGroupPaymentGaps(CaseEntity caseEntity, AlertExplanationUnit unit,
                                           JsonNode draft, String actor) {
         JsonNode claims = draft.get("claims");
-        if (claims == null || !claims.isObject()) {
-            return; // 缺 claims 已在 EXPLAINED 校验拒绝；非 EXPLAINED 提交保留问题路径
+        // 跨单元重复声明（TP-31）：同一交易已在其他 CURRENT 代付提交的 authority.coveredTransactionIds
+        // 中出现 → 登记关键问题；授权使用量按唯一交易去重，重复提交不能规避额度上限。
+        JsonNode authorityForDup = draft.get("authority");
+        if (authorityForDup != null && authorityForDup.isObject()
+                && authorityForDup.get("coveredTransactionIds") != null
+                && authorityForDup.get("coveredTransactionIds").isArray()) {
+            Set<String> declared = new LinkedHashSet<>();
+            authorityForDup.get("coveredTransactionIds").forEach(tx -> declared.add(tx.asText()));
+            Set<String> overlaps = new LinkedHashSet<>();
+            for (ExplanationSubmission other : submissionRepository
+                    .findByCaseIdAndStateOrderByIdAsc(caseEntity.getId(), SubmissionState.CURRENT)) {
+                if (other.getUnitId() != null && other.getUnitId().equals(unit.getId())) {
+                    continue;
+                }
+                try {
+                    JsonNode otherDraft = objectMapper.readTree(other.getPayloadJson());
+                    JsonNode otherAuthority = otherDraft.get("authority");
+                    JsonNode otherCovered = otherAuthority == null ? null
+                            : otherAuthority.get("coveredTransactionIds");
+                    if (otherCovered == null || !otherCovered.isArray()) {
+                        continue;
+                    }
+                    otherCovered.forEach(tx -> {
+                        String txId = tx.asText();
+                        if (declared.contains(txId)) {
+                            overlaps.add(txId);
+                        }
+                    });
+                } catch (Exception ignored) {
+                    // payload 损坏的提交不参与去重（其本身已不可采用）
+                }
+            }
+            if (!overlaps.isEmpty()) {
+                ensureIssue(caseEntity.getId(), unit.getId(),
+                        "AUTHORITY_DOUBLE_ALLOCATION:" + unit.getId(), IssueSeverity.DECISION_CRITICAL, "Q4",
+                        "交易 " + String.join("、", overlaps) + " 已被其他单元的采用提交声明为授权覆盖；"
+                                + "同一交易不能重复计入授权使用量（TP-31），需重新划分授权范围。",
+                        actor);
+            }
         }
         JsonNode c3 = claims.get("C3");
         JsonNode c4 = claims.get("C4");
@@ -1915,6 +1982,12 @@ public class ExplanationWorkspaceService implements ExplanationReadinessPort {
                 text(policy, "groupRelationshipStatus"));
     }
 
+    /**
+     * 稳定请求摘要（v3 计划 §9.2 / TP-27 修复）：
+     * 只绑定幂等重放语义所需的不变内容——案件、单元、政策与草稿规范化 JSON。
+     * 不混入 caseFactsEpoch：成功提交会推进 epoch，同 requestId 重放必须返回原结果；
+     * epoch/令牌的并发保护由 reviewBasisToken 负责（二者职责分离，不叠加）。
+     */
     private String inputDigestOf(CaseEntity caseEntity, AlertExplanationUnit unit) {
         StringBuilder payload = new StringBuilder();
         payload.append(unit.getCaseId()).append('|').append(unit.getAlertId()).append('|')
@@ -1928,7 +2001,6 @@ public class ExplanationWorkspaceService implements ExplanationReadinessPort {
                 payload.append(unit.getDraftJson());
             }
         }
-        payload.append("|epochAtDraft=").append(caseEntity.getCaseFactsEpoch());
         return sha256Hex(payload.toString());
     }
 
