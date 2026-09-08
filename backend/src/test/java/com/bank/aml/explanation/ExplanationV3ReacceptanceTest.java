@@ -223,6 +223,7 @@ when(verifications.save(any())).thenAnswer(inv -> {
                 new com.bank.aml.investigation.AlertScopeService(alerts, mapper),
                 new ExplanationClaimService(
                         mock(ExplanationClaimRepository.class), mock(ClaimEvidenceLinkRepository.class), artifacts),
+                new PaymentAuthorityFactService(),
                 new EvidenceAdmissibilityService(artifacts, verifications), mapper, CLOCK);
     }
 

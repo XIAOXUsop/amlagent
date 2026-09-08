@@ -87,6 +87,7 @@ public class ExplanationWorkspaceService implements ExplanationReadinessPort {
     private final com.bank.aml.datasource.CustomerDataPort customerDataPort;
     private final com.bank.aml.investigation.AlertScopeService alertScopeService;
     private final ExplanationClaimService claimService;
+    private final PaymentAuthorityFactService paymentAuthorityFactService;
     private final ObjectMapper objectMapper;
     private final Clock clock;
 
@@ -111,6 +112,7 @@ public class ExplanationWorkspaceService implements ExplanationReadinessPort {
                                        com.bank.aml.datasource.CustomerDataPort customerDataPort,
                                        com.bank.aml.investigation.AlertScopeService alertScopeService,
                                        ExplanationClaimService claimService,
+                                       PaymentAuthorityFactService paymentAuthorityFactService,
                                        EvidenceAdmissibilityService admissibilityService,
                                        ObjectMapper objectMapper) {
         this(caseRepository, unitRepository, submissionRepository, issueRepository, basisRepository,
@@ -118,7 +120,7 @@ public class ExplanationWorkspaceService implements ExplanationReadinessPort {
                 userAccountRepository, coverageRepository,
                 hypothesisRepository, alertRepository, eddRepository, policyCatalog, auditOutbox,
                 evidenceSourcePort, customerDataPort, alertScopeService, claimService,
-                admissibilityService, objectMapper, Clock.systemDefaultZone());
+                paymentAuthorityFactService, admissibilityService, objectMapper, Clock.systemDefaultZone());
     }
 
     ExplanationWorkspaceService(CaseRepository caseRepository,
@@ -141,6 +143,7 @@ public class ExplanationWorkspaceService implements ExplanationReadinessPort {
                                 com.bank.aml.datasource.CustomerDataPort customerDataPort,
                                 com.bank.aml.investigation.AlertScopeService alertScopeService,
                                 ExplanationClaimService claimService,
+                                PaymentAuthorityFactService paymentAuthorityFactService,
                                 EvidenceAdmissibilityService admissibilityService,
                                 ObjectMapper objectMapper,
                                 Clock clock) {
@@ -164,6 +167,7 @@ public class ExplanationWorkspaceService implements ExplanationReadinessPort {
         this.customerDataPort = customerDataPort;
         this.alertScopeService = alertScopeService;
         this.claimService = claimService;
+        this.paymentAuthorityFactService = paymentAuthorityFactService;
         this.admissibilityService = admissibilityService;
         this.objectMapper = objectMapper;
         this.clock = clock;
@@ -1544,6 +1548,44 @@ public class ExplanationWorkspaceService implements ExplanationReadinessPort {
                     + " 低于已覆盖交易合计 " + covered.toPlainString() + "；超出部分 "
                     + gap.negate().toPlainString() + " 保留缺口，不得整笔解释成立"
                     + "（TP-10）；请提交 UNRESOLVED 并说明缺口处理安排");
+        }
+        // G1-3/RF-18/RF-19：双时间规则——authority.facts 声明授权/撤销/追认事实序列，
+        // 服务端按"付款时点"评估有效性；付款后追认不能替代付款前授权（保持 UNRESOLVED）。
+        JsonNode factsNode = authority.get("facts");
+        if (factsNode != null && factsNode.isArray() && factsNode.size() > 0) {
+            List<PaymentAuthorityFactService.AuthorityFact> facts = new ArrayList<>();
+            for (JsonNode factNode : factsNode) {
+                facts.add(new PaymentAuthorityFactService.AuthorityFact(
+                        text(factNode, "authorityRef", authorityRef),
+                        parseDateOrNull(text(factNode, "effectiveFrom")),
+                        parseDateOrNull(text(factNode, "effectiveTo")),
+                        parseDateOrNull(text(authority, "paymentDate")),
+                        LocalDateTime.now(clock),
+                        text(factNode, "factType")));
+            }
+            LocalDate paymentDate = parseDateOrNull(text(authority, "paymentDate"));
+            if (paymentDate == null) {
+                throw new IllegalArgumentException("代付授权需声明付款发生日（authority.paymentDate）；"
+                        + "不能以系统获知时间代替业务时间评估授权（G1-3/§5.3）");
+            }
+            PaymentAuthorityFactService.AuthorityValidity validity =
+                    paymentAuthorityFactService.evaluateAtPayment(facts, paymentDate);
+            if ("UNKNOWN".equals(validity.validAtPayment()) || "INVALID".equals(validity.validAtPayment())) {
+                throw new IllegalArgumentException("代付授权在付款时点的有效性为 " + validity.validAtPayment()
+                        + "：" + validity.explanation()
+                        + "；C3 不能 SUPPORTED，请提交 UNRESOLVED 并完成定向核验（RF-18/RF-19）");
+            }
+        }
+    }
+
+    private static LocalDate parseDateOrNull(String value) {
+        if (value == null || value.isBlank()) {
+            return null;
+        }
+        try {
+            return LocalDate.parse(value.trim());
+        } catch (Exception e) {
+            throw new IllegalArgumentException("日期需为 ISO 格式（yyyy-MM-dd）：" + value);
         }
     }
 

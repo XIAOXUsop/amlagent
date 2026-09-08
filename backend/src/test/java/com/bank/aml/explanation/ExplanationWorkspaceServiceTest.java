@@ -90,6 +90,7 @@ class ExplanationWorkspaceServiceTest {
             customerData, alertScope,
             new ExplanationClaimService(
                     mock(ExplanationClaimRepository.class), mock(ClaimEvidenceLinkRepository.class), artifacts),
+            new PaymentAuthorityFactService(),
             new EvidenceAdmissibilityService(artifacts, verifications),
             objectMapper, clock);
 
@@ -616,6 +617,7 @@ class ExplanationWorkspaceServiceTest {
                 customerData, alertScope,
                 new ExplanationClaimService(
                         mock(ExplanationClaimRepository.class), mock(ClaimEvidenceLinkRepository.class), artifacts),
+                new PaymentAuthorityFactService(),
                 new EvidenceAdmissibilityService(artifacts, verifications), objectMapper, afterDue);
 
         assertThatThrownBy(() -> laterService.validateReadyForReview(caseEntity,
