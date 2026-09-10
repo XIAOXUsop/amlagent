@@ -1,6 +1,7 @@
 package com.bank.aml.investigation;
 
 import com.bank.aml.common.enums.CountryRegion;
+import com.bank.aml.common.time.BusinessZone;
 import com.bank.aml.datasource.CustomerDataPort;
 import com.bank.aml.datasource.entity.CaseEntity;
 import com.bank.aml.datasource.repository.CaseRepository;
@@ -10,7 +11,6 @@ import org.junit.jupiter.api.Test;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.LocalDateTime;
-import java.time.ZoneId;
 import java.util.List;
 import java.util.Optional;
 
@@ -27,7 +27,7 @@ class TransactionWindowServiceTest {
         CaseEntity caseEntity = new CaseEntity();
         caseEntity.setCustomerId("C001");
         Instant asOf = Instant.parse("2026-08-20T04:00:00Z");
-        LocalDateTime localAsOf = LocalDateTime.ofInstant(asOf, ZoneId.systemDefault());
+        LocalDateTime localAsOf = LocalDateTime.ofInstant(asOf, BusinessZone.ZONE);
         when(cases.findById(7L)).thenReturn(Optional.of(caseEntity));
         when(data.asOfTime()).thenReturn(asOf);
         when(data.sourceSystem()).thenReturn("CORE_BANKING");

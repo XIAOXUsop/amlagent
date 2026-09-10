@@ -1,5 +1,6 @@
 package com.bank.aml.rag.ingestion;
 
+import com.bank.aml.common.time.BusinessZone;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
@@ -68,7 +69,7 @@ public class LegalManifestLoader {
             } else if (value instanceof java.util.Date date) {
                 // snakeyaml 会把 ISO 日期隐式解析为 Date；归一化为 yyyy-MM-dd 以便本地解析
                 values.put(String.valueOf(key),
-                        date.toInstant().atZone(java.time.ZoneId.systemDefault()).toLocalDate().toString());
+                        date.toInstant().atZone(BusinessZone.ZONE).toLocalDate().toString());
             } else if (value != null) {
                 values.put(String.valueOf(key), String.valueOf(value).strip());
             }
