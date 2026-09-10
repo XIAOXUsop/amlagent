@@ -1,6 +1,7 @@
 package com.bank.aml.assistant.guard;
 
 import com.bank.aml.assistant.domain.CustomerAssistantSnapshot;
+import com.bank.aml.assistant.domain.EvidenceIdPattern;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -14,8 +15,8 @@ import java.util.regex.Pattern;
 /** 最终回答的确定性校验；失败时整条阻断，不让模型自行修复。 */
 @Component
 public class AssistantOutputGuard {
-    private static final Pattern EVIDENCE_ID = Pattern.compile(
-            "\\b(?:[A-Z_]+:[a-f0-9]{64}|(?:KB|LEGAL)-[A-Za-z0-9_-]{6,80})\\b");
+    /** 证据标识识别统一走 {@link EvidenceIdPattern}：此前本类正则比追加器更窄，会漏检模型吐出的大写/非 64 位标识 */
+    private static final Pattern EVIDENCE_ID = EvidenceIdPattern.PATTERN;
     private static final Pattern CUSTOMER_IDENTIFIER = Pattern.compile(
             "(?i)(?<![A-Z0-9])C-?(?=[A-Z0-9]*[0-9])[A-Z0-9]{3,}(?![A-Z0-9])");
     private static final Pattern WRITE_CLAIM = Pattern.compile(
