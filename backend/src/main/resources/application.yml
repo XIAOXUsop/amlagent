@@ -66,6 +66,14 @@ management:
   metrics:
     tags:
       application: aml-agent
+  tracing:
+    # 默认全量采样：本系统是合规审计场景，"这次调用为什么这么判"比"少存几条 span"更重要。
+    # 高并发部署可通过 MANAGEMENT_TRACING_SAMPLING_PROBABILITY 环境变量下调。
+    sampling:
+      probability: 1.0
+  # 注意：这里刻意不设 management.otlp.tracing.endpoint。
+  # 不设 = 不导出，span 只在本地记录，应用行为与网络依赖都不变；
+  # 接入 Jaeger / Tempo / Langfuse 等后端时，设该属性指向 OTLP 端点即可开始导出。
 
 logging:
   level:

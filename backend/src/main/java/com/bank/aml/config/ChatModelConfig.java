@@ -4,6 +4,8 @@ import com.bank.aml.observability.MetricsRecorder;
 import com.bank.aml.observability.ModelInvocationTags;
 import com.bank.aml.observability.ObservedChatModel;
 import com.bank.aml.observability.ObservedStreamingChatModel;
+import com.bank.aml.observability.genai.GenAiTracingChatModel;
+import io.micrometer.tracing.Tracer;
 import dev.langchain4j.model.anthropic.AnthropicChatModel;
 import dev.langchain4j.model.chat.ChatModel;
 import dev.langchain4j.model.chat.DisabledStreamingChatModel;
@@ -12,6 +14,7 @@ import dev.langchain4j.model.openai.OpenAiChatModel;
 import dev.langchain4j.model.openai.OpenAiStreamingChatModel;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -91,10 +94,15 @@ public class ChatModelConfig {
      * 避免依赖 ThreadLocal（异步回调线程不传播导致 purpose=unknown）。
      */
     @Bean
-    public ChatModel mainAgentChatModel(ChatModel chatModel, MetricsRecorder metrics, LlmProperties props) {
+    public ChatModel mainAgentChatModel(ChatModel chatModel, MetricsRecorder metrics, LlmProperties props,
+                                        ObjectProvider<Tracer> tracerProvider) {
         LlmProviderProperties active = props.active();
-        return new ObservedChatModel(chatModel, metrics,
-                new ModelInvocationTags(props.getActiveProvider(), active.getModelName(), "main_agent"));
+        ModelInvocationTags tags =
+                new ModelInvocationTags(props.getActiveProvider(), active.getModelName(), "main_agent");
+        // 有 Tracer 时叠加 OTel GenAI span；无追踪后端时保持原样，不影响功能
+        Tracer tracer = tracerProvider.getIfAvailable();
+        ChatModel traced = tracer == null ? chatModel : new GenAiTracingChatModel(chatModel, tracer, tags);
+        return new ObservedChatModel(traced, metrics, tags);
     }
 
     /** 流式模型：用于报告分析过程的 token 级流式输出；无 API Key 时返回禁用实现（优雅降级） */

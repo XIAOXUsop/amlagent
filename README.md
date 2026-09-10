@@ -26,7 +26,7 @@
 | 🔍 证据追溯 | 混合 RAG（向量+关键词+RRF+精排），法规证据带 `evidenceId` |
 | 🛡️ 安全护栏 | 配置化规则 DSL、Prompt 注入三层防护、禁错检测 |
 | 📏 评测体系 | 规则回归 / RAG 检索评测 / Agent DEV-TEST 盲测（freezeId 冻结） |
-| 👁️ 可观测 | Prometheus/Grafana 指标、traceId 全链路透传 |
+| 👁️ 可观测 | Prometheus 指标 + **OpenTelemetry GenAI 语义约定**追踪（`gen_ai.*` span），traceId 全链路透传 |
 | 🔐 安全认证 | JWT HttpOnly Cookie + CSRF 双 Cookie、登录限流、生产启动自检 |
 
 平台同时提供面向 ADMIN 的"当前客户 AI 小助"：在客户详情页进行只读、多轮、流式分析。会话由后端绑定当前客户，模型只接收脱敏冻结快照；七个工具均为只读且客户工具不接受 `customerId`。输入、跨 token 流式输出与最终回答经过三层确定性防护，Redis 租约避免同会话并发，Redis Stream 支持 SSE 重放，MySQL 加密消息作为最终事实源。公开银行知识与企业 AML 法规检索结果在每次 run 开始前冻结，回答引用只能来自该证据包。
@@ -327,6 +327,7 @@ docker-compose.yml        MySQL + PostgreSQL(pgvector) + Redis
 - **Mock 模型 agentic 循环**：无 API Key 时 Mock 模型模拟多轮工具调用，保证链路离线可演示。
 - **本地 embedding**：DeepSeek 无官方 embedding API，默认用 all-MiniLM-L6-v2 离线向量化，可在配置中切换中文 embedding 服务。
 - **安全加固**：登录失败速率限制（按 IP+用户名固定窗口计数，超限锁定 5 分钟，缓解暴力破解与撞库）；`X-Request-Id` 透传白名单校验（防日志注入），响应体/响应头/日志 MDC 三方 traceId 一致；JWT 走 HttpOnly Cookie，CSRF 双 Cookie，生产环境启动自检（强密钥/非默认口令/Flyway/真实 Key）。
+- **模型调用追踪遵循 OTel GenAI 语义约定**：指标（Prometheus）回答"总体调用了多少次、P95 多少"，**span 回答"这一次调用发生在哪条链路、用了哪个模型、token 与结束原因是什么"**——两者互补才能既看大盘又下钻单次。span 名按约定为 `chat {模型}`，属性涵盖 `gen_ai.operation.name` / `gen_ai.provider.name` / `gen_ai.request.model` / `gen_ai.response.model` / `gen_ai.usage.input_tokens` / `gen_ai.usage.output_tokens` / `gen_ai.response.finish_reasons`，并扩展 `aml.purpose` 用于成本归属。采用标准命名的直接收益是：接入 Jaeger / Tempo / Langfuse 等任意 OTel 后端**无需再写私有埋点**。**span 只记录元数据，绝不写入 prompt 或补全内容**——AML 场景下那等同于把客户数据写进追踪后端。
 - **可观测性**：统一 `MetricsRecorder` 埋点（`aml_llm_*`、`aml_case_*`、`aml_stage_duration_seconds`、`aml_queue_*`），LLM 失败路径同样记录耗时与错误数；Agent 调用失败走规则降级时单独计数 `aml_case_llm_fallback_total`，保留完整异常堆栈，不再被静默掩盖；`aml_queue_lag` 用可变 AtomicLong 注册 Gauge，实时反映消费积压。
 
 </details>
