@@ -1,19 +1,53 @@
 # 商业银行智能反洗钱（AML）与高风险客户尽调 Agent 平台
 
-一个基于 **Java 21 + Spring Boot 3 + LangChain4j** 的企业级反洗钱尽调 Agent 平台：
-接收反洗钱系统预警工单后，可靠地调度 Agent 工作流，自动完成交易画像、股权穿透、制裁名单筛查、
-监管法规检索、风险研判和结构化报告生成；使用独立于大模型的 Guardrails 规则护栏校验最终结论，
-并将高风险工单转入**人工复核闭环**。具备**可评测、可追溯、可恢复、可观测、安全可控**的企业级能力：
-JWT 三角色认证、Outbox+Redis Streams 可靠任务、混合 RAG 证据追溯、配置化规则护栏、固定测试集评测、
-Prometheus/Grafana 监控与自动化测试，并提供受 ADMIN 权限保护的客户主数据维护与 Excel 导入能力。
-名单筛查采用“模糊召回 → 身份要素评分 → 人工候选核验”三阶段流程；候选复核使用追加式 revision
-防止并发覆盖，只有算法确定命中或人工确认的候选才进入 Guardrail。工单详情可导出带 SHA-256
-完整性摘要的调查档案，集中交付快照元数据、工作流、工具轨迹、证据、处置历史、补充尽调轮次及可疑交易报告状态。
+<div align="center">
 
-平台同时提供面向 ADMIN 的“当前客户 AI 小助”：在客户详情页进行只读、多轮、流式分析。会话由后端绑定当前客户，
-模型只接收脱敏冻结快照；七个工具均为只读且客户工具不接受 `customerId`。输入、跨 token 流式输出与最终回答经过
-三层确定性防护，Redis 租约避免同会话并发，Redis Stream 支持 SSE 重放，MySQL 加密消息作为最终事实源。
-公开银行知识与企业 AML 法规检索结果在每次 run 开始前冻结，回答引用只能来自该证据包。
+![Java](https://img.shields.io/badge/Java-21-orange?logo=openjdk&logoColor=white)
+![Spring Boot](https://img.shields.io/badge/Spring_Boot_3.5-6DB33F?logo=spring-boot&logoColor=white)
+![LangChain4j](https://img.shields.io/badge/LangChain4j_1.18-4A9EFF)
+![Vue 3](https://img.shields.io/badge/Vue_3-42B883?logo=vuedotjs&logoColor=white)
+![PostgreSQL+pgvector](https://img.shields.io/badge/pgvector-4169E1?logo=postgresql&logoColor=white)
+![Prometheus](https://img.shields.io/badge/Prometheus-E6522C?logo=prometheus&logoColor=white)
+
+**可评测 · 可追溯 · 可恢复 · 可观测 · 安全可控** 的企业级 AI 尽调闭环
+
+</div>
+
+## ✨ 一句话概括
+
+接收反洗钱系统预警工单后，可靠地调度 Agent 工作流，自动完成交易画像、股权穿透、制裁名单筛查、监管法规检索、风险研判和结构化报告生成；使用独立于大模型的 **Guardrails 规则护栏**校验最终结论，并将高风险工单转入**人工复核闭环**。
+
+**分层能力速览：**
+
+| 能力项 | 实现 |
+|---|---|
+| 🔁 可靠任务 | Transactional Outbox + Redis Streams + 死信 + 租约 fencing + 崩溃恢复 |
+| 🧊 数据一致性 | Snapshot First：推理前一次性冻结业务快照（`sourceDigest`） |
+| 🔍 证据追溯 | 混合 RAG（向量+关键词+RRF+精排），法规证据带 `evidenceId` |
+| 🛡️ 安全护栏 | 配置化规则 DSL、Prompt 注入三层防护、禁错检测 |
+| 📏 评测体系 | 规则回归 / RAG 检索评测 / Agent DEV-TEST 盲测（freezeId 冻结） |
+| 👁️ 可观测 | Prometheus 指标 + **OpenTelemetry GenAI 语义约定**追踪（`gen_ai.*` span），traceId 全链路透传 |
+| 🔐 安全认证 | JWT HttpOnly Cookie + CSRF 双 Cookie、登录限流、生产启动自检 |
+
+平台同时提供面向 ADMIN 的"当前客户 AI 小助"：在客户详情页进行只读、多轮、流式分析。会话由后端绑定当前客户，模型只接收脱敏冻结快照；七个工具均为只读且客户工具不接受 `customerId`。输入、跨 token 流式输出与最终回答经过三层确定性防护，Redis 租约避免同会话并发，Redis Stream 支持 SSE 重放，MySQL 加密消息作为最终事实源。公开银行知识与企业 AML 法规检索结果在每次 run 开始前冻结，回答引用只能来自该证据包。
+
+## 📑 目录
+
+- [核心工作流](#核心工作流)
+- [当前验证结果](#当前验证结果)
+- [技术栈](#技术栈)
+- [快速启动](#快速启动)
+- [配置 LLM](#配置-llm可选)
+- [演示客户](#演示客户)
+- [目录结构](#目录结构)
+- [API 概览](#api-概览)
+- [关键设计](#关键设计)
+- [设计文档](#设计文档)
+- [自动化测试](#自动化测试)
+- [性能压测与可靠性演示](#性能压测与可靠性演示)
+- [AI 应用工程能力](#ai-应用工程能力)
+- [项目亮点（可写进简历）](#项目亮点可写进简历)
+- [后续优化方向](#后续优化方向)
 
 ## 核心工作流
 
@@ -32,6 +66,7 @@ Prometheus/Grafana 监控与自动化测试，并提供受 ADMIN 权限保护的
   → 调查档案导出          聚合流程/工具/快照/复核记录并生成 SHA-256 内容摘要
   → Agent / 规则 / RAG评测 独立案例夹具运行真实模型，原始结果与 Guardrails 分开计分
 ```
+
 
 ## 当前验证结果
 
@@ -200,6 +235,9 @@ docker-compose.yml        MySQL + PostgreSQL(pgvector) + Redis
 
 > 除登录与监控端点外，其余接口需认证。认证使用 HttpOnly Cookie（登录后自动携带），也支持 `Authorization: Bearer <token>`；SSE 通过 Cookie 认证，JWT 不进入 URL/localStorage。
 
+<details>
+<summary><b>展开全部 API 端点</b></summary>
+
 | 方法 | 路径 | 说明 |
 |---|---|---|
 | POST | /api/auth/login | 登录 `{username, password}` → JWT（放行） |
@@ -250,7 +288,12 @@ docker-compose.yml        MySQL + PostgreSQL(pgvector) + Redis
 | GET | /api/cases/stats | 工单全量状态统计（态势概览，跨分页） |
 | GET | /api/agent/ping | LLM 连通性验证 |
 
+</details>
+
 ## 关键设计
+
+<details>
+<summary><b>展开全部 20 项关键设计</b></summary>
 
 - **可靠异步任务**：Transactional Outbox（工单与事件同事务，`caseId:eventType:executionVersion` 幂等键防重复发布）→ **发布抢占（PENDING→PUBLISHING→PUBLISHED 原子状态机，多实例并发只允许一个发布器投递，杜绝重复/错投；崩溃残留由陈旧 Claim 30s 回收）** → Redis Streams 消费组 → 条件更新抢占（`executionVersion`）→ 版本化租约 + Worker 心跳（心跳/完成/失败均绑定 worker+version，防旧 Worker 污染新执行版本）→ 指数退避重试（RETRY_WAIT）→ 死信队列 → Pending 超时接管（服务重启任务不丢失）。重试、接管、死信重放统一走 Outbox，消除数据库提交与 Redis 投递之间的双写丢失窗口；Stream 按 MAXLEN 近似裁剪，防止已 ACK 消息长期驻留导致内存无限增长。
 - **Guardrails 配置化**：`risk_rule` 表驱动（DSL 条件表达式 + 优先级 + 生效时间），决策可解释（ruleCode / version / evidence / 动作），一级制裁命中零漏报并强制转人工。规则加载带 60s TTL 缓存，避免每次护栏评估查库。
@@ -284,7 +327,10 @@ docker-compose.yml        MySQL + PostgreSQL(pgvector) + Redis
 - **Mock 模型 agentic 循环**：无 API Key 时 Mock 模型模拟多轮工具调用，保证链路离线可演示。
 - **本地 embedding**：DeepSeek 无官方 embedding API，默认用 all-MiniLM-L6-v2 离线向量化，可在配置中切换中文 embedding 服务。
 - **安全加固**：登录失败速率限制（按 IP+用户名固定窗口计数，超限锁定 5 分钟，缓解暴力破解与撞库）；`X-Request-Id` 透传白名单校验（防日志注入），响应体/响应头/日志 MDC 三方 traceId 一致；JWT 走 HttpOnly Cookie，CSRF 双 Cookie，生产环境启动自检（强密钥/非默认口令/Flyway/真实 Key）。
+- **模型调用追踪遵循 OTel GenAI 语义约定**：指标（Prometheus）回答"总体调用了多少次、P95 多少"，**span 回答"这一次调用发生在哪条链路、用了哪个模型、token 与结束原因是什么"**——两者互补才能既看大盘又下钻单次。span 名按约定为 `chat {模型}`，属性涵盖 `gen_ai.operation.name` / `gen_ai.provider.name` / `gen_ai.request.model` / `gen_ai.response.model` / `gen_ai.usage.input_tokens` / `gen_ai.usage.output_tokens` / `gen_ai.response.finish_reasons`，并扩展 `aml.purpose` 用于成本归属。采用标准命名的直接收益是：接入 Jaeger / Tempo / Langfuse 等任意 OTel 后端**无需再写私有埋点**。**span 只记录元数据，绝不写入 prompt 或补全内容**——AML 场景下那等同于把客户数据写进追踪后端。
 - **可观测性**：统一 `MetricsRecorder` 埋点（`aml_llm_*`、`aml_case_*`、`aml_stage_duration_seconds`、`aml_queue_*`），LLM 失败路径同样记录耗时与错误数；Agent 调用失败走规则降级时单独计数 `aml_case_llm_fallback_total`，保留完整异常堆栈，不再被静默掩盖；`aml_queue_lag` 用可变 AtomicLong 注册 Gauge，实时反映消费积压。
+
+</details>
 
 ## 设计文档
 
@@ -376,7 +422,8 @@ python benchmark/fault_demo.py
 
 ## Git 提交清单
 
-`.gitignore` 已配置，推送 GitHub 前注意以下文件：
+<details>
+<summary>推送 GitHub 前的文件清单注意事项（.gitignore 已配置）</summary>
 
 | 提交（✅） | 说明 |
 |---|---|
@@ -396,3 +443,5 @@ python benchmark/fault_demo.py
 | `backend/target/` | Maven 构建产物 |
 | `frontend/node_modules/` `frontend/dist/` | 依赖与构建产物 |
 | `*.log` `.idea/` `.vscode/` | 日志与 IDE 配置 |
+
+</details>

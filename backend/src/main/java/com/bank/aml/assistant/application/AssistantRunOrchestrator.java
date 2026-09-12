@@ -14,13 +14,13 @@ import com.bank.aml.assistant.memory.AssistantHistoryLoader;
 import com.bank.aml.assistant.memory.ConversationLeaseService;
 import com.bank.aml.assistant.snapshot.AssistantSnapshotArchiveService;
 import com.bank.aml.assistant.snapshot.CustomerAssistantSnapshotFactory;
+import com.bank.aml.common.time.BusinessZone;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
-import java.time.ZoneId;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ScheduledExecutorService;
@@ -121,7 +121,7 @@ public class AssistantRunOrchestrator {
             var snapshot = snapshots.create(runId, context.conversation(), decision.sanitizedInput(), decision.intent());
             snapshotArchive.archive(snapshot);
             state.attachSnapshot(runId, snapshot.snapshotId(), snapshot.sourceDigest(),
-                    LocalDateTime.ofInstant(snapshot.asOfTime(), ZoneId.systemDefault()));
+                    LocalDateTime.ofInstant(snapshot.asOfTime(), BusinessZone.ZONE));
             var memory = history.load(context.conversation().getId(), context.userMessage().getId());
             agentWithTools = agents.create(snapshot, memory);
             emitSafely(() -> events.started(runId, context.assistantMessage().getId()));

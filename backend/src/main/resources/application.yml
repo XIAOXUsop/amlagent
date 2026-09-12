@@ -66,6 +66,14 @@ management:
   metrics:
     tags:
       application: aml-agent
+  tracing:
+    # 默认全量采样：本系统是合规审计场景，"这次调用为什么这么判"比"少存几条 span"更重要。
+    # 高并发部署可通过 MANAGEMENT_TRACING_SAMPLING_PROBABILITY 环境变量下调。
+    sampling:
+      probability: 1.0
+  # 注意：这里刻意不设 management.otlp.tracing.endpoint。
+  # 不设 = 不导出，span 只在本地记录，应用行为与网络依赖都不变；
+  # 接入 Jaeger / Tempo / Langfuse 等后端时，设该属性指向 OTLP 端点即可开始导出。
 
 logging:
   level:
@@ -95,6 +103,18 @@ aml:
     # 模型完整输出通过证据/安全护栏后，再按小块推送；绝不向前端透传未校验 token。
     validated-stream-chunk-chars: ${AML_ASSISTANT_VALIDATED_STREAM_CHUNK_CHARS:48}
     validated-stream-chunk-delay-ms: ${AML_ASSISTANT_VALIDATED_STREAM_CHUNK_DELAY_MS:12}
+    # 上下文治理：类型化保留 + 依赖感知驱逐 + 确定性压缩（不调用模型）。
+    # enabled=false 一键回退到 history-max-messages 的窗口行为，用于灰度与回滚。
+    context:
+      enabled: ${AML_ASSISTANT_CONTEXT_ENABLED:true}
+      provider-context-window-tokens: ${AML_ASSISTANT_CONTEXT_WINDOW_TOKENS:32768}
+      output-reserve-tokens: ${AML_ASSISTANT_CONTEXT_OUTPUT_RESERVE:1024}
+      tool-round-reserve-tokens: ${AML_ASSISTANT_CONTEXT_TOOL_RESERVE:2048}
+      # 估算偏保守只会略早压缩；偏激进则可能超出真实窗口，故默认留 15% 缓冲
+      safety-margin-percent: ${AML_ASSISTANT_CONTEXT_SAFETY_MARGIN:15}
+      answer-head-chars: ${AML_ASSISTANT_CONTEXT_ANSWER_HEAD:240}
+      answer-tail-chars: ${AML_ASSISTANT_CONTEXT_ANSWER_TAIL:160}
+      max-recall-calls-per-run: ${AML_ASSISTANT_CONTEXT_MAX_RECALL:3}
   eval:
     # 正式 TEST 金标不进入仓库；仅从受控外部路径加载，且数据集/每条案例均须 DOMAIN_EXPERT_APPROVED。
     hidden-test:

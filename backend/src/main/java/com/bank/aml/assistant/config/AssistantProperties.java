@@ -86,4 +86,77 @@ public class AssistantProperties {
     public void setValidatedStreamChunkChars(int validatedStreamChunkChars) { this.validatedStreamChunkChars = validatedStreamChunkChars; }
     public int getValidatedStreamChunkDelayMs() { return validatedStreamChunkDelayMs; }
     public void setValidatedStreamChunkDelayMs(int validatedStreamChunkDelayMs) { this.validatedStreamChunkDelayMs = validatedStreamChunkDelayMs; }
+
+    private Context context = new Context();
+
+    public Context getContext() { return context; }
+    public void setContext(Context context) { this.context = context; }
+
+    /**
+     * 上下文治理配置，前缀 {@code aml.assistant.context}。
+     *
+     * <p>{@code enabled=false} 时**完全回退**到旧的"最近 N 条窗口"行为（{@code historyMaxMessages}），
+     * 用于灰度与一键回滚——治理路径出问题时不必回退整个发布。
+     */
+    public static class Context {
+
+        private boolean enabled = true;
+
+        /** 模型上下文窗口 token 数，按实际 provider 设置 */
+        @Min(1024)
+        @Max(2_000_000)
+        private int providerContextWindowTokens = 32_768;
+
+        /** 输出预留：不参与治理，永远留给模型回答 */
+        @Min(128)
+        @Max(32_768)
+        private int outputReserveTokens = 1_024;
+
+        /** 工具往返预留：含历史取回工具的调用 */
+        @Min(0)
+        @Max(32_768)
+        private int toolRoundReserveTokens = 2_048;
+
+        /** token 估算的保守系数（%）：偏保守只会略早压缩，偏激进则可能超出真实窗口 */
+        @Min(0)
+        @Max(50)
+        private int safetyMarginPercent = 15;
+
+        /** 压缩回答时保留的头部字符数（结论所在） */
+        @Min(0)
+        @Max(2_000)
+        private int answerHeadChars = 240;
+
+        /** 压缩回答时保留的尾部字符数（数据局限与免责声明所在） */
+        @Min(0)
+        @Max(2_000)
+        private int answerTailChars = 160;
+
+        /** 单轮允许的历史取回调用次数上限 */
+        @Min(0)
+        @Max(20)
+        private int maxRecallCallsPerRun = 3;
+
+        @AssertTrue(message = "输出预留与工具预留之和必须小于上下文窗口")
+        public boolean isReserveWithinWindow() {
+            return outputReserveTokens + toolRoundReserveTokens < providerContextWindowTokens;
+        }
+
+        public boolean isEnabled() { return enabled; }
+        public void setEnabled(boolean enabled) { this.enabled = enabled; }
+        public int getProviderContextWindowTokens() { return providerContextWindowTokens; }
+        public void setProviderContextWindowTokens(int v) { this.providerContextWindowTokens = v; }
+        public int getOutputReserveTokens() { return outputReserveTokens; }
+        public void setOutputReserveTokens(int v) { this.outputReserveTokens = v; }
+        public int getToolRoundReserveTokens() { return toolRoundReserveTokens; }
+        public void setToolRoundReserveTokens(int v) { this.toolRoundReserveTokens = v; }
+        public int getSafetyMarginPercent() { return safetyMarginPercent; }
+        public void setSafetyMarginPercent(int v) { this.safetyMarginPercent = v; }
+        public int getAnswerHeadChars() { return answerHeadChars; }
+        public void setAnswerHeadChars(int v) { this.answerHeadChars = v; }
+        public int getAnswerTailChars() { return answerTailChars; }
+        public void setAnswerTailChars(int v) { this.answerTailChars = v; }
+        public int getMaxRecallCallsPerRun() { return maxRecallCallsPerRun; }
+        public void setMaxRecallCallsPerRun(int v) { this.maxRecallCallsPerRun = v; }
+    }
 }

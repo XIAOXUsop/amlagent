@@ -1,5 +1,6 @@
 package com.bank.aml.investigation;
 
+import com.bank.aml.common.time.BusinessZone;
 import com.bank.aml.datasource.CustomerDataPort;
 import com.bank.aml.datasource.entity.CaseEntity;
 import com.bank.aml.datasource.repository.CaseRepository;
@@ -10,7 +11,6 @@ import org.springframework.transaction.annotation.Transactional;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.LocalDateTime;
-import java.time.ZoneId;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
@@ -32,7 +32,7 @@ public class TransactionWindowService {
         CaseEntity caseEntity = caseRepository.findById(caseId)
                 .orElseThrow(() -> new IllegalArgumentException("工单不存在：" + caseId));
         Instant asOf = customerData.asOfTime();
-        LocalDateTime boundary = LocalDateTime.ofInstant(asOf, ZoneId.systemDefault());
+        LocalDateTime boundary = LocalDateTime.ofInstant(asOf, BusinessZone.ZONE);
         List<TransactionRecord> transactions = customerData.transactionsOf(caseEntity.getCustomerId()).stream()
                 .filter(transaction -> !transaction.date().isAfter(boundary)).toList();
         return new TransactionWindowView(asOf, customerData.sourceSystem(), customerData.sourceVersion(),

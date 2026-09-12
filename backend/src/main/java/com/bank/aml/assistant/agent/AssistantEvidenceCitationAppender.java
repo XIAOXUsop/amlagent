@@ -1,13 +1,15 @@
 package com.bank.aml.assistant.agent;
 
+import com.bank.aml.assistant.domain.EvidenceIdPattern;
+
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.regex.Pattern;
 
 /** 将实际成功工具调用返回的证据 ID 确定性补入最终回答，避免模型漏引或伪造引用。 */
 public final class AssistantEvidenceCitationAppender {
-    private static final Pattern MODEL_EVIDENCE_TOKEN = Pattern.compile(
-            "\\b(?:[A-Z_]+:[A-Za-z0-9]{32,80}|(?:KB|LEGAL)-[A-Za-z0-9_-]{6,80})\\b");
+    /** 与 {@code AssistantOutputGuard} 共用同一识别规则，避免"补引认得、校验认不得"的不一致 */
+    private static final Pattern MODEL_EVIDENCE_TOKEN = EvidenceIdPattern.PATTERN;
 
     private AssistantEvidenceCitationAppender() {}
 
