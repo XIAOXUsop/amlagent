@@ -17,6 +17,7 @@ import org.springframework.web.bind.annotation.RestController;
 @RequestMapping("/api/admin/customers/{customerId}/assistant/conversations")
 @PreAuthorize("hasRole('ADMIN')")
 public class CustomerAssistantController {
+
     private final AssistantConversationService conversations;
 
     public CustomerAssistantController(AssistantConversationService conversations) {
@@ -26,15 +27,18 @@ public class CustomerAssistantController {
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
     public AssistantDtos.ConversationResponse create(@PathVariable Long customerId) {
-        return AssistantDtos.ConversationResponse.from(conversations.create(customerId, operator()));
+        return AssistantDtos.ConversationResponse.from(conversations.createView(customerId, operator()));
     }
 
     @GetMapping
     public Page<AssistantDtos.ConversationResponse> list(@PathVariable Long customerId,
-                                                        @RequestParam(defaultValue = "0") int page,
-                                                        @RequestParam(defaultValue = "20") int size) {
-        return conversations.list(customerId, operator(), page, size).map(AssistantDtos.ConversationResponse::from);
+            @RequestParam(defaultValue = "0") int page, @RequestParam(defaultValue = "20") int size) {
+        return conversations.listViews(customerId, operator(), page, size)
+            .map(AssistantDtos.ConversationResponse::from);
     }
 
-    private String operator() { return SecurityContextHolder.getContext().getAuthentication().getName(); }
+    private String operator() {
+        return SecurityContextHolder.getContext().getAuthentication().getName();
+    }
+
 }

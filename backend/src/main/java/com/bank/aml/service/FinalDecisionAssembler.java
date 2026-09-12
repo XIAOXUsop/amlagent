@@ -4,32 +4,30 @@ import com.bank.aml.agent.AgentReportVocabulary;
 import com.bank.aml.agent.DueDiligenceReport;
 import com.bank.aml.agent.guardrail.GuardrailEngine;
 import com.bank.aml.risk.RiskRuleEngine;
-import org.springframework.stereotype.Component;
-
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Objects;
 import java.util.Set;
+import org.springframework.stereotype.Component;
 
 /**
  * 将模型原始分析与确定性 Guardrail 决策合成为最终对外报告。
- * <p>最终评级、人工复核、动作和结论由本组件统一生成，避免 Guardrail 已上调评级但正文仍保留低风险建议。
+ * <p>
+ * 最终评级、人工复核、动作和结论由本组件统一生成，避免 Guardrail 已上调评级但正文仍保留低风险建议。
  */
 @Component
 public class FinalDecisionAssembler {
 
-    public DueDiligenceReport assemble(DueDiligenceReport raw,
-                                       GuardrailEngine.GuardrailResult guardrail) {
+    public DueDiligenceReport assemble(DueDiligenceReport raw, GuardrailEngine.GuardrailResult guardrail) {
         return assemble(raw, guardrail, false);
     }
 
     /**
-     * @param forceManualReview 上游安全策略强制转人工（例如模型输出违反生产契约）；
-     *                          该信号优先于普通 Guardrail 的自动完成结论。
+     * @param forceManualReview 上游安全策略强制转人工（例如模型输出违反生产契约）； 该信号优先于普通 Guardrail 的自动完成结论。
      */
-    public DueDiligenceReport assemble(DueDiligenceReport raw,
-                                       GuardrailEngine.GuardrailResult guardrail,
-                                       boolean forceManualReview) {
+    public DueDiligenceReport assemble(DueDiligenceReport raw, GuardrailEngine.GuardrailResult guardrail,
+            boolean forceManualReview) {
         if (raw == null) {
             throw new IllegalArgumentException("raw report must not be null");
         }
@@ -45,13 +43,12 @@ public class FinalDecisionAssembler {
         List<String> riskPoints = mergeRiskPoints(raw.riskPoints(), guardrail);
         String conclusion = renderConclusion(finalRisk, mustEscalate, guardrail.decision().triggeredRules());
 
-        return new DueDiligenceReport(raw.customerId(), raw.customerName(), finalRisk,
-                raw.transactionProfile(), raw.corporateProfile(), safe(raw.sanctions()), safe(raw.legalBasis()),
-                riskPoints, conclusion, safe(raw.evidenceChain()), mustEscalate, findings, actions);
+        return new DueDiligenceReport(raw.customerId(), raw.customerName(), finalRisk, raw.transactionProfile(),
+                raw.corporateProfile(), safe(raw.sanctions()), safe(raw.legalBasis()), riskPoints, conclusion,
+                safe(raw.evidenceChain()), mustEscalate, findings, actions);
     }
 
-    private List<String> mergeFindings(List<String> rawFindings,
-                                       List<RiskRuleEngine.TriggeredRule> triggeredRules) {
+    private List<String> mergeFindings(List<String> rawFindings, List<RiskRuleEngine.TriggeredRule> triggeredRules) {
         Set<String> findings = allowed(rawFindings, AgentReportVocabulary.FINDING_CODES);
         for (RiskRuleEngine.TriggeredRule rule : safeRules(triggeredRules)) {
             switch (rule.ruleCode()) {
@@ -74,7 +71,7 @@ public class FinalDecisionAssembler {
     }
 
     private List<String> reconcileActions(List<String> rawActions, String finalRisk, boolean mustEscalate,
-                                          List<RiskRuleEngine.TriggeredRule> triggeredRules) {
+            List<RiskRuleEngine.TriggeredRule> triggeredRules) {
         Set<String> actions = allowed(rawActions, AgentReportVocabulary.ACTION_CODES);
 
         // 高影响底线动作由确定性规则补齐，不依赖模型是否恰好枚举完整。
@@ -86,7 +83,7 @@ public class FinalDecisionAssembler {
                     actions.add("REPORT_TO_AUTHORITY");
                 }
                 case "SANCTION_OTHER", "TXN_PATTERN_HIGH", "TXN_ABNORMAL" ->
-                        actions.add("REVIEW_SUSPICIOUS_TRANSACTION_REPORT");
+                    actions.add("REVIEW_SUSPICIOUS_TRANSACTION_REPORT");
                 case "DATA_INCOMPLETE" -> {
                     actions.add("RETRY_TRANSACTION_SOURCE");
                     actions.add("RESTRICT_AUTOMATED_APPROVAL");
@@ -108,24 +105,25 @@ public class FinalDecisionAssembler {
             actions.remove("MAINTAIN_STANDARD_MONITORING");
         }
         boolean terminalSanctionDisposition = safeRules(triggeredRules).stream()
-                .anyMatch(rule -> "SANCTION_LEVEL_1".equals(rule.ruleCode()));
+            .anyMatch(rule -> "SANCTION_LEVEL_1".equals(rule.ruleCode()));
         boolean transactionSourceUnavailable = safeRules(triggeredRules).stream()
-                .anyMatch(rule -> "DATA_INCOMPLETE".equals(rule.ruleCode()));
+            .anyMatch(rule -> "DATA_INCOMPLETE".equals(rule.ruleCode()));
         if ("高风险".equals(finalRisk) && !terminalSanctionDisposition) {
             actions.add("ENHANCED_DUE_DILIGENCE");
-        } else if ("中风险".equals(finalRisk) && !transactionSourceUnavailable) {
+        }
+        else if ("中风险".equals(finalRisk) && !transactionSourceUnavailable) {
             actions.add("INCREASE_MONITORING");
         }
         if (mustEscalate) {
             actions.add("MANUAL_REVIEW");
-        } else {
+        }
+        else {
             actions.remove("MANUAL_REVIEW");
         }
         return List.copyOf(actions);
     }
 
-    private List<String> mergeRiskPoints(List<String> rawRiskPoints,
-                                         GuardrailEngine.GuardrailResult guardrail) {
+    private List<String> mergeRiskPoints(List<String> rawRiskPoints, GuardrailEngine.GuardrailResult guardrail) {
         Set<String> points = new LinkedHashSet<>();
         safe(rawRiskPoints).stream().filter(value -> !value.isBlank()).forEach(points::add);
         for (RiskRuleEngine.TriggeredRule rule : safeRules(guardrail.decision().triggeredRules())) {
@@ -135,8 +133,7 @@ public class FinalDecisionAssembler {
         return List.copyOf(points);
     }
 
-    private String renderConclusion(String finalRisk, boolean mustEscalate,
-                                    List<RiskRuleEngine.TriggeredRule> rules) {
+    private String renderConclusion(String finalRisk, boolean mustEscalate, List<RiskRuleEngine.TriggeredRule> rules) {
         String base = switch (finalRisk) {
             case "高风险" -> "基于冻结快照、模型分析与确定性规则校验，最终评定为高风险。建议开展强化尽职调查，并按证据支持的处置代码执行。";
             case "中风险" -> "基于冻结快照、模型分析与确定性规则校验，最终评定为中风险。建议补充核验关键信息并加强持续监测。";
@@ -155,13 +152,15 @@ public class FinalDecisionAssembler {
     }
 
     private List<String> safe(List<String> values) {
-        if (values == null) return List.of();
+        if (values == null)
+            return List.of();
         List<String> result = new ArrayList<>();
-        values.stream().filter(java.util.Objects::nonNull).forEach(result::add);
+        values.stream().filter(Objects::nonNull).forEach(result::add);
         return List.copyOf(result);
     }
 
     private List<RiskRuleEngine.TriggeredRule> safeRules(List<RiskRuleEngine.TriggeredRule> rules) {
-        return rules == null ? List.of() : rules.stream().filter(java.util.Objects::nonNull).toList();
+        return rules == null ? List.of() : rules.stream().filter(Objects::nonNull).toList();
     }
+
 }

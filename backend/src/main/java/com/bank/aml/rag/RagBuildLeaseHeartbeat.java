@@ -1,24 +1,28 @@
 package com.bank.aml.rag;
 
-import org.springframework.beans.factory.annotation.Value;
-import org.springframework.stereotype.Component;
-
+import com.bank.aml.config.RagProperties;
 import java.time.Duration;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Component;
 
 /** 长时间索引构建的租约心跳；失去所有权后构建者必须停止写入和发布。 */
 @Component
 public class RagBuildLeaseHeartbeat {
+
+    private static final Logger log = LoggerFactory.getLogger(RagBuildLeaseHeartbeat.class);
+
     private final LegalIndexVersionService versions;
+
     private final Duration interval;
 
-    public RagBuildLeaseHeartbeat(LegalIndexVersionService versions,
-                                  @Value("${aml.rag.ingestion.lease-heartbeat-seconds:60}") long seconds) {
+    public RagBuildLeaseHeartbeat(LegalIndexVersionService versions, RagProperties properties) {
         this.versions = versions;
-        this.interval = Duration.ofSeconds(Math.max(5, seconds));
+        this.interval = Duration.ofSeconds(Math.max(5, properties.getIngestion().getLeaseHeartbeatSeconds()));
     }
 
     public Lease start(String version, String owner) {
@@ -26,10 +30,15 @@ public class RagBuildLeaseHeartbeat {
     }
 
     public static final class Lease implements AutoCloseable {
+
         private final LegalIndexVersionService versions;
+
         private final String version;
+
         private final String owner;
+
         private final AtomicBoolean valid = new AtomicBoolean(true);
+
         private final ScheduledExecutorService scheduler;
 
         private Lease(LegalIndexVersionService versions, String version, String owner, Duration interval) {
@@ -47,9 +56,12 @@ public class RagBuildLeaseHeartbeat {
 
         private void heartbeat() {
             try {
-                if (!versions.renewBuildLease(version, owner)) valid.set(false);
-            } catch (RuntimeException ignored) {
+                if (!versions.renewBuildLease(version, owner))
+                    valid.set(false);
+            }
+            catch (RuntimeException heartbeatFailure) {
                 valid.set(false);
+                log.warn("法规索引构建租约心跳失败 version={} owner={}", version, owner, heartbeatFailure);
             }
         }
 
@@ -65,5 +77,7 @@ public class RagBuildLeaseHeartbeat {
         public void close() {
             scheduler.shutdownNow();
         }
+
     }
+
 }

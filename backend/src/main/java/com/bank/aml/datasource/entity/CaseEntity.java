@@ -1,6 +1,7 @@
 package com.bank.aml.datasource.entity;
 
 import com.bank.aml.common.enums.CaseStatus;
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
@@ -11,8 +12,7 @@ import jakarta.persistence.Id;
 import jakarta.persistence.PrePersist;
 import jakarta.persistence.PreUpdate;
 import jakarta.persistence.Table;
-import com.fasterxml.jackson.annotation.JsonIgnore;
-
+import java.time.Clock;
 import java.time.LocalDateTime;
 
 /**
@@ -141,13 +141,13 @@ public class CaseEntity {
 
     @PrePersist
     void onCreate() {
-        this.createdAt = LocalDateTime.now();
+        this.createdAt = LocalDateTime.now(Clock.systemUTC());
         this.updatedAt = this.createdAt;
     }
 
     @PreUpdate
     void onUpdate() {
-        this.updatedAt = LocalDateTime.now();
+        this.updatedAt = LocalDateTime.now(Clock.systemUTC());
     }
 
     public Long getId() {
@@ -385,4 +385,5 @@ public class CaseEntity {
     public LocalDateTime getUpdatedAt() {
         return updatedAt;
     }
+
 }

@@ -8,19 +8,21 @@ import java.util.Set;
 /**
  * 确定性上下文压缩。
  *
- * <p>**绝不调用模型**，这是本类的核心设计约束，有三重理由：
+ * <p>
+ * **绝不调用模型**，这是本类的核心设计约束，有三重理由：
  * <ol>
- *   <li>Spec §10.1 明写"摘要不得引入新事实"，而模型摘要恰恰无法对此作出保证；</li>
- *   <li>压缩若调用模型，成本与延迟会随压缩频率线性上升，与"控制成本"的初衷相悖；</li>
- *   <li>非确定性压缩会让"模型这次看到了什么"无法复现，破坏审计前提。</li>
+ * <li>Spec §10.1 明写"摘要不得引入新事实"，而模型摘要恰恰无法对此作出保证；</li>
+ * <li>压缩若调用模型，成本与延迟会随压缩频率线性上升，与"控制成本"的初衷相悖；</li>
+ * <li>非确定性压缩会让"模型这次看到了什么"无法复现，破坏审计前提。</li>
  * </ol>
  *
- * <p>压缩策略按类型分派：证据类逐字保留（零失真），正文类保留头尾 + 归档索引。
- * 所有字符预算由整数运算得出，不读取任何可变全局状态。
+ * <p>
+ * 压缩策略按类型分派：证据类逐字保留（零失真），正文类保留头尾 + 归档索引。 所有字符预算由整数运算得出，不读取任何可变全局状态。
  */
 public final class ContextCompressor {
 
     private final int answerHeadChars;
+
     private final int answerTailChars;
 
     public ContextCompressor(int answerHeadChars, int answerTailChars) {
@@ -33,8 +35,7 @@ public final class ContextCompressor {
 
     /**
      * 压缩一条条目。不可压缩的类型（用户输入）与证据类**原样返回**。
-     *
-     * @param entry      待压缩条目
+     * @param entry 待压缩条目
      * @param archiveRef 归档引用键，用于在压缩文本里留下精确取回入口
      * @return 压缩结果；{@code truncated} 为 false 时表示未发生压缩
      */
@@ -102,4 +103,5 @@ public final class ContextCompressor {
      */
     public record CompressedEntry(String content, List<String> retainedEvidenceIds, boolean truncated) {
     }
+
 }

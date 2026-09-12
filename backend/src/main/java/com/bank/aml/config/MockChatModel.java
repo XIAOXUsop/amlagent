@@ -11,7 +11,6 @@ import dev.langchain4j.model.chat.request.ChatRequest;
 import dev.langchain4j.model.chat.request.json.JsonSchemaElement;
 import dev.langchain4j.model.chat.response.ChatResponse;
 import dev.langchain4j.model.output.FinishReason;
-
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -22,18 +21,21 @@ import java.util.stream.Collectors;
 
 /**
  * 本地 Mock 模型：未配置 API Key 时用于演示完整 Agent 链路。
- * <p>支持模拟 agentic 工具调用循环：
+ * <p>
+ * 支持模拟 agentic 工具调用循环：
  * <ol>
- *   <li>请求含工具定义 → 返回 ToolExecutionRequest（依次请求全部工具）</li>
- *   <li>对话中出现工具结果消息 → 返回最终回答（结构化输出场景返回 {@code {}}）</li>
- *   <li>普通对话 → 回显最后一条用户消息</li>
+ * <li>请求含工具定义 → 返回 ToolExecutionRequest（依次请求全部工具）</li>
+ * <li>对话中出现工具结果消息 → 返回最终回答（结构化输出场景返回 {@code {}}）</li>
+ * <li>普通对话 → 回显最后一条用户消息</li>
  * </ol>
  * 仅用于离线演示，不具备真实模型能力。
  */
 public class MockChatModel implements ChatModel {
 
     private static final Pattern CUSTOMER_ID_PATTERN = Pattern.compile("C\\d{3}");
+
     private static final Pattern LEGAL_KEYWORDS_PATTERN = Pattern.compile("法规检索关键词[^：:]*[：:]\\s*([^\\n]+)");
+
     private static final Pattern LEGAL_EVIDENCE_PATTERN = Pattern.compile("\\bLEGAL-[A-Za-z0-9_-]+\\b");
 
     private final String modelName;
@@ -49,51 +51,39 @@ public class MockChatModel implements ChatModel {
 
         // 已有工具结果：结束工具循环，给出最终回答
         if (hasToolResults) {
-            String text = wantsJson(messages)
-                    ? mockReportJson(allText(messages))
-                    : "【Mock 模型】工具执行完成，已完成数据采集与分析。";
-            return ChatResponse.builder()
-                    .aiMessage(AiMessage.from(text))
-                    .finishReason(FinishReason.STOP)
-                    .build();
+            String text = wantsJson(messages) ? mockReportJson(allText(messages)) : "【Mock 模型】工具执行完成，已完成数据采集与分析。";
+            return ChatResponse.builder().aiMessage(AiMessage.from(text)).finishReason(FinishReason.STOP).build();
         }
 
         List<ToolSpecification> tools = request.toolSpecifications();
         // 请求声明了工具：发起一轮工具调用（模拟模型自主规划）
         if (tools != null && !tools.isEmpty()) {
             String contextText = allText(messages);
-            List<ToolExecutionRequest> reqs = tools.stream()
-                    .map(t -> buildToolRequest(t, contextText))
-                    .toList();
+            List<ToolExecutionRequest> reqs = tools.stream().map(t -> buildToolRequest(t, contextText)).toList();
             return ChatResponse.builder()
-                    .aiMessage(AiMessage.from(reqs))
-                    .finishReason(FinishReason.TOOL_EXECUTION)
-                    .build();
+                .aiMessage(AiMessage.from(reqs))
+                .finishReason(FinishReason.TOOL_EXECUTION)
+                .build();
         }
 
         // 普通对话
         String text = lastUserText(messages);
         String reply = wantsJson(messages) ? "{}" : "【Mock 模型】已收到：" + text.trim();
-        return ChatResponse.builder()
-                .aiMessage(AiMessage.from(reply))
-                .finishReason(FinishReason.STOP)
-                .build();
+        return ChatResponse.builder().aiMessage(AiMessage.from(reply)).finishReason(FinishReason.STOP).build();
     }
 
     private ToolExecutionRequest buildToolRequest(ToolSpecification tool, String contextText) {
-        Map<String, JsonSchemaElement> props = tool.parameters() != null
-                ? tool.parameters().properties()
-                : Map.of();
+        Map<String, JsonSchemaElement> props = tool.parameters() != null ? tool.parameters().properties() : Map.of();
         Map<String, String> args = new LinkedHashMap<>();
         for (String prop : props.keySet()) {
             args.put(prop, defaultValueFor(prop, contextText));
         }
         String arguments = args.isEmpty() ? "{}" : toJson(args);
         return ToolExecutionRequest.builder()
-                .id("mock-" + UUID.randomUUID())
-                .name(tool.name())
-                .arguments(arguments)
-                .build();
+            .id("mock-" + UUID.randomUUID())
+            .name(tool.name())
+            .arguments(arguments)
+            .build();
     }
 
     /** 依据参数名推断演示用默认值，使 Mock 能驱动工具执行 */
@@ -115,9 +105,10 @@ public class MockChatModel implements ChatModel {
     }
 
     private String toJson(Map<String, String> args) {
-        return args.entrySet().stream()
-                .map(e -> "\"" + e.getKey() + "\":\"" + e.getValue().replace("\"", "\\\"") + "\"")
-                .collect(Collectors.joining(",", "{", "}"));
+        return args.entrySet()
+            .stream()
+            .map(e -> "\"" + e.getKey() + "\":\"" + e.getValue().replace("\"", "\\\"") + "\"")
+            .collect(Collectors.joining(",", "{", "}"));
     }
 
     private String extractCustomerId(String text) {
@@ -141,7 +132,8 @@ public class MockChatModel implements ChatModel {
                  "transactionProfile":"已基于交易工具完成画像","corporateProfile":"已基于股权工具完成核验",
                  "sanctions":[],"legalBasis":["%s"],"riskPoints":["离线 Mock 仅验证工程链路"],
                  "conclusion":"离线 Mock 初审完成，最终评级以 Guardrails 为准","evidenceChain":["%s"],
-                 "manualReviewRequired":true,"findingCodes":["RISK_ASSESSMENT_UNCERTAIN"],"actionCodes":["MANUAL_REVIEW"]}
+                 "manualReviewRequired":true,
+                 "findingCodes":["RISK_ASSESSMENT_UNCERTAIN"],"actionCodes":["MANUAL_REVIEW"]}
                 """.formatted(legalBasis, evidenceChain).replaceAll("\\s+", " ");
     }
 
@@ -160,11 +152,15 @@ public class MockChatModel implements ChatModel {
         for (ChatMessage msg : messages) {
             if (msg instanceof UserMessage um) {
                 sb.append(um.singleText()).append('\n');
-            } else if (msg instanceof AiMessage am) {
+            }
+            else if (msg instanceof AiMessage am) {
                 String t = am.text();
-                if (t != null) sb.append(t).append('\n');
-            } else if (msg instanceof ToolExecutionResultMessage tm) {
-                if (tm.text() != null) sb.append(tm.text()).append('\n');
+                if (t != null)
+                    sb.append(t).append('\n');
+            }
+            else if (msg instanceof ToolExecutionResultMessage tm) {
+                if (tm.text() != null)
+                    sb.append(tm.text()).append('\n');
             }
         }
         return sb.toString();
@@ -179,4 +175,5 @@ public class MockChatModel implements ChatModel {
     public String toString() {
         return "MockChatModel(" + modelName + ")";
     }
+
 }

@@ -7,18 +7,18 @@ import dev.langchain4j.model.chat.listener.ChatModelListener;
 import dev.langchain4j.model.chat.request.ChatRequest;
 import dev.langchain4j.model.chat.request.ChatRequestParameters;
 import dev.langchain4j.model.chat.response.ChatResponse;
-
 import java.util.List;
 import java.util.Set;
 
 /**
- * 可观测同步 ChatModel 包装器：显式携带固定 purpose 标签，替代 ThreadLocal，
- * 保证主 Agent / 评测等用途的成本指标不被异步回调线程污染。
+ * 可观测同步 ChatModel 包装器：显式携带固定 purpose 标签，替代 ThreadLocal， 保证主 Agent / 评测等用途的成本指标不被异步回调线程污染。
  */
 public final class ObservedChatModel implements ChatModel {
 
     private final ChatModel delegate;
+
     private final MetricsRecorder metrics;
+
     private final ModelInvocationTags tags;
 
     public ObservedChatModel(ChatModel delegate, MetricsRecorder metrics, ModelInvocationTags tags) {
@@ -41,7 +41,8 @@ public final class ObservedChatModel implements ChatModel {
             }
             metrics.llmDuration(tags, elapsedMs(start));
             return response;
-        } catch (Exception e) {
+        }
+        catch (Exception e) {
             // 错误路径同样记录耗时，否则失败调用的延迟会从 P50/P95 中缺失
             metrics.llmDuration(tags, elapsedMs(start));
             metrics.llmError(tags);
@@ -73,4 +74,5 @@ public final class ObservedChatModel implements ChatModel {
     public ModelProvider provider() {
         return delegate.provider();
     }
+
 }

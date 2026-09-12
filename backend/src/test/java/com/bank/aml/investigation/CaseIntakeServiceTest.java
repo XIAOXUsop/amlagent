@@ -1,9 +1,9 @@
 package com.bank.aml.investigation;
 
-import com.bank.aml.agent.AlertSnapshotAssembler;
+import com.bank.aml.TestClocks;
+import com.bank.aml.TestProperties;
 import com.bank.aml.audit.AuditOutboxService;
 import com.bank.aml.common.enums.CaseStatus;
-
 import com.bank.aml.datasource.CustomerDataPort;
 import com.bank.aml.datasource.entity.CaseEntity;
 import com.bank.aml.datasource.repository.CaseRepository;
@@ -11,12 +11,10 @@ import com.bank.aml.domain.CustomerProfile;
 import com.bank.aml.messaging.WorkflowCommandService;
 import com.bank.aml.observability.MetricsRecorder;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import java.time.LocalDateTime;
+import java.util.Optional;
 import org.junit.jupiter.api.Test;
 import org.mockito.InOrder;
-
-import java.time.LocalDateTime;
-
-import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
@@ -31,16 +29,22 @@ import static org.mockito.Mockito.when;
 class CaseIntakeServiceTest {
 
     private final CaseRepository cases = mock(CaseRepository.class);
+
     private final AmlAlertRepository alerts = mock(AmlAlertRepository.class);
+
     private final CustomerDataPort customerData = mock(CustomerDataPort.class);
+
     private final InvestigationService investigation = mock(InvestigationService.class);
+
     private final WorkflowCommandService commands = mock(WorkflowCommandService.class);
+
     /** 与生产装配器同容量口径（默认 8），保证归并前置校验与 Worker 快照装配一致。 */
-    private final AlertSnapshotAssembler assembler =
-            new AlertSnapshotAssembler(new ObjectMapper().findAndRegisterModules(), 8);
+    private final AlertSnapshotAssembler assembler = new AlertSnapshotAssembler(
+            new ObjectMapper().findAndRegisterModules(), 8);
+
     private final CaseIntakeService service = new CaseIntakeService(cases, alerts, customerData,
-            new InvestigationPlaybookCatalog(), investigation, commands,
-            mock(MetricsRecorder.class), mock(AuditOutboxService.class), assembler);
+            new InvestigationPlaybookCatalog(), investigation, commands, mock(MetricsRecorder.class),
+            mock(AuditOutboxService.class), assembler, TestProperties.aml(), TestClocks.FIXED);
 
     // ---- 既有锁顺序回归：拆分保持“案件 → 预警” ----
 
@@ -54,10 +58,9 @@ class CaseIntakeServiceTest {
         when(alerts.findByIdForUpdate(11L)).thenReturn(Optional.of(alert));
         when(cases.findByIdForUpdate(7L)).thenReturn(Optional.of(legacy));
 
-        assertThatThrownBy(() -> service.linkToCase(11L, 7L, 0,
-                "同一客户但目标案件属于存量兼容范围", "analyst"))
-                .isInstanceOf(IllegalStateException.class)
-                .hasMessageContaining("存量兼容案件不能接收新预警");
+        assertThatThrownBy(() -> service.linkToCase(11L, 7L, 0, "同一客户但目标案件属于存量兼容范围", "analyst"))
+            .isInstanceOf(IllegalStateException.class)
+            .hasMessageContaining("存量兼容案件不能接收新预警");
     }
 
     @Test
@@ -71,10 +74,9 @@ class CaseIntakeServiceTest {
         when(alerts.findByIdForUpdate(11L)).thenReturn(Optional.of(locked));
         when(alerts.countByCaseIdAndStatus(7L, AlertStatus.LINKED)).thenReturn(1L);
 
-        assertThatThrownBy(() -> service.splitToNewCase(11L, 0, false,
-                "该预警的交易主体和调查范围应独立处理", "analyst"))
-                .isInstanceOf(IllegalStateException.class)
-                .hasMessageContaining("单预警案件无需拆分");
+        assertThatThrownBy(() -> service.splitToNewCase(11L, 0, false, "该预警的交易主体和调查范围应独立处理", "analyst"))
+            .isInstanceOf(IllegalStateException.class)
+            .hasMessageContaining("单预警案件无需拆分");
 
         InOrder order = inOrder(cases, alerts);
         order.verify(alerts).findById(11L);
@@ -97,11 +99,10 @@ class CaseIntakeServiceTest {
         AmlAlert alert = linkedOrNewAlert(AlertStatus.NEW, null);
         when(alerts.findByIdForUpdate(11L)).thenReturn(Optional.of(alert));
 
-        assertThatThrownBy(() -> service.linkToCase(11L, 7L, 0,
-                "同客户新增第九条预警尝试归并到同一案件", "analyst"))
-                .isInstanceOf(IllegalStateException.class)
-                .hasMessageContaining("容量上限")
-                .hasMessageContaining("拆分");
+        assertThatThrownBy(() -> service.linkToCase(11L, 7L, 0, "同客户新增第九条预警尝试归并到同一案件", "analyst"))
+            .isInstanceOf(IllegalStateException.class)
+            .hasMessageContaining("容量上限")
+            .hasMessageContaining("拆分");
         // 案件状态未被改变，仍可拆分调整边界
         assertThat(target.getStatus()).isEqualTo(CaseStatus.PENDING);
         // 预警未被归并保存，也不会入队
@@ -123,9 +124,7 @@ class CaseIntakeServiceTest {
         when(alerts.findByIdForUpdate(11L)).thenReturn(Optional.of(alert));
         when(alerts.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
 
-        assertThatCode(() -> service.linkToCase(11L, 7L, 0,
-                "同客户新增预警，恰好达到容量上限", "analyst"))
-                .doesNotThrowAnyException();
+        assertThatCode(() -> service.linkToCase(11L, 7L, 0, "同客户新增预警，恰好达到容量上限", "analyst")).doesNotThrowAnyException();
         assertThat(alert.getStatus()).isEqualTo(AlertStatus.LINKED);
         verify(investigation).initializeForAlert(7L, alert, "analyst");
     }
@@ -148,8 +147,8 @@ class CaseIntakeServiceTest {
         when(cases.findByIdForUpdate(7L)).thenReturn(Optional.of(source));
         when(alerts.findByIdForUpdate(11L)).thenReturn(Optional.of(locked));
         when(alerts.countByCaseIdAndStatus(7L, AlertStatus.LINKED)).thenReturn(2L);
-        when(customerData.findCustomer("C001")).thenReturn(Optional.of(
-                new CustomerProfile("C001", "张伟", "110101198506123456", "企业", "贸易", "上海", "5000万")));
+        when(customerData.findCustomer("C001")).thenReturn(
+                Optional.of(new CustomerProfile("C001", "张伟", "110101198506123456", "企业", "贸易", "上海", "5000万")));
         InvestigationHypothesis newHypothesis = mock(InvestigationHypothesis.class);
         when(newHypothesis.getId()).thenReturn(55L);
         when(investigation.initializeForAlert(any(), any(), any())).thenReturn(newHypothesis);
@@ -159,14 +158,14 @@ class CaseIntakeServiceTest {
                 var field = CaseEntity.class.getDeclaredField("id");
                 field.setAccessible(true);
                 field.set(saved, 88L);
-            } catch (ReflectiveOperationException e) {
+            }
+            catch (ReflectiveOperationException e) {
                 throw new IllegalStateException(e);
             }
             return saved;
         });
 
-        CaseEntity target = service.splitToNewCase(11L, 0, false,
-                "容量超限失败，拆出该预警后恢复原案件", "analyst");
+        CaseEntity target = service.splitToNewCase(11L, 0, false, "容量超限失败，拆出该预警后恢复原案件", "analyst");
 
         assertThat(target.getId()).isEqualTo(88L);
         assertThat(target.getStatus()).isEqualTo(CaseStatus.PENDING);
@@ -190,10 +189,9 @@ class CaseIntakeServiceTest {
         when(alerts.findByIdForUpdate(11L)).thenReturn(Optional.of(locked));
         when(alerts.countByCaseIdAndStatus(7L, AlertStatus.LINKED)).thenReturn(2L);
 
-        assertThatThrownBy(() -> service.splitToNewCase(11L, 0, false,
-                "尝试拆分已产生调查产物的失败案件", "analyst"))
-                .isInstanceOf(IllegalStateException.class)
-                .hasMessageContaining("调查开始后不能拆分");
+        assertThatThrownBy(() -> service.splitToNewCase(11L, 0, false, "尝试拆分已产生调查产物的失败案件", "analyst"))
+            .isInstanceOf(IllegalStateException.class)
+            .hasMessageContaining("调查开始后不能拆分");
         verify(investigation, never()).validateCanSplit(any());
     }
 
@@ -203,7 +201,8 @@ class CaseIntakeServiceTest {
             var field = entity.getClass().getDeclaredField("id");
             field.setAccessible(true);
             field.set(entity, id);
-        } catch (ReflectiveOperationException e) {
+        }
+        catch (ReflectiveOperationException e) {
             throw new IllegalStateException(e);
         }
     }
@@ -218,4 +217,5 @@ class CaseIntakeServiceTest {
         alert.setOccurredAt(LocalDateTime.now().minusHours(1));
         return alert;
     }
+
 }

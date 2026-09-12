@@ -2,13 +2,13 @@ package com.bank.aml.evaluation;
 
 import dev.langchain4j.agent.tool.P;
 import dev.langchain4j.agent.tool.Tool;
-
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.CopyOnWriteArrayList;
@@ -18,17 +18,23 @@ import java.util.function.Supplier;
 /**
  * Case-scoped tools backed exclusively by one evaluation fixture.
  *
- * <p>Create a fresh instance for every evaluation case. Tools receive only a case customer reference;
- * raw names and identity numbers remain inside the fixture and are never sent to the model.</p>
+ * <p>
+ * Create a fresh instance for every evaluation case. Tools receive only a case customer
+ * reference; raw names and identity numbers remain inside the fixture and are never sent
+ * to the model.
+ * </p>
  */
 public final class AgentEvalFixtureTools {
 
     public static final String ARGUMENT_VALIDATION_FAILED = "ARGUMENT_VALIDATION_FAILED";
-    public static final String LEGAL_QUERY_VALIDATION_FAILED =
-            "ARGUMENT_VALIDATION_FAILED: query must copy at least one provided legal search keyword verbatim";
+
+    public static final String LEGAL_QUERY_VALIDATION_FAILED = "ARGUMENT_VALIDATION_FAILED: query must copy "
+            + "at least one provided legal search keyword verbatim";
+
     public static final String TOOL_EXECUTION_FAILED = "TOOL_EXECUTION_FAILED";
 
     private final AgentEvalDataset.AgentEvalCase evalCase;
+
     private final List<AgentEvalToolCallTrace> callTraces = new CopyOnWriteArrayList<>();
 
     public AgentEvalFixtureTools(AgentEvalDataset.AgentEvalCase evalCase) {
@@ -37,68 +43,39 @@ public final class AgentEvalFixtureTools {
         Objects.requireNonNull(evalCase.toolFixture(), "evalCase.toolFixture must not be null");
     }
 
-    @Tool(
-            name = "transactionProfile",
-            value = "Query the current evaluation customer's transaction risk profile."
-    )
+    @Tool(name = "transactionProfile", value = "Query the current evaluation customer's transaction risk profile.")
     public String transactionProfile(
-            @P(name = "customerId", value = "Exact customer identifier from the case") String customerId
-    ) {
+            @P(name = "customerId", value = "Exact customer identifier from the case") String customerId) {
         Map<String, String> arguments = arguments("customerId", customerId);
-        return invoke(
-                "transactionProfile",
-                arguments,
-                () -> exact(customerId, evalCase.input().customerId()),
-                () -> evalCase.toolFixture().transactionResult()
-        );
+        return invoke("transactionProfile", arguments, () -> exact(customerId, evalCase.input().customerId()),
+                () -> evalCase.toolFixture().transactionResult());
     }
 
-    @Tool(
-            name = "corporateProfile",
-            value = "Query the current evaluation customer's corporate ownership and UBO profile."
-    )
+    @Tool(name = "corporateProfile",
+            value = "Query the current evaluation customer's corporate ownership and UBO profile.")
     public String corporateProfile(
-            @P(name = "customerId", value = "Exact customer identifier from the case") String customerId
-    ) {
+            @P(name = "customerId", value = "Exact customer identifier from the case") String customerId) {
         Map<String, String> arguments = arguments("customerId", customerId);
-        return invoke(
-                "corporateProfile",
-                arguments,
-                () -> exact(customerId, evalCase.input().customerId()),
-                () -> evalCase.toolFixture().corporateResult()
-        );
+        return invoke("corporateProfile", arguments, () -> exact(customerId, evalCase.input().customerId()),
+                () -> evalCase.toolFixture().corporateResult());
     }
 
-    @Tool(
-            name = "checkSanctions",
-            value = "Read the backend sanctions-screening result already bound to the current customer reference."
-    )
+    @Tool(name = "checkSanctions",
+            value = "Read the backend sanctions-screening result already bound to the current customer reference.")
     public String checkSanctions(
-            @P(name = "customerId", value = "Exact customer identifier from the case") String customerId
-    ) {
+            @P(name = "customerId", value = "Exact customer identifier from the case") String customerId) {
         Map<String, String> arguments = arguments("customerId", customerId);
-        return invoke(
-                "checkSanctions",
-                arguments,
-                () -> exact(customerId, evalCase.input().customerId()),
-                () -> evalCase.toolFixture().sanctionResult()
-        );
+        return invoke("checkSanctions", arguments, () -> exact(customerId, evalCase.input().customerId()),
+                () -> evalCase.toolFixture().sanctionResult());
     }
 
-    @Tool(
-            name = "searchLegal",
-            value = "Search frozen legal evidence. The query must copy at least one legalSearchKeyword from the case input verbatim."
-    )
-    public String searchLegal(
-            @P(name = "query", value = "Query containing a verbatim legalSearchKeyword from the case input") String query
-    ) {
+    @Tool(name = "searchLegal", value = "Search frozen legal evidence. The query must copy at least one "
+            + "legalSearchKeyword from the case input verbatim.")
+    public String searchLegal(@P(name = "query",
+            value = "Query containing a verbatim legalSearchKeyword from the case input") String query) {
         Map<String, String> arguments = arguments("query", query);
-        String result = invoke(
-                "searchLegal",
-                arguments,
-                () -> legalQueryValid(query),
-                () -> evalCase.toolFixture().legalResult()
-        );
+        String result = invoke("searchLegal", arguments, () -> legalQueryValid(query),
+                () -> evalCase.toolFixture().legalResult());
         return ARGUMENT_VALIDATION_FAILED.equals(result) ? LEGAL_QUERY_VALIDATION_FAILED : result;
     }
 
@@ -107,48 +84,24 @@ public final class AgentEvalFixtureTools {
         return List.copyOf(callTraces);
     }
 
-    private String invoke(
-            String toolName,
-            Map<String, String> arguments,
-            BooleanSupplier argumentValidator,
-            Supplier<String> resultSupplier
-    ) {
+    private String invoke(String toolName, Map<String, String> arguments, BooleanSupplier argumentValidator,
+            Supplier<String> resultSupplier) {
         long startedAt = System.nanoTime();
         if (!argumentValidator.getAsBoolean()) {
-            callTraces.add(new AgentEvalToolCallTrace(
-                    toolName,
-                    arguments,
-                    false,
-                    false,
-                    elapsedMs(startedAt),
-                    null,
-                    ARGUMENT_VALIDATION_FAILED
-            ));
+            callTraces.add(new AgentEvalToolCallTrace(toolName, arguments, false, false, elapsedMs(startedAt), null,
+                    ARGUMENT_VALIDATION_FAILED));
             return ARGUMENT_VALIDATION_FAILED;
         }
 
         try {
             String result = Objects.requireNonNull(resultSupplier.get(), "fixture result must not be null");
-            callTraces.add(new AgentEvalToolCallTrace(
-                    toolName,
-                    arguments,
-                    true,
-                    true,
-                    elapsedMs(startedAt),
-                    sha256(result),
-                    null
-            ));
+            callTraces.add(new AgentEvalToolCallTrace(toolName, arguments, true, true, elapsedMs(startedAt),
+                    sha256(result), null));
             return result;
-        } catch (RuntimeException exception) {
-            callTraces.add(new AgentEvalToolCallTrace(
-                    toolName,
-                    arguments,
-                    false,
-                    true,
-                    elapsedMs(startedAt),
-                    null,
-                    TOOL_EXECUTION_FAILED
-            ));
+        }
+        catch (RuntimeException exception) {
+            callTraces.add(new AgentEvalToolCallTrace(toolName, arguments, false, true, elapsedMs(startedAt), null,
+                    TOOL_EXECUTION_FAILED));
             return TOOL_EXECUTION_FAILED;
         }
     }
@@ -162,13 +115,15 @@ public final class AgentEvalFixtureTools {
             return false;
         }
         String normalized = normalizeQuery(query);
-        return evalCase.toolFixture().legalQueryTerms().stream()
-                .map(AgentEvalFixtureTools::normalizeQuery)
-                .anyMatch(normalized::contains);
+        return evalCase.toolFixture()
+            .legalQueryTerms()
+            .stream()
+            .map(AgentEvalFixtureTools::normalizeQuery)
+            .anyMatch(normalized::contains);
     }
 
     private static String normalizeQuery(String value) {
-        return value.replaceAll("\\s+", "").toLowerCase(java.util.Locale.ROOT);
+        return value.replaceAll("\\s+", "").toLowerCase(Locale.ROOT);
     }
 
     private static long elapsedMs(long startedAt) {
@@ -180,7 +135,8 @@ public final class AgentEvalFixtureTools {
         try {
             MessageDigest digest = MessageDigest.getInstance("SHA-256");
             return HexFormat.of().formatHex(digest.digest(value.getBytes(StandardCharsets.UTF_8)));
-        } catch (NoSuchAlgorithmException exception) {
+        }
+        catch (NoSuchAlgorithmException exception) {
             throw new IllegalStateException("SHA-256 is not available", exception);
         }
     }
@@ -195,4 +151,5 @@ public final class AgentEvalFixtureTools {
         }
         return result;
     }
+
 }

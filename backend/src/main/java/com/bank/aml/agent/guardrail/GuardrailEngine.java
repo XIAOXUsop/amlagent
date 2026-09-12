@@ -4,28 +4,28 @@ import com.bank.aml.agent.DueDiligenceReport;
 import com.bank.aml.common.enums.RiskLevel;
 import com.bank.aml.domain.CustomerProfile;
 import com.bank.aml.domain.InvestigationSnapshot;
+import com.bank.aml.domain.RiskContext;
 import com.bank.aml.domain.SanctionRecord;
-import com.bank.aml.risk.RiskContext;
 import com.bank.aml.risk.RiskFactAssembler;
-import com.bank.aml.risk.RiskRuleEngine;
 import com.bank.aml.risk.RiskRuleEngine.TriggeredRule;
-import org.springframework.stereotype.Component;
-
+import com.bank.aml.risk.RiskRuleEngine;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
+import org.springframework.stereotype.Component;
 
 /**
- * Guardrails 安全护栏：由配置化风险规则（{@code risk_rule} 表）驱动，
- * 独立于 LLM 校验并强制修正风险评级，输出可解释决策。
- * <p>核心原则：大模型负责理解推理总结，确定性规则系统掌握最终风险决策权。
- * 结构化风险事实由 {@link RiskFactAssembler} 从工具结果统一组装，不依赖模型声明。
+ * Guardrails 安全护栏：由配置化风险规则（{@code risk_rule} 表）驱动， 独立于 LLM 校验并强制修正风险评级，输出可解释决策。
+ * <p>
+ * 核心原则：大模型负责理解推理总结，确定性规则系统掌握最终风险决策权。 结构化风险事实由 {@link RiskFactAssembler}
+ * 从工具结果统一组装，不依赖模型声明。
  */
 @Component
 public class GuardrailEngine {
 
     private final RiskFactAssembler riskFactAssembler;
+
     private final RiskRuleEngine ruleEngine;
 
     public GuardrailEngine(RiskFactAssembler riskFactAssembler, RiskRuleEngine ruleEngine) {
@@ -34,24 +34,15 @@ public class GuardrailEngine {
     }
 
     /** 决策结果（可解释） */
-    public record GuardrailDecision(
-            String modelRiskLevel,
-            String finalRiskLevel,
-            List<TriggeredRule> triggeredRules,
+    public record GuardrailDecision(String modelRiskLevel, String finalRiskLevel, List<TriggeredRule> triggeredRules,
             String requiredAction,
             /** 最终处置代码（模型输出 + 规则补充，已去重） */
-            List<String> actionCodes
-    ) {
+            List<String> actionCodes) {
     }
 
     /** 护栏校验结果 */
-    public record GuardrailResult(
-            String finalRiskLevel,
-            List<String> corrections,
-            boolean mustEscalate,
-            List<SanctionRecord> sanctionHits,
-            GuardrailDecision decision
-    ) {
+    public record GuardrailResult(String finalRiskLevel, List<String> corrections, boolean mustEscalate,
+            List<SanctionRecord> sanctionHits, GuardrailDecision decision) {
     }
 
     /** 生产链路入口：从客户数据源组装风险事实后执行护栏决策（用于非快照路径/测试） */
@@ -61,43 +52,37 @@ public class GuardrailEngine {
         return applyRules(ctx, report, riskFactAssembler.searchSanctions(customer));
     }
 
-    /** 快照入口：从已冻结的尽调快照提取风险事实执行护栏决策，不二次读取数据源。
-     * <p>Agent 推理与 Guardrails 校验因此共享同一份数据事实，避免数据源在两者之间变化导致的不一致。
+    /**
+     * 快照入口：从已冻结的尽调快照提取风险事实执行护栏决策，不二次读取数据源。
+     * <p>
+     * Agent 推理与 Guardrails 校验因此共享同一份数据事实，避免数据源在两者之间变化导致的不一致。
      */
     public GuardrailResult apply(InvestigationSnapshot snapshot, DueDiligenceReport report) {
         String modelLevel = report.riskLevel() == null ? "低风险" : report.riskLevel();
         RiskContext facts = snapshot.riskFacts();
-        RiskContext effectiveContext = new RiskContext(
-                facts.maxSeverity(), facts.sanctionHit(), facts.crossRatio(), facts.nightRatio(),
-                facts.largeCount(), facts.transactionDataComplete(), facts.transactionRiskExplained(),
-                facts.transactionPatternSeverity(), facts.uboRiskSeverity(), modelLevel, RiskLevel.fromLabel(modelLevel).code());
+        RiskContext effectiveContext = new RiskContext(facts.maxSeverity(), facts.sanctionHit(), facts.crossRatio(),
+                facts.nightRatio(), facts.largeCount(), facts.transactionDataComplete(),
+                facts.transactionRiskExplained(), facts.transactionPatternSeverity(), facts.uboRiskSeverity(),
+                modelLevel, RiskLevel.fromLabel(modelLevel).code());
         return applyRules(effectiveContext, report, snapshot.sanctionHits());
     }
 
     /**
      * 使用已经聚合好的风险事实执行护栏决策。
-     * <p>该入口不访问数据源，适用于离线评测、回放和单元测试。
+     * <p>
+     * 该入口不访问数据源，适用于离线评测、回放和单元测试。
      */
     public GuardrailResult apply(RiskContext context, DueDiligenceReport report) {
         String modelLevel = report.riskLevel() == null ? "低风险" : report.riskLevel();
-        RiskContext effectiveContext = new RiskContext(
-                context.maxSeverity(),
-                context.sanctionHit(),
-                context.crossRatio(),
-                context.nightRatio(),
-                context.largeCount(),
-                context.transactionDataComplete(),
-                context.transactionRiskExplained(),
-                context.transactionPatternSeverity(),
-                context.uboRiskSeverity(),
-                modelLevel,
-                RiskLevel.fromLabel(modelLevel).code());
+        RiskContext effectiveContext = new RiskContext(context.maxSeverity(), context.sanctionHit(),
+                context.crossRatio(), context.nightRatio(), context.largeCount(), context.transactionDataComplete(),
+                context.transactionRiskExplained(), context.transactionPatternSeverity(), context.uboRiskSeverity(),
+                modelLevel, RiskLevel.fromLabel(modelLevel).code());
         return applyRules(effectiveContext, report, List.of());
     }
 
-    private GuardrailResult applyRules(RiskContext context,
-                                       DueDiligenceReport report,
-                                       List<SanctionRecord> sanctionHits) {
+    private GuardrailResult applyRules(RiskContext context, DueDiligenceReport report,
+            List<SanctionRecord> sanctionHits) {
         String modelLevel = context.modelRiskLevel();
         List<TriggeredRule> triggered = ruleEngine.evaluate(context);
 
@@ -108,8 +93,8 @@ public class GuardrailEngine {
         for (TriggeredRule rule : triggered) {
             // 只升不降：规则目标等级更高才上调，避免确定性规则降低模型已经研判的等级
             if (RiskLevel.fromLabel(rule.targetRiskLevel()).code() > RiskLevel.fromLabel(finalRisk).code()) {
-                corrections.add("Guardrails【" + rule.ruleCode() + " v" + rule.ruleVersion() + "】："
-                        + rule.evidence() + "，评级由【" + finalRisk + "】上调为【" + rule.targetRiskLevel() + "】");
+                corrections.add("Guardrails【" + rule.ruleCode() + " v" + rule.ruleVersion() + "】：" + rule.evidence()
+                        + "，评级由【" + finalRisk + "】上调为【" + rule.targetRiskLevel() + "】");
                 finalRisk = rule.targetRiskLevel();
             }
             if ("MANUAL_REVIEW".equals(rule.action())) {
@@ -128,8 +113,9 @@ public class GuardrailEngine {
         }
 
         String requiredAction = mustEscalate ? "MANUAL_REVIEW" : "AUTO_DONE";
-        GuardrailDecision decision = new GuardrailDecision(modelLevel, finalRisk, triggered,
-                requiredAction, List.copyOf(actionCodes));
+        GuardrailDecision decision = new GuardrailDecision(modelLevel, finalRisk, triggered, requiredAction,
+                List.copyOf(actionCodes));
         return new GuardrailResult(finalRisk, corrections, mustEscalate, sanctionHits, decision);
     }
+
 }

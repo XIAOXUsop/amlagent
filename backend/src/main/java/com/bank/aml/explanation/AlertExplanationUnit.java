@@ -8,7 +8,7 @@ import jakarta.persistence.Id;
 import jakarta.persistence.PrePersist;
 import jakarta.persistence.PreUpdate;
 import jakarta.persistence.Table;
-
+import java.time.Clock;
 import java.time.LocalDateTime;
 
 /** 预警核验单元：一条有效预警一个单元；当前指针更新受案件锁保护（v2 计划 §3.1/§12）。 */
@@ -62,38 +62,113 @@ public class AlertExplanationUnit {
 
     @PrePersist
     void onCreate() {
-        createdAt = LocalDateTime.now();
+        createdAt = LocalDateTime.now(Clock.systemUTC());
         updatedAt = createdAt;
     }
 
     @PreUpdate
     void onUpdate() {
-        updatedAt = LocalDateTime.now();
+        updatedAt = LocalDateTime.now(Clock.systemUTC());
     }
 
-    public Long getId() { return id; }
-    public Long getCaseId() { return caseId; }
-    public void setCaseId(Long value) { caseId = value; }
-    public Long getAlertId() { return alertId; }
-    public void setAlertId(Long value) { alertId = value; }
-    public Long getHypothesisId() { return hypothesisId; }
-    public void setHypothesisId(Long value) { hypothesisId = value; }
-    public String getPolicyCode() { return policyCode; }
-    public void setPolicyCode(String value) { policyCode = value; }
-    public int getScopeRevision() { return scopeRevision; }
-    public void setScopeRevision(int value) { scopeRevision = value; }
-    public String getDraftJson() { return draftJson; }
-    public void setDraftJson(String value) { draftJson = value; }
-    public int getDraftRevision() { return draftRevision; }
-    public void setDraftRevision(int value) { draftRevision = value; }
-    public String getEditors() { return editors; }
-    public void setEditors(String value) { editors = value; }
-    public Long getCurrentSubmissionId() { return currentSubmissionId; }
-    public void setCurrentSubmissionId(Long value) { currentSubmissionId = value; }
-    public String getCreatedBy() { return createdBy; }
-    public void setCreatedBy(String value) { createdBy = value; }
-    public LocalDateTime getCreatedAt() { return createdAt; }
-    public void setCreatedAt(LocalDateTime value) { createdAt = value; }
-    public LocalDateTime getUpdatedAt() { return updatedAt; }
-    public void setUpdatedAt(LocalDateTime value) { updatedAt = value; }
+    public Long getId() {
+        return id;
+    }
+
+    public Long getCaseId() {
+        return caseId;
+    }
+
+    public void setCaseId(Long value) {
+        caseId = value;
+    }
+
+    public Long getAlertId() {
+        return alertId;
+    }
+
+    public void setAlertId(Long value) {
+        alertId = value;
+    }
+
+    public Long getHypothesisId() {
+        return hypothesisId;
+    }
+
+    public void setHypothesisId(Long value) {
+        hypothesisId = value;
+    }
+
+    public String getPolicyCode() {
+        return policyCode;
+    }
+
+    public void setPolicyCode(String value) {
+        policyCode = value;
+    }
+
+    public int getScopeRevision() {
+        return scopeRevision;
+    }
+
+    public void setScopeRevision(int value) {
+        scopeRevision = value;
+    }
+
+    public String getDraftJson() {
+        return draftJson;
+    }
+
+    public void setDraftJson(String value) {
+        draftJson = value;
+    }
+
+    public int getDraftRevision() {
+        return draftRevision;
+    }
+
+    public void setDraftRevision(int value) {
+        draftRevision = value;
+    }
+
+    public String getEditors() {
+        return editors;
+    }
+
+    public void setEditors(String value) {
+        editors = value;
+    }
+
+    public Long getCurrentSubmissionId() {
+        return currentSubmissionId;
+    }
+
+    public void setCurrentSubmissionId(Long value) {
+        currentSubmissionId = value;
+    }
+
+    public String getCreatedBy() {
+        return createdBy;
+    }
+
+    public void setCreatedBy(String value) {
+        createdBy = value;
+    }
+
+    public LocalDateTime getCreatedAt() {
+        return createdAt;
+    }
+
+    public void setCreatedAt(LocalDateTime value) {
+        createdAt = value;
+    }
+
+    public LocalDateTime getUpdatedAt() {
+        return updatedAt;
+    }
+
+    public void setUpdatedAt(LocalDateTime value) {
+        updatedAt = value;
+    }
+
 }

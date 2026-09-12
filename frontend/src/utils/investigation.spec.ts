@@ -1,28 +1,47 @@
 import { describe, expect, it } from 'vitest'
-import {
-  coverageGap, coverageGapText, expectedConclusionFor, isInvestigationRevisionConflict,
-} from './investigation'
+import { coverageGap, coverageGapText, expectedConclusionFor, isInvestigationRevisionConflict } from './investigation'
 import type { AlertCoverage, InvestigationHypothesis } from '../api/client'
 
 /** A1 回归：存量覆盖（NULL 版本绑定）与改判后的覆盖必须提供重新确认入口，且不要求反转调查判断。 */
 
 function hypothesis(id: number, revision: number, status: InvestigationHypothesis['status']): InvestigationHypothesis {
   return {
-    id, caseId: 7, scenarioCode: 'STRUCTURING', hypothesisCode: `H-${id}`, title: `假设${id}`,
-    investigationQuestion: '是否成立？', requiredEvidenceTypes: [], status,
-    rationale: '既有判断依据', revision, createdBy: 'analyst', updatedBy: null,
-    createdAt: '', updatedAt: '', evidence: [],
-  } as InvestigationHypothesis
+    id,
+    caseId: 7,
+    scenarioCode: 'STRUCTURING',
+    hypothesisCode: `H-${id}`,
+    title: `假设${id}`,
+    investigationQuestion: '是否成立？',
+    requiredEvidenceTypes: [],
+    status,
+    rationale: '既有判断依据',
+    revision,
+    createdBy: 'analyst',
+    updatedBy: null,
+    createdAt: '',
+    updatedAt: '',
+    evidence: [],
+  }
 }
 
 function coverage(
-  alertId: number, hypothesisId: number, hypothesisRevision: number | null,
+  alertId: number,
+  hypothesisId: number,
+  hypothesisRevision: number | null,
   conclusion: AlertCoverage['conclusion'],
 ): AlertCoverage {
   return {
-    id: alertId, alertId, caseId: 7, hypothesisId, hypothesisRevision, conclusion,
-    analysisSummary: '原覆盖分析', revision: 1, updatedBy: 'analyst', updatedAt: '',
-  } as AlertCoverage
+    id: alertId,
+    alertId,
+    caseId: 7,
+    hypothesisId,
+    hypothesisRevision,
+    conclusion,
+    analysisSummary: '原覆盖分析',
+    revision: 1,
+    updatedBy: 'analyst',
+    updatedAt: '',
+  }
 }
 
 describe('coverageGap（存量覆盖重新确认门禁的页面判定）', () => {
@@ -48,8 +67,7 @@ describe('coverageGap（存量覆盖重新确认门禁的页面判定）', () =>
   })
 
   it('treats pending coverage as the normal conclude entry', () => {
-    expect(coverageGap(coverage(11, 31, null, 'PENDING'), hypothesis(31, 3, 'CONFIRMED')))
-      .toBe('PENDING')
+    expect(coverageGap(coverage(11, 31, null, 'PENDING'), hypothesis(31, 3, 'CONFIRMED'))).toBe('PENDING')
   })
 
   it('returns null when coverage is consistent with a decided hypothesis at the current revision', () => {
@@ -58,18 +76,15 @@ describe('coverageGap（存量覆盖重新确认门禁的页面判定）', () =>
   })
 
   it('flags decided coverage whose hypothesis is still open at the same revision', () => {
-    expect(coverageGap(coverage(11, 31, 3, 'EXPLAINED'), hypothesis(31, 3, 'OPEN')))
-      .toBe('INCONSISTENT')
+    expect(coverageGap(coverage(11, 31, 3, 'EXPLAINED'), hypothesis(31, 3, 'OPEN'))).toBe('INCONSISTENT')
   })
 })
 
 describe('isInvestigationRevisionConflict（W1 冲突协议判定）', () => {
-  const conflict = (status: number, code?: string) =>
-    ({ response: { status, data: code ? { code } : {} } })
+  const conflict = (status: number, code?: string) => ({ response: { status, data: code ? { code } : {} } })
 
   it('recognizes 409 + INVESTIGATION_REVISION_CONFLICT as conflict', () => {
-    expect(isInvestigationRevisionConflict(
-      conflict(409, 'INVESTIGATION_REVISION_CONFLICT'))).toBe(true)
+    expect(isInvestigationRevisionConflict(conflict(409, 'INVESTIGATION_REVISION_CONFLICT'))).toBe(true)
   })
 
   it('does not treat other 409/412/500 errors as conflicts', () => {

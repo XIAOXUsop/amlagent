@@ -6,9 +6,12 @@ public interface LegalIndexVersionProvider {
 
     /** 按检索目标解析应使用的索引版本身份。 */
     default String versionFor(RetrievalRequest request) {
-        if (request == null) return activeVersion();
-        if (request.target() == RetrievalTarget.SPECIFIC_VERSION) return request.specificVersion();
-        if (request.target() == RetrievalTarget.CANDIDATE) return candidateVersion();
+        if (request == null)
+            return activeVersion();
+        if (request.target() == RetrievalTarget.SPECIFIC_VERSION)
+            return request.specificVersion();
+        if (request.target() == RetrievalTarget.CANDIDATE)
+            return candidateVersion();
         return activeVersion();
     }
 
@@ -16,4 +19,5 @@ public interface LegalIndexVersionProvider {
     default String candidateVersion() {
         return activeVersion();
     }
+
 }

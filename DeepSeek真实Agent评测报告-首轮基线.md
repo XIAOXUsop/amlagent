@@ -1,9 +1,9 @@
 # DeepSeek 真实 Agent 评测报告：首轮基线
 
-> 评测日期：2026-08-12  
-> 数据集：`aml-agent-cases` v1.1.0，DEV 9 条  
-> Prompt：`aml-dd-agent-v2-structured-codes`  
-> 模型：DeepSeek `deepseek-v4-flash`，非思考模式，temperature=0  
+> 评测日期：2026-08-12
+> 数据集：`aml-agent-cases` v1.1.0，DEV 9 条
+> Prompt：`aml-dd-agent-v2-structured-codes`
+> 模型：DeepSeek `deepseek-v4-flash`，非思考模式，temperature=0
 > 数据性质：合成案例，标签状态 `PENDING_DOMAIN_REVIEW`
 
 ## 1. 结论摘要

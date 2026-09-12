@@ -1,7 +1,7 @@
 # 修改成果验收报告
 
-日期：2026-09-05  
-依据：`docs/plans/code-review-remediation-plan-2026-09-05.md`  
+日期：2026-09-05
+依据：`docs/plans/code-review-remediation-plan-2026-09-05.md`
 验收对象：当前工作区全部修复内容（HEAD 仍为 `3ab1c08`，修复尚未提交）。
 
 ## 结论
@@ -37,7 +37,7 @@ V26 给原有覆盖新增可空 `hypothesis_revision` 且不回填，这是计�
 
 ### A2. [P2] 容量错误在进入执行后才抛出，失败案件无法按提示拆分
 
-主要位置：`backend/src/main/java/com/bank/aml/agent/AlertSnapshotAssembler.java:65`。  
+主要位置：`backend/src/main/java/com/bank/aml/agent/AlertSnapshotAssembler.java:65`。
 关联位置：`WorkflowMessageHandler.java:124`、`CaseIntakeService.java:154`。
 
 默认最大关联预警数为 8。建案归并和启动入口没有在案件仍可调整时校验容量，用户可以向 PENDING 案件归并 9 条预警。Worker 抢占后，快照装配抛出 NonRetryableWorkflowException，错误提示要求拆分；消息处理器随即写 FAILED。但是拆分服务只允许 PENDING，页面也不在 FAILED 展示拆分按钮。普通重试会再次入队并再次遇到同样的容量错误。

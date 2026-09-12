@@ -6,7 +6,6 @@ import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
-
 import java.time.LocalDateTime;
 
 /** 核验依据版本：按案件追加冻结范围与事实摘要（v2 计划 §12）。 */
@@ -43,21 +42,72 @@ public class VerificationBasis {
     @Column(nullable = false)
     private LocalDateTime createdAt;
 
-    public Long getId() { return id; }
-    public Long getCaseId() { return caseId; }
-    public void setCaseId(Long value) { caseId = value; }
-    public int getBasisRevision() { return basisRevision; }
-    public void setBasisRevision(int value) { basisRevision = value; }
-    public String getScopeJson() { return scopeJson; }
-    public void setScopeJson(String value) { scopeJson = value; }
-    public LocalDateTime getSourceCutoff() { return sourceCutoff; }
-    public void setSourceCutoff(LocalDateTime value) { sourceCutoff = value; }
-    public String getScopeDigest() { return scopeDigest; }
-    public void setScopeDigest(String value) { scopeDigest = value; }
-    public String getBasisDigest() { return basisDigest; }
-    public void setBasisDigest(String value) { basisDigest = value; }
-    public String getCreatedBy() { return createdBy; }
-    public void setCreatedBy(String value) { createdBy = value; }
-    public LocalDateTime getCreatedAt() { return createdAt; }
-    public void setCreatedAt(LocalDateTime value) { createdAt = value; }
+    public Long getId() {
+        return id;
+    }
+
+    public Long getCaseId() {
+        return caseId;
+    }
+
+    public void setCaseId(Long value) {
+        caseId = value;
+    }
+
+    public int getBasisRevision() {
+        return basisRevision;
+    }
+
+    public void setBasisRevision(int value) {
+        basisRevision = value;
+    }
+
+    public String getScopeJson() {
+        return scopeJson;
+    }
+
+    public void setScopeJson(String value) {
+        scopeJson = value;
+    }
+
+    public LocalDateTime getSourceCutoff() {
+        return sourceCutoff;
+    }
+
+    public void setSourceCutoff(LocalDateTime value) {
+        sourceCutoff = value;
+    }
+
+    public String getScopeDigest() {
+        return scopeDigest;
+    }
+
+    public void setScopeDigest(String value) {
+        scopeDigest = value;
+    }
+
+    public String getBasisDigest() {
+        return basisDigest;
+    }
+
+    public void setBasisDigest(String value) {
+        basisDigest = value;
+    }
+
+    public String getCreatedBy() {
+        return createdBy;
+    }
+
+    public void setCreatedBy(String value) {
+        createdBy = value;
+    }
+
+    public LocalDateTime getCreatedAt() {
+        return createdAt;
+    }
+
+    public void setCreatedAt(LocalDateTime value) {
+        createdAt = value;
+    }
+
 }

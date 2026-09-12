@@ -7,6 +7,7 @@ import org.springframework.stereotype.Component;
 /** 防止健康 Worker 因配置错误被接管：租约空闲阈值至少覆盖两个心跳周期。 */
 @Component
 public class QueueConfigurationValidator implements ApplicationRunner {
+
     private final QueueProperties properties;
 
     public QueueConfigurationValidator(QueueProperties properties) {
@@ -22,4 +23,5 @@ public class QueueConfigurationValidator implements ApplicationRunner {
             throw new IllegalStateException("aml.queue.claim-idle-seconds 必须至少为 heartbeat-seconds 的两倍");
         }
     }
+
 }

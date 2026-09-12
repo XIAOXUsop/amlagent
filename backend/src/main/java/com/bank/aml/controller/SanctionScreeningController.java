@@ -2,17 +2,19 @@ package com.bank.aml.controller;
 
 import com.bank.aml.sanction.SanctionScreeningResult;
 import com.bank.aml.sanction.SanctionScreeningService;
-import org.springframework.web.bind.annotation.GetMapping;
-import org.springframework.web.bind.annotation.PathVariable;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RestController;
-import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.RequestBody;
-import org.springframework.security.access.prepost.PreAuthorize;
-import org.springframework.security.core.context.SecurityContextHolder;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.Pattern;
+import jakarta.validation.constraints.PositiveOrZero;
 import jakarta.validation.constraints.Size;
+import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RestController;
 
 /** 可解释制裁名单筛查接口。 */
 @RestController
@@ -39,10 +41,10 @@ public class SanctionScreeningController {
     }
 
     public record ReviewRequest(
-            @NotBlank(message = "候选指纹不能为空") @Size(min = 64, max = 64, message = "候选指纹格式错误")
-            String candidateFingerprint,
-            @NotBlank(message = "核验决定不能为空") String decision,
-            @Size(max = 500, message = "核验意见最多 500 字") String comment,
-            int expectedRevision) {
+            @NotBlank(message = "候选指纹不能为空") @Size(min = 64, max = 64, message = "候选指纹格式错误") String candidateFingerprint,
+            @NotBlank(message = "核验决定不能为空") @Pattern(regexp = "CONFIRM|DISMISS",
+                    message = "核验决定必须为 CONFIRM 或 DISMISS") String decision,
+            @Size(max = 500, message = "核验意见最多 500 字") String comment, @PositiveOrZero int expectedRevision) {
     }
+
 }

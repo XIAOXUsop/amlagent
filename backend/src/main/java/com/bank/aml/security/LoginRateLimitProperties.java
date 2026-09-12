@@ -1,24 +1,36 @@
 package com.bank.aml.security;
 
+import jakarta.validation.constraints.Max;
+import jakarta.validation.constraints.Min;
 import org.springframework.boot.context.properties.ConfigurationProperties;
+import org.springframework.validation.annotation.Validated;
 
 /**
- * 登录速率限制配置：按"客户端 IP + 用户名"维度做固定窗口失败计数，
- * 窗口内失败次数超过 {@code maxAttempts} 后锁定 {@code lockSeconds} 秒。
+ * 登录速率限制配置：按"客户端 IP + 用户名"维度做固定窗口失败计数， 窗口内失败次数超过 {@code maxAttempts} 后锁定
+ * {@code lockSeconds} 秒。
  */
 @ConfigurationProperties(prefix = "aml.security.login")
+@Validated
 public class LoginRateLimitProperties {
 
     /** 窗口内最大失败次数；0 = 禁用速率限制 */
+    @Min(0)
+    @Max(100)
     private int maxAttempts = 5;
 
     /** 失败计数窗口（秒） */
+    @Min(1)
+    @Max(86_400)
     private int windowSeconds = 60;
 
     /** 触发限制后的锁定时长（秒） */
+    @Min(1)
+    @Max(604_800)
     private int lockSeconds = 300;
 
     /** 单实例最多保留的 IP+用户名桶；达到上限时清理过期项，否则对新维度失败关闭。 */
+    @Min(100)
+    @Max(1_000_000)
     private int maxBuckets = 10_000;
 
     public int getMaxAttempts() {
@@ -52,4 +64,5 @@ public class LoginRateLimitProperties {
     public void setMaxBuckets(int maxBuckets) {
         this.maxBuckets = maxBuckets;
     }
+
 }

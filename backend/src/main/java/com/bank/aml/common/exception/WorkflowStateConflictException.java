@@ -1,7 +1,6 @@
 package com.bank.aml.common.exception;
 
 import com.bank.aml.common.enums.CaseStatus;
-
 import java.util.Set;
 
 /**
@@ -10,7 +9,9 @@ import java.util.Set;
 public class WorkflowStateConflictException extends RuntimeException {
 
     private final Long caseId;
+
     private final CaseStatus actual;
+
     private final Set<CaseStatus> expected;
 
     public WorkflowStateConflictException(Long caseId, CaseStatus actual, Set<CaseStatus> expected) {
@@ -31,4 +32,5 @@ public class WorkflowStateConflictException extends RuntimeException {
     public Set<CaseStatus> getExpected() {
         return expected;
     }
+
 }

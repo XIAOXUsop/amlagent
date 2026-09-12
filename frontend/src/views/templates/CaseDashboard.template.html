@@ -1,0 +1,311 @@
+<div class="dashboard">
+  <header class="page-intro">
+    <h2>工单</h2>
+    <p>创建预警、跟踪 Agent 调查进度，并进入人工处置。</p>
+  </header>
+  <!-- 态势概览 -->
+  <div class="overview card">
+    <div class="ov-total">
+      <span class="ov-label">工单总数</span>
+      <b class="mono-num">{{ overview.total }}</b>
+      <span class="ov-sub">含历史工单</span>
+    </div>
+    <div class="ov-grid">
+      <div class="ov-cell">
+        <i class="dot" style="background: #64748b"></i>
+        <div><b class="mono-num">{{ overview.pending }}</b><span>待处理</span></div>
+      </div>
+      <div class="ov-cell">
+        <i class="dot pulse" style="background: #e0a23a"></i>
+        <div><b class="mono-num">{{ overview.running }}</b><span>执行中</span></div>
+      </div>
+      <div class="ov-cell">
+        <i class="dot" style="background: #c43d4b"></i>
+        <div><b class="mono-num">{{ overview.hold }}</b><span>转人工</span></div>
+      </div>
+      <div class="ov-cell">
+        <i class="dot" style="background: #d97706"></i>
+        <div><b class="mono-num">{{ overview.reportPending }}</b><span>待报送</span></div>
+      </div>
+      <div class="ov-cell">
+        <i class="dot" style="background: #2fa37f"></i>
+        <div><b class="mono-num">{{ overview.done }}</b><span>已完成</span></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="operations-head">
+      <div>
+        <h3 class="card-title">风险优先运营队列</h3>
+        <p class="section-hint">按确定性业务事实和分阶段 SLA 排序；逾期优先，其次按风险评分与截止时间。</p>
+      </div>
+      <div class="operations-filters">
+        <el-select
+          v-model="operationsPriority"
+          aria-label="运营队列优先级"
+          clearable
+          placeholder="全部优先级"
+          @change="loadOperations"
+        >
+          <el-option v-for="(label, value) in priorityText" :key="value" :label="label" :value="value" />
+        </el-select>
+        <el-select
+          v-model="operationsPhase"
+          aria-label="运营队列阶段"
+          clearable
+          placeholder="全部阶段"
+          @change="loadOperations"
+        >
+          <el-option v-for="(label, value) in phaseText" :key="value" :label="label" :value="value" />
+        </el-select>
+        <el-checkbox v-model="operationsOverdueOnly" aria-label="只看逾期案件" @change="loadOperations"
+          >只看逾期</el-checkbox
+        >
+        <el-button aria-label="刷新运营队列" title="刷新运营队列" :loading="operationsLoading" @click="loadOperations"
+          ><el-icon><Refresh /></el-icon
+        ></el-button>
+      </div>
+    </div>
+    <el-alert v-if="operationsError" type="error" :closable="false" title="案件运营队列加载失败，请刷新重试" />
+    <el-empty
+      v-else-if="!operations.length && !operationsLoading"
+      description="当前角色暂无运营待办"
+      :image-size="52"
+    />
+    <el-table v-else v-loading="operationsLoading" :data="operations" stripe>
+      <el-table-column label="优先级" width="100">
+        <template #default="{ row }">
+          <el-tag :type="priorityTag(row.priority)" effect="dark">{{ priorityText[row.priority] }}</el-tag>
+          <span class="priority-score">{{ row.priorityScore }}</span>
+        </template>
+      </el-table-column>
+      <el-table-column label="案件 / 客户" width="150">
+        <template #default="{ row }"
+          ><span class="mono-num">#{{ row.caseId }}</span><br />{{ row.customerName }}（{{ row.customerId }}）</template
+        >
+      </el-table-column>
+      <el-table-column label="当前阶段" width="140">
+        <template #default="{ row }">{{ phaseText[row.phase] }}</template>
+      </el-table-column>
+      <el-table-column label="责任队列" width="165">
+        <template #default="{ row }"
+          >{{ row.assignedTo || row.assignedUnit }}<br /><span class="muted">{{ row.responsibleRole }}</span></template
+        >
+      </el-table-column>
+      <el-table-column label="优先原因" min-width="260">
+        <template #default="{ row }">{{ row.priorityReasons.join('；') }}</template>
+      </el-table-column>
+      <el-table-column label="阶段时限" width="195">
+        <template #default="{ row }">
+          <span class="mono-num" :class="{ 'ops-overdue': row.overdue }">{{ fmtDateTime(row.dueAt) }}</span><br />
+          <strong :class="row.overdue ? 'ops-overdue' : 'ops-remaining'">{{ remainingText(row) }}</strong>
+        </template>
+      </el-table-column>
+      <el-table-column label="操作" width="90" fixed="right">
+        <template #default="{ row }"
+          ><el-button size="small" type="primary" @click="emit('open-case', row.caseId)">办理</el-button></template
+        >
+      </el-table-column>
+    </el-table>
+  </div>
+
+  <div v-if="['ANALYST', 'ADMIN'].includes(currentUser?.role ?? '')" class="card">
+    <h3 class="card-title">原始预警分诊</h3>
+    <p class="section-hint">预警先进入分诊队列，再决定新建案件、归并到同客户待处理案件，或按重复项关闭。</p>
+    <div class="alert-create-grid">
+      <el-input v-model="alertExternalId" aria-label="外部预警编号" maxlength="64" placeholder="外部预警编号" />
+      <el-select v-model="selectedCustomer" aria-label="预警客户" placeholder="客户">
+        <el-option v-for="c in customers" :key="c.id" :label="`${c.name}（${c.id}）`" :value="c.id" />
+      </el-select>
+      <el-input v-model="alertRuleCode" aria-label="监测规则码" maxlength="64" placeholder="监测规则码" />
+      <el-select v-model="alertScenarioCode" aria-label="调查场景" placeholder="调查场景">
+        <el-option
+          v-for="scenario in scenarioOptions"
+          :key="scenario.value"
+          :label="scenario.label"
+          :value="scenario.value"
+        />
+      </el-select>
+      <el-input
+        v-model="alertHitReason"
+        aria-label="预警命中原因"
+        maxlength="500"
+        placeholder="说明命中的客户、交易或行为特征"
+        class="alert-reason"
+      />
+      <el-button type="primary" :loading="alertSubmitting" @click="createInboxAlert">录入预警</el-button>
+    </div>
+    <el-alert v-if="alertInboxError" type="error" :closable="false" title="预警分诊队列加载失败，请刷新重试" />
+    <el-empty v-else-if="!alertInbox.length" description="暂无待分诊预警" :image-size="52" />
+    <el-table v-else :data="alertInbox" stripe>
+      <el-table-column prop="externalAlertId" label="预警编号" width="150" />
+      <el-table-column label="客户" width="130">
+        <template #default="{ row }">{{ row.customerId }}</template>
+      </el-table-column>
+      <el-table-column label="场景" width="170">
+        <template #default="{ row }">{{ scenarioName(row.scenarioCode) }}</template>
+      </el-table-column>
+      <el-table-column prop="hitReason" label="命中说明" min-width="260" show-overflow-tooltip />
+      <el-table-column label="发生时间" width="168">
+        <template #default="{ row }"><span class="mono-num time">{{ fmtDateTime(row.occurredAt) }}</span></template>
+      </el-table-column>
+      <el-table-column label="分诊" width="300" fixed="right">
+        <template #default="{ row }">
+          <el-button
+            size="small"
+            type="primary"
+            :loading="triagingAlertId === row.id"
+            @click="createAlertCase(row, false)"
+            >新建案件</el-button
+          >
+          <el-button
+            size="small"
+            type="primary"
+            plain
+            :loading="triagingAlertId === row.id"
+            @click="createAlertCase(row, true)"
+            >建案并调查</el-button
+          >
+          <el-button size="small" @click="mergeAlert(row)">归并</el-button>
+          <el-button size="small" type="danger" plain @click="closeAsDuplicate(row)">重复</el-button>
+        </template>
+      </el-table-column>
+    </el-table>
+  </div>
+
+  <div v-if="['ANALYST', 'ADMIN'].includes(currentUser?.role ?? '')" class="card">
+    <h3 class="card-title">{{ currentUser?.role === 'ADMIN' ? '全部补充尽调待办' : '我的补充尽调待办' }}</h3>
+    <el-alert v-if="eddLoadError" type="error" :closable="false" title="补充尽调待办加载失败，请刷新重试" />
+    <el-empty v-else-if="!eddTasks.length" description="暂无待补充任务" :image-size="52" />
+    <el-table v-else :data="eddTasks" stripe>
+      <el-table-column label="案件" width="90">
+        <template #default="{ row }"><span class="mono-num">#{{ row.caseId }}</span></template>
+      </el-table-column>
+      <el-table-column label="承办人" width="120" prop="assignedTo" />
+      <el-table-column label="承办部门" width="150" prop="assignedUnit" />
+      <el-table-column label="所需材料" min-width="220">
+        <template #default="{ row }"
+          >{{ row.requiredItems.map((item: string) => eddRequiredItemText[item] ?? item).join('、') }}</template
+        >
+      </el-table-column>
+      <el-table-column label="截止时间" width="190">
+        <template #default="{ row }">
+          <span class="mono-num" :style="row.overdue ? { color: '#c43d4b', fontWeight: '700' } : {}">
+            {{ fmtDateTime(row.dueAt) }}{{ row.overdue ? '（已逾期）' : '' }}
+          </span>
+        </template>
+      </el-table-column>
+      <el-table-column label="操作" width="100">
+        <template #default="{ row }"
+          ><el-button size="small" type="primary" @click="emit('open-case', row.caseId)">办理</el-button></template
+        >
+      </el-table-column>
+    </el-table>
+  </div>
+
+  <!-- 新建预警工单 -->
+  <div class="card">
+    <h3 class="card-title">新建预警工单</h3>
+    <div class="create-bar">
+      <el-select v-model="selectedCustomer" aria-label="新建工单客户" placeholder="选择客户" style="width: 220px">
+        <el-option v-for="c in customers" :key="c.id" :label="`${c.name}（${c.id}）`" :value="c.id" />
+      </el-select>
+      <el-input v-model="alertRule" aria-label="预警规则描述" placeholder="预警规则描述" style="flex: 1" />
+      <el-button :loading="loading" @click="handleCreate(false)">
+        <el-icon><Plus /></el-icon>
+        <span>创建案件</span>
+      </el-button>
+      <el-button type="primary" :loading="loading" @click="handleCreate(true)">
+        <el-icon><Plus /></el-icon>
+        <span>创建并尽调</span>
+      </el-button>
+    </div>
+  </div>
+
+  <!-- 工单列表 -->
+  <div class="card">
+    <h3 class="card-title">预警工单列表</h3>
+    <el-table v-loading="listLoading" :data="cases" stripe style="width: 100%">
+      <el-table-column label="工单号" width="88">
+        <template #default="{ row }">
+          <span class="mono-num case-id">#{{ row.id }}</span>
+        </template>
+      </el-table-column>
+      <el-table-column label="客户" width="130">
+        <template #default="{ row }">{{ row.customerName }}<span class="cid">{{ row.customerId }}</span></template>
+      </el-table-column>
+      <el-table-column prop="alertRule" label="预警规则" min-width="200" show-overflow-tooltip />
+      <el-table-column label="状态" width="96">
+        <template #default="{ row }">
+          <span class="st" :class="statusMeta[row.status]?.cls">
+            <i class="dot" :style="{ background: statusMeta[row.status]?.dot }"></i>
+            {{ statusMeta[row.status]?.text ?? row.status }}
+          </span>
+        </template>
+      </el-table-column>
+      <el-table-column label="风险评级" width="96">
+        <template #default="{ row }">
+          <span v-if="row.riskLevel" class="rk" :class="riskMeta[row.riskLevel]?.cls">{{ row.riskLevel }}</span>
+          <span v-else class="rk-none">-</span>
+        </template>
+      </el-table-column>
+      <el-table-column label="来源" width="92">
+        <template #default="{ row }">
+          <span v-if="srcTag(row)" class="src">{{ srcTag(row) }}</span>
+          <span v-else class="rk-none">-</span>
+        </template>
+      </el-table-column>
+      <el-table-column label="人工处置" width="104">
+        <template #default="{ row }">
+          <span v-if="row.reviewDisposition" class="src"
+            >{{ dispositionText[row.reviewDisposition] ?? row.reviewDisposition }}</span
+          >
+          <span v-else class="rk-none">-</span>
+        </template>
+      </el-table-column>
+      <el-table-column label="创建时间" width="168">
+        <template #default="{ row }">
+          <span class="mono-num time">{{ fmtDateTime(row.createdAt) }}</span>
+        </template>
+      </el-table-column>
+      <el-table-column label="操作" width="170" fixed="right">
+        <template #default="{ row }">
+          <div class="row-actions">
+            <el-button size="small" @click="emit('open-case', row.id)">
+              <el-icon><search /></el-icon>
+              <span>查看</span>
+            </el-button>
+            <el-button
+              v-if="row.status === 'PENDING' || row.status === 'FAILED'"
+              size="small"
+              type="primary"
+              :loading="processingId === row.id"
+              @click="handleProcess(row)"
+            >
+              <el-icon v-if="processingId !== row.id"><Refresh /></el-icon>
+              <span
+                >{{ processingId === row.id ? row.status === 'FAILED' ? '重试中' : '处理中' : row.status === 'FAILED' ?
+                '重试' : '开始调查' }}</span
+              >
+            </el-button>
+          </div>
+        </template>
+      </el-table-column>
+      <template #empty>
+        <div class="table-empty">
+          <span class="empty-rule">暂无工单</span>
+          <p>在左侧选择客户并创建预警工单开始尽调</p>
+        </div>
+      </template>
+    </el-table>
+    <div class="pager">
+      <el-pagination
+        layout="total, prev, pager, next"
+        :total="total"
+        :page-size="pageSize"
+        @current-change="onPageChange"
+      />
+    </div>
+  </div>
+</div>

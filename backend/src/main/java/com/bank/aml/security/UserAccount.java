@@ -8,13 +8,13 @@ import jakarta.persistence.Id;
 import jakarta.persistence.PrePersist;
 import jakarta.persistence.PreUpdate;
 import jakarta.persistence.Table;
-
+import java.time.Clock;
 import java.time.LocalDateTime;
 
 /**
  * 平台用户账户（数据库存储）。
- * <p>保存用户名、BCrypt 加密后的密码哈希与角色，替代演示用的内存用户。
- * 密码绝不以明文存放；登录校验由 {@link DbUserDetailsService} 完成。
+ * <p>
+ * 保存用户名、BCrypt 加密后的密码哈希与角色，替代演示用的内存用户。 密码绝不以明文存放；登录校验由 {@link DbUserDetailsService} 完成。
  */
 @Entity
 @Table(name = "sys_user")
@@ -40,8 +40,7 @@ public class UserAccount {
     private boolean enabled = true;
 
     /**
-     * 令牌版本号：登出/改密/禁用等吊销场景递增。
-     * JWT 内嵌签发时的版本号，每次请求与数据库比对，不匹配即拒绝——无需黑名单即可吊销历史令牌。
+     * 令牌版本号：登出/改密/禁用等吊销场景递增。 JWT 内嵌签发时的版本号，每次请求与数据库比对，不匹配即拒绝——无需黑名单即可吊销历史令牌。
      */
     @Column(nullable = false)
     private int tokenVersion = 0;
@@ -54,13 +53,13 @@ public class UserAccount {
 
     @PrePersist
     void onCreate() {
-        this.createdAt = LocalDateTime.now();
+        this.createdAt = LocalDateTime.now(Clock.systemUTC());
         this.updatedAt = this.createdAt;
     }
 
     @PreUpdate
     void onUpdate() {
-        this.updatedAt = LocalDateTime.now();
+        this.updatedAt = LocalDateTime.now(Clock.systemUTC());
     }
 
     public Long getId() {
@@ -119,4 +118,5 @@ public class UserAccount {
     public LocalDateTime getUpdatedAt() {
         return updatedAt;
     }
+
 }

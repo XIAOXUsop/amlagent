@@ -1,15 +1,17 @@
 package com.bank.aml.rag.ingestion;
 
-import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.io.TempDir;
-
 import java.nio.file.Files;
 import java.nio.file.Path;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
 class LegalCorpusSecurityScannerTest {
-    @TempDir Path directory;
+
+    @TempDir
+    Path directory;
+
     private final LegalCorpusSecurityScanner scanner = new LegalCorpusSecurityScanner(1024 * 1024);
 
     @Test
@@ -23,6 +25,7 @@ class LegalCorpusSecurityScannerTest {
         var result = scanner.scan(poisoned);
         assertThat(result.safe()).isFalse();
         assertThat(result.reasonCodes()).contains("PROMPT_INJECTION_CONTENT")
-                .allSatisfy(code -> assertThat(code).doesNotContain("忽略之前", "系统提示"));
+            .allSatisfy(code -> assertThat(code).doesNotContain("忽略之前", "系统提示"));
     }
+
 }

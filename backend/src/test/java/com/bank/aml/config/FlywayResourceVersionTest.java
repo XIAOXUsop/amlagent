@@ -1,11 +1,11 @@
 package com.bank.aml.config;
 
-import org.junit.jupiter.api.Test;
-
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.HashSet;
+import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import org.junit.jupiter.api.Test;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -21,15 +21,14 @@ class FlywayResourceVersionTest {
         var seen = new HashSet<String>();
         try (var files = Files.list(migrationDirectory)) {
             files.map(path -> path.getFileName().toString())
-                    .map(VERSIONED::matcher)
-                    .filter(java.util.regex.Matcher::matches)
-                    .map(matcher -> matcher.group(1))
-                    .filter(version -> !seen.add(version))
-                    .forEach(duplicates::add);
+                .map(VERSIONED::matcher)
+                .filter(Matcher::matches)
+                .map(matcher -> matcher.group(1))
+                .filter(version -> !seen.add(version))
+                .forEach(duplicates::add);
         }
 
-        assertThat(duplicates)
-                .as("Flyway migration versions must be unique")
-                .isEmpty();
+        assertThat(duplicates).as("Flyway migration versions must be unique").isEmpty();
     }
+
 }

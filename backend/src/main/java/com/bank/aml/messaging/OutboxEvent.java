@@ -9,7 +9,7 @@ import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.PrePersist;
 import jakarta.persistence.Table;
-
+import java.time.Clock;
 import java.time.LocalDateTime;
 
 /**
@@ -20,6 +20,7 @@ import java.time.LocalDateTime;
 public class OutboxEvent {
 
     public enum OutboxStatus {
+
         /** 待发布：由发布器抢占后进入 PUBLISHING */
         PENDING,
         /** 发布中：已被某发布器原子抢占（publishedAt = 抢占时间），XADD 成功后置 PUBLISHED；崩溃残留由陈旧 Claim 回收 */
@@ -28,6 +29,7 @@ public class OutboxEvent {
         PUBLISHED,
         /** 发布重试超限 */
         DEAD
+
     }
 
     @Id
@@ -75,7 +77,7 @@ public class OutboxEvent {
 
     @PrePersist
     void onCreate() {
-        this.createdAt = LocalDateTime.now();
+        this.createdAt = LocalDateTime.now(Clock.systemUTC());
         if (this.nextRetryAt == null) {
             this.nextRetryAt = this.createdAt;
         }
@@ -161,6 +163,12 @@ public class OutboxEvent {
         this.publishedAt = publishedAt;
     }
 
-    public String getClaimOwner() { return claimOwner; }
-    public long getClaimVersion() { return claimVersion; }
+    public String getClaimOwner() {
+        return claimOwner;
+    }
+
+    public long getClaimVersion() {
+        return claimVersion;
+    }
+
 }

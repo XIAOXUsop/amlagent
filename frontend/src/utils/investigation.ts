@@ -31,9 +31,7 @@ export function coverageGap(
 }
 
 /** 由假设当前状态推导一致的覆盖结论；假设未决时返回 null（需先研判假设）。 */
-export function expectedConclusionFor(
-  hypothesis: InvestigationHypothesis,
-): DecidedCoverageConclusion | null {
+export function expectedConclusionFor(hypothesis: InvestigationHypothesis): DecidedCoverageConclusion | null {
   if (hypothesis.status === 'CONFIRMED') return 'SUSPICIOUS'
   if (hypothesis.status === 'REJECTED') return 'EXPLAINED'
   return null

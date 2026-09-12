@@ -1,9 +1,9 @@
 package com.bank.aml.explanation;
 
 import jakarta.persistence.Column;
+import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
 import jakarta.persistence.Enumerated;
-import jakarta.persistence.Entity;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
@@ -44,23 +44,80 @@ public class ExplanationEvidenceUse {
     @Column(length = 500)
     private String note;
 
-    public Long getId() { return id; }
-    public Long getSubmissionId() { return submissionId; }
-    public void setSubmissionId(Long value) { submissionId = value; }
-    public Long getCaseId() { return caseId; }
-    public void setCaseId(Long value) { caseId = value; }
-    public String getQuestionCode() { return questionCode; }
-    public void setQuestionCode(String value) { questionCode = value; }
-    public Long getArtifactVersionId() { return artifactVersionId; }
-    public void setArtifactVersionId(Long value) { artifactVersionId = value; }
-    public Long getVerificationEventId() { return verificationEventId; }
-    public void setVerificationEventId(Long value) { verificationEventId = value; }
-    public ExplanationEvidenceDirection getDirection() { return direction; }
-    public void setDirection(ExplanationEvidenceDirection value) { direction = value; }
-    public String getLocation() { return location; }
-    public void setLocation(String value) { location = value; }
-    public String getTransactionIds() { return transactionIds; }
-    public void setTransactionIds(String value) { transactionIds = value; }
-    public String getNote() { return note; }
-    public void setNote(String value) { note = value; }
+    public Long getId() {
+        return id;
+    }
+
+    public Long getSubmissionId() {
+        return submissionId;
+    }
+
+    public void setSubmissionId(Long value) {
+        submissionId = value;
+    }
+
+    public Long getCaseId() {
+        return caseId;
+    }
+
+    public void setCaseId(Long value) {
+        caseId = value;
+    }
+
+    public String getQuestionCode() {
+        return questionCode;
+    }
+
+    public void setQuestionCode(String value) {
+        questionCode = value;
+    }
+
+    public Long getArtifactVersionId() {
+        return artifactVersionId;
+    }
+
+    public void setArtifactVersionId(Long value) {
+        artifactVersionId = value;
+    }
+
+    public Long getVerificationEventId() {
+        return verificationEventId;
+    }
+
+    public void setVerificationEventId(Long value) {
+        verificationEventId = value;
+    }
+
+    public ExplanationEvidenceDirection getDirection() {
+        return direction;
+    }
+
+    public void setDirection(ExplanationEvidenceDirection value) {
+        direction = value;
+    }
+
+    public String getLocation() {
+        return location;
+    }
+
+    public void setLocation(String value) {
+        location = value;
+    }
+
+    public String getTransactionIds() {
+        return transactionIds;
+    }
+
+    public void setTransactionIds(String value) {
+        transactionIds = value;
+    }
+
+    public String getNote() {
+        return note;
+    }
+
+    public void setNote(String value) {
+        note = value;
+    }
+
 }

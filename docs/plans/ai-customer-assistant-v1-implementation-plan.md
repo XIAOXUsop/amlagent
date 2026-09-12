@@ -1,8 +1,8 @@
 # AI 小助 V1 实施计划（Plan 阶段）
 
-> 状态：**Plan 完成，待用户确认后进入 WP0/WP1 实施**  
-> 日期：2026-08-23  
-> 上游规格：[AI 小助（当前银行客户只读分析助手）V1 Spec](../specs/ai-customer-assistant-v1-spec.md)  
+> 状态：**Plan 完成，待用户确认后进入 WP0/WP1 实施**
+> 日期：2026-08-23
+> 上游规格：[AI 小助（当前银行客户只读分析助手）V1 Spec](../specs/ai-customer-assistant-v1-spec.md)
 > 实施原则：按依赖顺序推进；每个工作包完成后先测试、再做对抗性审查，通过门禁后才能继续。
 
 ## 1. Plan 目标

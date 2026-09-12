@@ -17,4 +17,5 @@ class AssistantOutputGuardContextTest {
             assertThat(context.getBean(AssistantOutputGuard.class)).isNotNull();
         }
     }
+
 }

@@ -3,10 +3,9 @@ package com.bank.aml.observability;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Timer;
-import org.springframework.stereotype.Component;
-
 import java.time.Duration;
 import java.util.concurrent.atomic.AtomicLong;
+import org.springframework.stereotype.Component;
 
 /**
  * 业务指标埋点（Prometheus 格式，经 /actuator/prometheus 暴露）。
@@ -15,13 +14,21 @@ import java.util.concurrent.atomic.AtomicLong;
 public class MetricsRecorder {
 
     private final MeterRegistry registry;
+
     private final Counter caseTotal;
+
     private final Counter caseHoldTotal;
+
     private final Counter caseFailedTotal;
+
     private final Counter guardrailCorrectionTotal;
+
     private final Counter ragCacheHitTotal;
+
     private final Counter ragCacheMissTotal;
+
     private final Counter llmFallbackTotal;
+
     /** 可变的消费 lag 值：Micrometer Gauge 通过强引用持有本对象实时读取，避免每次传新值被注册表冻结 */
     private final AtomicLong queueLagHolder;
 
@@ -57,28 +64,38 @@ public class MetricsRecorder {
 
     /** 模型请求数（按 provider/model/purpose 标签区分） */
     public void llmRequest(ModelInvocationTags tags) {
-        registry.counter("aml_llm_request_total", "provider", tags.provider(),
-                "model", tags.model(), "purpose", tags.purpose()).increment();
+        registry
+            .counter("aml_llm_request_total", "provider", tags.provider(), "model", tags.model(), "purpose",
+                    tags.purpose())
+            .increment();
     }
 
     /** 模型 Token 数（按 provider/model/purpose 与 input/output 类型区分） */
     public void llmTokens(ModelInvocationTags tags, long inputTokens, long outputTokens) {
-        registry.counter("aml_llm_token_total", "provider", tags.provider(),
-                "model", tags.model(), "purpose", tags.purpose(), "type", "input").increment(inputTokens);
-        registry.counter("aml_llm_token_total", "provider", tags.provider(),
-                "model", tags.model(), "purpose", tags.purpose(), "type", "output").increment(outputTokens);
+        registry
+            .counter("aml_llm_token_total", "provider", tags.provider(), "model", tags.model(), "purpose",
+                    tags.purpose(), "type", "input")
+            .increment(inputTokens);
+        registry
+            .counter("aml_llm_token_total", "provider", tags.provider(), "model", tags.model(), "purpose",
+                    tags.purpose(), "type", "output")
+            .increment(outputTokens);
     }
 
     /** 模型调用错误（按 provider/model/purpose 标签区分） */
     public void llmError(ModelInvocationTags tags) {
-        registry.counter("aml_llm_error_total", "provider", tags.provider(),
-                "model", tags.model(), "purpose", tags.purpose()).increment();
+        registry
+            .counter("aml_llm_error_total", "provider", tags.provider(), "model", tags.model(), "purpose",
+                    tags.purpose())
+            .increment();
     }
 
     /** 模型调用延迟（按 provider/model/purpose 标签区分，Timer 提供 P50/P95） */
     public void llmDuration(ModelInvocationTags tags, long durationMs) {
-        registry.timer("aml_llm_duration_seconds", "provider", tags.provider(),
-                "model", tags.model(), "purpose", tags.purpose()).record(Duration.ofMillis(durationMs));
+        registry
+            .timer("aml_llm_duration_seconds", "provider", tags.provider(), "model", tags.model(), "purpose",
+                    tags.purpose())
+            .record(Duration.ofMillis(durationMs));
     }
 
     public void ragCacheHit() {
@@ -91,8 +108,7 @@ public class MetricsRecorder {
 
     public void ragRetrieval(String status, long durationMs, int hitCount) {
         registry.counter("aml_rag_retrieval_total", "status", status).increment();
-        registry.timer("aml_rag_retrieval_duration_seconds", "status", status)
-                .record(Duration.ofMillis(durationMs));
+        registry.timer("aml_rag_retrieval_duration_seconds", "status", status).record(Duration.ofMillis(durationMs));
         registry.summary("aml_rag_returned_hits", "status", status).record(hitCount);
     }
 
@@ -129,7 +145,7 @@ public class MetricsRecorder {
     /** 评测冷/热延迟（stage=cold|warm） */
     public void ragLatency(String stage, double ms) {
         registry.timer("aml_rag_latency_ms", "stage", safeMetricTag(stage, "unknown"))
-                .record(Duration.ofMillis((long) Math.max(0, ms)));
+            .record(Duration.ofMillis((long) Math.max(0, ms)));
     }
 
     /** embedding 复用/重算计数（rate=reuse/(reuse+compute)） */
@@ -143,9 +159,9 @@ public class MetricsRecorder {
 
     public void ragIndexBuild(String status, long durationMs, int segmentCount) {
         registry.counter("aml_rag_index_build_total", "status", status).increment();
-        registry.timer("aml_rag_index_build_duration_seconds", "status", status)
-                .record(Duration.ofMillis(durationMs));
-        if (segmentCount > 0) registry.summary("aml_rag_index_segments").record(segmentCount);
+        registry.timer("aml_rag_index_build_duration_seconds", "status", status).record(Duration.ofMillis(durationMs));
+        if (segmentCount > 0)
+            registry.summary("aml_rag_index_segments").record(segmentCount);
     }
 
     public void recordStageDuration(String stage, long durationMs) {
@@ -180,7 +196,7 @@ public class MetricsRecorder {
         String safeIntent = safeMetricTag(intent, "UNKNOWN");
         registry.counter("aml_assistant_run_total", "status", safeStatus, "intent", safeIntent).increment();
         registry.timer("aml_assistant_run_duration_seconds", "status", safeStatus)
-                .record(Duration.ofMillis(Math.max(0, durationMs)));
+            .record(Duration.ofMillis(Math.max(0, durationMs)));
     }
 
     public void assistantOutputBlocked(String reason) {
@@ -188,7 +204,9 @@ public class MetricsRecorder {
     }
 
     private static String safeMetricTag(String value, String fallback) {
-        if (value == null || !value.matches("[A-Z][A-Z0-9_]{0,63}")) return fallback;
+        if (value == null || !value.matches("[A-Z][A-Z0-9_]{0,63}"))
+            return fallback;
         return value;
     }
+
 }

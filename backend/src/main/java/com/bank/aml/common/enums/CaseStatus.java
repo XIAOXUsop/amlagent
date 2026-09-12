@@ -4,6 +4,7 @@ package com.bank.aml.common.enums;
  * 工单生命周期状态。
  */
 public enum CaseStatus {
+
     /** 待处理（已创建，任务待执行）。注意：也可能是“已入队尚未领取”，前端在无任务状态可查时只显示待处理。 */
     PENDING,
     /** 执行中 */
@@ -18,4 +19,5 @@ public enum CaseStatus {
     FAILED,
     /** 重试等待（可重试失败后，按指数退避等待重新入队） */
     RETRY_WAIT
+
 }

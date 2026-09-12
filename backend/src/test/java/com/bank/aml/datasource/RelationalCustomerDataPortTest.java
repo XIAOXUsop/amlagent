@@ -1,16 +1,17 @@
 package com.bank.aml.datasource;
 
+import com.bank.aml.TestClocks;
+import com.bank.aml.TestProperties;
 import com.bank.aml.common.enums.CountryRegion;
 import com.bank.aml.datasource.entity.CustomerTransactionEntity;
 import com.bank.aml.datasource.repository.CustomerRepository;
 import com.bank.aml.datasource.repository.CustomerShareholdingRepository;
 import com.bank.aml.datasource.repository.CustomerTransactionRepository;
 import com.bank.aml.datasource.repository.SanctionEntryRepository;
-import org.junit.jupiter.api.Test;
-
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.List;
+import org.junit.jupiter.api.Test;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
@@ -19,11 +20,15 @@ import static org.mockito.Mockito.when;
 class RelationalCustomerDataPortTest {
 
     private final CustomerRepository customers = mock(CustomerRepository.class);
+
     private final CustomerTransactionRepository transactions = mock(CustomerTransactionRepository.class);
+
     private final CustomerShareholdingRepository shareholdings = mock(CustomerShareholdingRepository.class);
+
     private final SanctionEntryRepository sanctions = mock(SanctionEntryRepository.class);
-    private final RelationalCustomerDataPort port = new RelationalCustomerDataPort(
-            customers, transactions, shareholdings, sanctions, "sync-2026-08");
+
+    private final RelationalCustomerDataPort port = new RelationalCustomerDataPort(customers, transactions,
+            shareholdings, sanctions, TestProperties.aml("sync-2026-08"), TestClocks.FIXED);
 
     @Test
     void missingUpstreamFactsStayEmptyInsteadOfBeingSynthesized() {
@@ -57,4 +62,5 @@ class RelationalCustomerDataPortTest {
         assertThat(result.getFirst().amount()).isEqualByComparingTo("123456.78");
         assertThat(result.getFirst().country()).isEqualTo(CountryRegion.HK);
     }
+
 }

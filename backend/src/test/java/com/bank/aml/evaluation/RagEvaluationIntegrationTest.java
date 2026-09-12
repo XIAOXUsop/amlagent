@@ -1,7 +1,11 @@
 package com.bank.aml.evaluation;
 
+import com.bank.aml.testinfra.IntegrationTestDatabase;
+import java.util.UUID;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.context.ActiveProfiles;
@@ -15,17 +19,21 @@ import static org.assertj.core.api.Assertions.assertThat;
 @ActiveProfiles("test")
 @Tag("integration")
 class RagEvaluationIntegrationTest {
-    private static final String SUFFIX = java.util.UUID.randomUUID().toString().replace("-", "");
+
+    private static final Logger LOGGER = LoggerFactory.getLogger(RagEvaluationIntegrationTest.class);
+
+    private static final String SUFFIX = UUID.randomUUID().toString().replace("-", "");
 
     @DynamicPropertySource
     static void isolatedInfrastructure(DynamicPropertyRegistry registry) {
-        com.bank.aml.testinfra.IntegrationTestDatabase.configure(registry, "aml_rag_evaluation_test");
+        IntegrationTestDatabase.configure(registry, "aml_rag_evaluation_test");
         registry.add("aml.queue.stream", () -> "aml:workflow:cases-rag-eval-" + SUFFIX);
         registry.add("aml.queue.dead-stream", () -> "aml:workflow:dead-rag-eval-" + SUFFIX);
         registry.add("aml.queue.group", () -> "aml-workers-rag-eval-" + SUFFIX);
     }
 
-    @Autowired RagEvaluator evaluator;
+    @Autowired
+    RagEvaluator evaluator;
 
     @Test
     void evaluatesFixedDatasetThroughRealPublicationThresholds() {
@@ -44,15 +52,19 @@ class RagEvaluationIntegrationTest {
         assertThat(report.noAnswerRefusalRate()).isGreaterThanOrEqualTo(95.0);
         assertThat(report.coldP95Ms()).isLessThanOrEqualTo(750.0);
         assertThat(report.details()).hasSize(18);
-        System.out.printf("RAG_EVAL_V2 recallAt5=%.1f top3=%.1f mrr=%.1f ndcg=%.1f abstention=%.1f noAnswerRefusal=%.1f coldP50=%.1f coldP95=%.1f coldP99=%.1f warmP95=%.1f seg=%s%n",
-                report.recallAt5(), report.top3HitRate(), report.mrr(), report.ndcgAt5(),
-                report.abstentionAccuracy(), report.noAnswerRefusalRate(),
-                report.coldP50Ms(), report.coldP95Ms(), report.coldP99Ms(), report.warmP95Ms(),
-                report.segmentedMs().averageMs());
-        report.details().stream()
-                .filter(c -> (c.answerable() && c.rank() < 1) || (!c.answerable() && !c.abstained()))
-                .forEach(c -> System.out.printf("RAG_EVAL_MISS id=%s answerable=%s rank=%d abstained=%s status=%s ids=%s scores=%s%n",
-                        c.id(), c.answerable(), c.rank(), c.abstained(), c.retrievalStatus(),
-                        c.returnedEvidenceIds(), c.relevanceScores()));
+        LOGGER.info(
+                "RAG_EVAL_V2 recallAt5={} top3={} mrr={} ndcg={} abstention={} "
+                        + "noAnswerRefusal={} coldP50={} coldP95={} coldP99={} warmP95={} seg={}",
+                report.recallAt5(), report.top3HitRate(), report.mrr(), report.ndcgAt5(), report.abstentionAccuracy(),
+                report.noAnswerRefusalRate(), report.coldP50Ms(), report.coldP95Ms(), report.coldP99Ms(),
+                report.warmP95Ms(), report.segmentedMs().averageMs());
+        report.details()
+            .stream()
+            .filter(c -> (c.answerable() && c.rank() < 1) || (!c.answerable() && !c.abstained()))
+            .forEach(c -> LOGGER.warn(
+                    "RAG_EVAL_MISS id={} answerable={} rank={} abstained={} status={} ids={} scores={}", c.id(),
+                    c.answerable(), c.rank(), c.abstained(), c.retrievalStatus(), c.returnedEvidenceIds(),
+                    c.relevanceScores()));
     }
+
 }

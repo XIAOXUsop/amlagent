@@ -7,6 +7,7 @@ import org.springframework.stereotype.Component;
 
 @Component
 public class AssistantRunExecutor {
+
     private final ThreadPoolTaskExecutor executor;
 
     public AssistantRunExecutor(@Qualifier("assistantTaskExecutor") ThreadPoolTaskExecutor executor) {
@@ -17,8 +18,10 @@ public class AssistantRunExecutor {
         try {
             executor.execute(task);
             return true;
-        } catch (TaskRejectedException exception) {
+        }
+        catch (TaskRejectedException exception) {
             return false;
         }
     }
+
 }

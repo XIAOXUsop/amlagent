@@ -1,22 +1,19 @@
 package com.bank.aml.controller;
 
-import com.bank.aml.datasource.CustomerDataPort;
-import com.bank.aml.domain.CustomerProfile;
 import com.bank.aml.dto.CaseDto;
 import com.bank.aml.dto.CaseLogDto;
-import com.bank.aml.service.DueDiligenceService;
-import com.bank.aml.service.WorkflowEventService;
-import com.bank.aml.workflow.CaseExecution;
-import com.bank.aml.workflow.CaseExecutionRepository;
-import com.bank.aml.tools.ToolExecutionTraceEntity;
-import com.bank.aml.tools.ToolExecutionTraceRepository;
 import com.bank.aml.investigation.AlertView;
 import com.bank.aml.investigation.CaseIntakeService;
+import com.bank.aml.service.CaseQueryService;
+import com.bank.aml.service.DueDiligenceService;
+import com.bank.aml.service.WorkflowEventService;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
+import java.util.List;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
+import org.springframework.http.HttpStatus;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -25,11 +22,9 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
-
-import java.util.List;
-import java.time.LocalDateTime;
 
 /**
  * 反洗钱预警工单 REST API（返回 DTO，不暴露 JPA 实体）。
@@ -39,28 +34,24 @@ import java.time.LocalDateTime;
 public class CaseController {
 
     private final DueDiligenceService service;
+
     private final WorkflowEventService workflowEventService;
-    private final CaseExecutionRepository caseExecutionRepository;
-    private final CustomerDataPort dataSource;
-    private final ToolExecutionTraceRepository toolTraceRepository;
+
+    private final CaseQueryService queries;
+
     private final CaseIntakeService caseIntakeService;
 
     public CaseController(DueDiligenceService service, WorkflowEventService workflowEventService,
-                          CaseExecutionRepository caseExecutionRepository, CustomerDataPort dataSource,
-                          ToolExecutionTraceRepository toolTraceRepository,
-                          CaseIntakeService caseIntakeService) {
+            CaseQueryService queries, CaseIntakeService caseIntakeService) {
         this.service = service;
         this.workflowEventService = workflowEventService;
-        this.caseExecutionRepository = caseExecutionRepository;
-        this.dataSource = dataSource;
-        this.toolTraceRepository = toolTraceRepository;
+        this.queries = queries;
         this.caseIntakeService = caseIntakeService;
     }
 
     /** 全部工单（倒序，分页） */
     @GetMapping
-    public Page<CaseDto> list(@RequestParam(defaultValue = "0") int page,
-                              @RequestParam(defaultValue = "10") int size) {
+    public Page<CaseDto> list(@RequestParam(defaultValue = "0") int page, @RequestParam(defaultValue = "10") int size) {
         // 显式校验，避免 Spring PageRequest 抛英文内部错误（反人性），改为 400 中文提示
         if (page < 0) {
             throw new IllegalArgumentException("页码不能为负数");
@@ -80,9 +71,11 @@ public class CaseController {
     /** 创建预警工单；autoProcess 默认 true，创建后自动触发尽调（仅 ANALYST/ADMIN） */
     @PostMapping
     @PreAuthorize("hasAnyRole('ANALYST','ADMIN')")
+    @ResponseStatus(HttpStatus.CREATED)
     public CaseDto create(@Valid @RequestBody CreateCaseRequest req, Authentication authentication) {
         boolean autoProcess = req.autoProcess() == null || req.autoProcess();
-        return CaseDto.from(service.createCase(req.customerId(), req.alertRule(), autoProcess, authentication.getName()));
+        return CaseDto
+            .from(service.createCase(req.customerId(), req.alertRule(), autoProcess, authentication.getName()));
     }
 
     /** 手动触发处理（幂等：已在执行中的工单会因抢占失败而忽略；仅 ANALYST/ADMIN） */
@@ -96,8 +89,8 @@ public class CaseController {
     /** 订阅工单工作流实时进度（SSE） */
     @GetMapping("/{id}/events")
     public SseEmitter events(@PathVariable Long id) {
-        var current = service.getCase(id);
-        return workflowEventService.subscribe(id, current.getStatus());
+        // 先注册订阅、再读取数据库状态，避免“读到 RUNNING 后恰好转终态”造成永久悬挂。
+        return workflowEventService.subscribe(id, () -> service.currentStatus(id));
     }
 
     /** 工单详情 */
@@ -119,19 +112,14 @@ public class CaseController {
 
     /** 阶段执行记录（检查点） */
     @GetMapping("/{id}/executions")
-    public List<CaseExecutionDto> executions(@PathVariable Long id) {
-        return caseExecutionRepository.findByCaseIdOrderByStartedAtAsc(id).stream()
-                .map(CaseExecutionDto::from)
-                .toList();
+    public List<CaseQueryService.CaseExecutionView> executions(@PathVariable Long id) {
+        return queries.executions(id);
     }
 
     /** 工具调用轨迹（按执行版本倒序，同一执行内按调用顺序返回；不暴露参数明文与完整结果） */
     @GetMapping("/{id}/tools")
-    public List<ToolTraceDto> toolTraces(@PathVariable Long id) {
-        return toolTraceRepository.findByCaseIdOrderByExecutionVersionDescSequenceNoAsc(id)
-                .stream()
-                .map(ToolTraceDto::from)
-                .toList();
+    public List<CaseQueryService.ToolTraceView> toolTraces(@PathVariable Long id) {
+        return queries.toolTraces(id);
     }
 
     /** 人工重试（置回 PENDING 并重新入队；仅 ANALYST/ADMIN） */
@@ -143,54 +131,13 @@ public class CaseController {
 
     /** 可供选择的演示客户（脱敏 DTO，不含证件号） */
     @GetMapping("/customers")
-    public List<CustomerSummary> customers() {
-        return dataSource.allCustomers().stream().map(CustomerSummary::from).toList();
-    }
-
-    /** 演示客户摘要（脱敏，不返回证件号） */
-    public record CustomerSummary(String id, String name, String type, String industry, String region, String regCapital) {
-        static CustomerSummary from(CustomerProfile c) {
-            return new CustomerSummary(c.id(), c.name(), c.type(), c.industry(), c.region(), c.regCapital());
-        }
+    public List<CaseQueryService.CustomerSummary> customers() {
+        return queries.customers();
     }
 
     public record CreateCaseRequest(
-            @NotBlank(message = "客户编号不能为空") String customerId,
-            @Size(max = 500, message = "预警规则描述过长（最多 500 字）") String alertRule,
-            Boolean autoProcess) {
+            @NotBlank(message = "客户编号不能为空") @Size(max = 32, message = "客户编号过长") String customerId,
+            @Size(max = 500, message = "预警规则描述过长（最多 500 字）") String alertRule, Boolean autoProcess) {
     }
 
-    /** 脱敏工具调用轨迹 DTO（不暴露参数明文、完整结果与结果摘要外的敏感字段） */
-    public record ToolTraceDto(
-            int executionVersion,
-            long sequenceNo,
-            String toolName,
-            boolean success,
-            boolean argumentValid,
-            long durationMs,
-            String resultDigest,
-            String errorCode
-    ) {
-        static ToolTraceDto from(ToolExecutionTraceEntity e) {
-            return new ToolTraceDto(e.getExecutionVersion(), e.getSequenceNo(), e.getToolName(),
-                    e.isSuccess(), e.isArgumentValid(), e.getDurationMs(), e.getResultDigest(), e.getErrorCode());
-        }
-    }
-
-    /** 检查点诊断 DTO：不暴露内部输入/输出正文或底层异常消息。 */
-    public record CaseExecutionDto(
-            int executionVersion,
-            com.bank.aml.common.enums.WorkflowStage stage,
-            CaseExecution.ExecutionStatus status,
-            LocalDateTime startedAt,
-            LocalDateTime completedAt,
-            Long durationMs,
-            String errorCode
-    ) {
-        static CaseExecutionDto from(CaseExecution execution) {
-            return new CaseExecutionDto(execution.getExecutionVersion(), execution.getStage(), execution.getStatus(),
-                    execution.getStartedAt(), execution.getCompletedAt(), execution.getDurationMs(),
-                    execution.getErrorCode());
-        }
-    }
 }

@@ -1,19 +1,19 @@
 package com.bank.aml.messaging;
 
+import com.bank.aml.TestClocks;
+import java.time.LocalDateTime;
+import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.springframework.data.redis.connection.stream.RecordId;
 import org.springframework.data.redis.core.StreamOperations;
 import org.springframework.data.redis.core.StringRedisTemplate;
 
-import java.time.LocalDateTime;
-import java.util.List;
-
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
-import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -38,9 +38,10 @@ class OutboxPublisherTest {
         doReturn(operations).when(redis).opsForStream();
         when(operations.add(any())).thenReturn(RecordId.of("1-0"));
 
-        new OutboxPublisher(repository, redis, properties).publishPending();
+        new OutboxPublisher(repository, redis, properties, TestClocks.FIXED).publishPending();
 
         verify(repository).markPublished(eq(11L), any(), any(), anyString(), eq(8L), any(LocalDateTime.class));
         verify(operations, never()).trim(anyString(), any(Long.class));
     }
+
 }

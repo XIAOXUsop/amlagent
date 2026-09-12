@@ -24,9 +24,9 @@ public class CaseDossierController {
     public ResponseEntity<CaseDossier> dossier(@PathVariable Long id) {
         CaseDossier dossier = service.export(id);
         return ResponseEntity.ok()
-                .header(HttpHeaders.CONTENT_DISPOSITION,
-                        "attachment; filename=aml-case-" + id + "-dossier.json")
-                .header("X-Content-SHA256", dossier.contentHash())
-                .body(dossier);
+            .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=aml-case-" + id + "-dossier.json")
+            .header("X-Content-SHA256", dossier.contentHash())
+            .body(dossier);
     }
+
 }

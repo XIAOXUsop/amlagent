@@ -3,29 +3,25 @@ package com.bank.aml.sanction;
 import com.bank.aml.datasource.CustomerDataPort;
 import com.bank.aml.domain.CustomerProfile;
 import com.bank.aml.domain.SanctionRecord;
-import org.junit.jupiter.api.Test;
-
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
-import java.util.ArrayList;
+import org.junit.jupiter.api.Test;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
-import static org.mockito.ArgumentMatchers.any;
 
 class SanctionScreeningServiceTest {
 
     @Test
     void ranksCandidatesAndDoesNotTurnCompanySubstringIntoConfirmedHit() {
         CustomerDataPort source = mock(CustomerDataPort.class);
-        CustomerProfile customer = new CustomerProfile(
-                "C001", "张伟", "110101198506123456", "自然人", "零售", "北京", "-");
-        SanctionRecord person = new SanctionRecord(
-                "ZHANG WEI（张伟）", "110101198506123456", "OFAC", "person", 1);
-        SanctionRecord company = new SanctionRecord(
-                "张伟国际贸易有限公司", "", "OFAC", "company", 1);
+        CustomerProfile customer = new CustomerProfile("C001", "张伟", "110101198506123456", "自然人", "零售", "北京", "-");
+        SanctionRecord person = new SanctionRecord("ZHANG WEI（张伟）", "110101198506123456", "OFAC", "person", 1);
+        SanctionRecord company = new SanctionRecord("张伟国际贸易有限公司", "", "OFAC", "company", 1);
         when(source.findCustomer("C001")).thenReturn(Optional.of(customer));
         when(source.searchSanctions("张伟")).thenReturn(List.of(company, person));
         when(source.searchSanctions("110101198506123456")).thenReturn(List.of(person));
@@ -46,16 +42,15 @@ class SanctionScreeningServiceTest {
         when(source.findCustomer("missing")).thenReturn(Optional.empty());
 
         assertThatThrownBy(() -> new SanctionScreeningService(source, new SanctionMatchScorer()).screen("missing"))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("客户不存在");
+            .isInstanceOf(IllegalArgumentException.class)
+            .hasMessageContaining("客户不存在");
     }
 
     @Test
     void persistsAppendOnlyReviewAndAppliesHumanDecisionToEffectiveResult() {
         CustomerDataPort source = mock(CustomerDataPort.class);
         SanctionCandidateReviewRepository reviews = mock(SanctionCandidateReviewRepository.class);
-        CustomerProfile customer = new CustomerProfile(
-                "C009", "赵敏", "", "自然人", "零售", "上海", "-");
+        CustomerProfile customer = new CustomerProfile("C009", "赵敏", "", "自然人", "零售", "上海", "-");
         SanctionRecord candidate = new SanctionRecord("赵敏", "", "WATCHLIST", "same name", 2);
         List<SanctionCandidateReview> stored = new ArrayList<>();
         when(source.findCustomer("C009")).thenReturn(Optional.of(customer));
@@ -70,8 +65,7 @@ class SanctionScreeningServiceTest {
         SanctionScreeningService service = new SanctionScreeningService(source, new SanctionMatchScorer(), reviews);
         String fingerprint = service.screen("C009").candidates().getFirst().candidateFingerprint();
 
-        SanctionScreeningResult result = service.review(
-                "C009", fingerprint, "CONFIRM", "已补充出生日期并核验", 0, "reviewer");
+        SanctionScreeningResult result = service.review("C009", fingerprint, "CONFIRM", "已补充出生日期并核验", 0, "reviewer");
 
         assertThat(result.status()).isEqualTo("CONFIRMED_MATCH");
         assertThat(result.candidates().getFirst().decision()).isEqualTo(SanctionMatchDecision.CONFIRMED);
@@ -80,15 +74,15 @@ class SanctionScreeningServiceTest {
         assertThat(result.candidates().getFirst().reviewedBy()).isEqualTo("reviewer");
         assertThat(service.actionableRecords(customer)).containsExactly(candidate);
 
-        SanctionScreeningResult dismissed = service.review(
-                "C009", fingerprint, "DISMISS", "证件号码核验后确认不是同一主体", 1, "reviewer2");
+        SanctionScreeningResult dismissed = service.review("C009", fingerprint, "DISMISS", "证件号码核验后确认不是同一主体", 1,
+                "reviewer2");
         assertThat(dismissed.status()).isEqualTo("NO_MATCH");
         assertThat(dismissed.candidates().getFirst().reviewRevision()).isEqualTo(2);
         assertThat(service.actionableRecords(customer)).isEmpty();
 
         assertThatThrownBy(() -> service.review("C009", fingerprint, "CONFIRM", "stale", 1, "other"))
-                .isInstanceOf(SanctionReviewConflictException.class)
-                .hasMessageContaining("当前版本为 2");
+            .isInstanceOf(SanctionReviewConflictException.class)
+            .hasMessageContaining("当前版本为 2");
     }
 
     @Test
@@ -97,9 +91,9 @@ class SanctionScreeningServiceTest {
         SanctionCandidateReviewRepository reviews = mock(SanctionCandidateReviewRepository.class);
         SanctionScreeningService service = new SanctionScreeningService(source, new SanctionMatchScorer(), reviews);
 
-        assertThatThrownBy(() -> service.review("C009", "x".repeat(64),
-                "REQUEST_MORE_INFO", " ", 0, "reviewer"))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("必须填写判断依据");
+        assertThatThrownBy(() -> service.review("C009", "x".repeat(64), "REQUEST_MORE_INFO", " ", 0, "reviewer"))
+            .isInstanceOf(IllegalArgumentException.class)
+            .hasMessageContaining("必须填写判断依据");
     }
+
 }

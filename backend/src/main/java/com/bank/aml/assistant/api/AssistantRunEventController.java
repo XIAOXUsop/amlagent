@@ -15,7 +15,9 @@ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 @RequestMapping("/api/assistant/runs")
 @PreAuthorize("hasRole('ADMIN')")
 public class AssistantRunEventController {
+
     private final AssistantRunQueryService runs;
+
     private final RedisAssistantEventService events;
 
     public AssistantRunEventController(AssistantRunQueryService runs, RedisAssistantEventService events) {
@@ -25,8 +27,9 @@ public class AssistantRunEventController {
 
     @GetMapping("/{runId}/events")
     public SseEmitter events(@PathVariable String runId,
-                             @RequestHeader(value = "Last-Event-ID", required = false) String lastEventId) {
+            @RequestHeader(value = "Last-Event-ID", required = false) String lastEventId) {
         var run = runs.requireOwned(runId, SecurityContextHolder.getContext().getAuthentication().getName());
         return events.subscribe(run, lastEventId);
     }
+
 }

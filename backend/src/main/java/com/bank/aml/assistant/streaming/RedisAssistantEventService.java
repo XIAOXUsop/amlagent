@@ -7,6 +7,14 @@ import com.bank.aml.assistant.domain.AssistantRunStatus;
 import com.bank.aml.assistant.persistence.entity.AssistantRunEntity;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import java.io.IOException;
+import java.time.Clock;
+import java.time.Duration;
+import java.time.Instant;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.atomic.AtomicBoolean;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -15,39 +23,37 @@ import org.springframework.data.redis.connection.stream.ReadOffset;
 import org.springframework.data.redis.connection.stream.StreamOffset;
 import org.springframework.data.redis.connection.stream.StreamReadOptions;
 import org.springframework.data.redis.connection.stream.StreamRecords;
+import org.springframework.data.redis.core.StreamOperations;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.http.MediaType;
 import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 import org.springframework.stereotype.Service;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
-import java.io.IOException;
-import java.time.Duration;
-import java.time.Instant;
-import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.concurrent.atomic.AtomicBoolean;
-
 /** Redis Stream 是短期可重放展示通道；MySQL 消息仍是最终事实源。 */
 @Service
 public class RedisAssistantEventService implements AssistantRunEventPublisher {
+
     private static final Logger log = LoggerFactory.getLogger(RedisAssistantEventService.class);
-    private static final Duration READ_BLOCK = Duration.ofSeconds(2);
-    private static final long HEARTBEAT_SECONDS = 15;
 
     private final StringRedisTemplate redis;
+
     private final ObjectMapper objectMapper;
+
     private final AssistantProperties properties;
+
     private final ThreadPoolTaskExecutor sseExecutor;
 
+    private final Clock clock;
+
     public RedisAssistantEventService(StringRedisTemplate redis, ObjectMapper objectMapper,
-                                      AssistantProperties properties,
-                                      @Qualifier("assistantSseExecutor") ThreadPoolTaskExecutor sseExecutor) {
+            AssistantProperties properties, @Qualifier("assistantSseExecutor") ThreadPoolTaskExecutor sseExecutor,
+            Clock clock) {
         this.redis = redis;
         this.objectMapper = objectMapper;
         this.properties = properties;
         this.sseExecutor = sseExecutor;
+        this.clock = clock;
     }
 
     @Override
@@ -57,7 +63,8 @@ public class RedisAssistantEventService implements AssistantRunEventPublisher {
 
     @Override
     public void delta(String runId, String text) {
-        if (text != null && !text.isEmpty()) append(runId, "delta", Map.of("runId", runId, "text", text));
+        if (text != null && !text.isEmpty())
+            append(runId, "delta", Map.of("runId", runId, "text", text));
     }
 
     @Override
@@ -83,28 +90,36 @@ public class RedisAssistantEventService implements AssistantRunEventPublisher {
         emitter.onError(error -> open.set(false));
         try {
             sseExecutor.execute(() -> pump(run, lastEventId, emitter, open));
-        } catch (RuntimeException exception) {
+        }
+        catch (RuntimeException exception) {
             open.set(false);
             emitter.completeWithError(exception);
         }
         return emitter;
     }
 
+    @SuppressWarnings("unchecked") // Spring Data 的泛型 varargs StreamOffset API
+                                   // 会在调用点创建泛型数组。
     private void pump(AssistantRunEntity run, String lastEventId, SseEmitter emitter, AtomicBoolean open) {
         String key = key(run.getId());
         String offset = validOffset(lastEventId) ? lastEventId : "0-0";
         long lastHeartbeat = System.nanoTime();
         try {
+            StreamOperations<String, Object, Object> streamOperations = redis.opsForStream();
             while (open.get()) {
-                List<MapRecord<String, Object, Object>> records = redis.opsForStream().read(
-                        StreamReadOptions.empty().count(50).block(READ_BLOCK),
+                List<MapRecord<String, Object, Object>> records = streamOperations.read(
+                        StreamReadOptions.empty()
+                            .count(properties.getEventReadBatchSize())
+                            .block(Duration.ofSeconds(properties.getEventReadBlockSeconds())),
                         StreamOffset.create(key, ReadOffset.from(offset)));
                 if (records != null && !records.isEmpty()) {
                     for (MapRecord<String, Object, Object> record : records) {
                         String event = String.valueOf(record.getValue().get("event"));
                         String data = String.valueOf(record.getValue().get("data"));
-                        emitter.send(SseEmitter.event().id(record.getId().getValue()).name(event)
-                                .data(data, MediaType.APPLICATION_JSON));
+                        emitter.send(SseEmitter.event()
+                            .id(record.getId().getValue())
+                            .name(event)
+                            .data(data, MediaType.APPLICATION_JSON));
                         offset = record.getId().getValue();
                         if (isTerminalEvent(event)) {
                             emitter.complete();
@@ -112,28 +127,35 @@ public class RedisAssistantEventService implements AssistantRunEventPublisher {
                             return;
                         }
                     }
-                } else if (isTerminal(run.getStatus())) {
+                }
+                else if (isTerminal(run.getStatus())) {
                     // Redis 展示事件已过期/丢失时只告知客户端回查 MySQL，不伪造回答正文。
                     String event = run.getStatus() == AssistantRunStatus.COMPLETED ? "completed"
                             : run.getStatus() == AssistantRunStatus.REFUSED ? "refused" : "failed";
-                    emitter.send(SseEmitter.event().name(event).data(json(Map.of(
-                            "runId", run.getId(), "reconcileRequired", true)), MediaType.APPLICATION_JSON));
+                    emitter.send(SseEmitter.event()
+                        .name(event)
+                        .data(json(Map.of("runId", run.getId(), "reconcileRequired", true)),
+                                MediaType.APPLICATION_JSON));
                     emitter.complete();
                     open.set(false);
                     return;
                 }
-                if (Duration.ofNanos(System.nanoTime() - lastHeartbeat).toSeconds() >= HEARTBEAT_SECONDS) {
+                if (Duration.ofNanos(System.nanoTime() - lastHeartbeat).toSeconds() >= properties
+                    .getEventHeartbeatSeconds()) {
                     emitter.send(SseEmitter.event().comment("heartbeat"));
                     lastHeartbeat = System.nanoTime();
                 }
             }
-        } catch (IOException exception) {
+        }
+        catch (IOException exception) {
             log.debug("AI 小助 SSE 客户端断开 runId={}", run.getId());
             emitter.complete();
-        } catch (RuntimeException exception) {
+        }
+        catch (RuntimeException exception) {
             log.warn("AI 小助 SSE 读取失败 runId={} type={}", run.getId(), exception.getClass().getSimpleName());
             emitter.completeWithError(exception);
-        } finally {
+        }
+        finally {
             open.set(false);
         }
     }
@@ -143,7 +165,7 @@ public class RedisAssistantEventService implements AssistantRunEventPublisher {
         Map<String, String> fields = new LinkedHashMap<>();
         fields.put("event", event);
         fields.put("data", json(payload));
-        fields.put("createdAt", Instant.now().toString());
+        fields.put("createdAt", clock.instant().toString());
         redis.opsForStream().add(StreamRecords.mapBacked(fields).withStreamKey(key));
         redis.expire(key, Duration.ofMinutes(properties.getEventStreamTtlMinutes()));
     }
@@ -151,18 +173,27 @@ public class RedisAssistantEventService implements AssistantRunEventPublisher {
     private String json(Object value) {
         try {
             return objectMapper.writeValueAsString(value);
-        } catch (JsonProcessingException e) {
+        }
+        catch (JsonProcessingException e) {
             throw new IllegalStateException("AI 小助事件序列化失败", e);
         }
     }
 
-    private boolean validOffset(String value) { return value != null && value.matches("[0-9]+-[0-9]+"); }
+    private boolean validOffset(String value) {
+        return value != null && value.matches("[0-9]+-[0-9]+");
+    }
+
     private boolean isTerminalEvent(String event) {
         return "completed".equals(event) || "refused".equals(event) || "failed".equals(event);
     }
+
     private boolean isTerminal(AssistantRunStatus status) {
         return status == AssistantRunStatus.COMPLETED || status == AssistantRunStatus.REFUSED
                 || status == AssistantRunStatus.FAILED || status == AssistantRunStatus.BLOCKED;
     }
-    private String key(String runId) { return "aml:assistant:run:" + runId; }
+
+    private String key(String runId) {
+        return "aml:assistant:run:" + runId;
+    }
+
 }

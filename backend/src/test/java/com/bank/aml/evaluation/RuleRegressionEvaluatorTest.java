@@ -1,13 +1,13 @@
 package com.bank.aml.evaluation;
 
+import com.bank.aml.TestClocks;
 import com.bank.aml.risk.RiskRule;
 import com.bank.aml.risk.RiskRuleEngine;
 import com.bank.aml.risk.RiskRuleRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import java.util.List;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-
-import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
@@ -21,10 +21,8 @@ class RuleRegressionEvaluatorTest {
     void setUp() {
         RiskRuleRepository repository = mock(RiskRuleRepository.class);
         when(repository.findByEnabledTrueOrderByPriorityAsc()).thenReturn(seedRules());
-        evaluator = new RuleRegressionEvaluator(
-                new RuleRegressionCaseGenerator(),
-                new RiskRuleEngine(repository),
-                new ObjectMapper());
+        evaluator = new RuleRegressionEvaluator(new RuleRegressionCaseGenerator(),
+                new RiskRuleEngine(repository, TestClocks.FIXED), new ObjectMapper(), TestClocks.FIXED);
     }
 
     @Test
@@ -52,28 +50,22 @@ class RuleRegressionEvaluatorTest {
     }
 
     private List<RiskRule> seedRules() {
-        return List.of(
-                rule("SANCTION_LEVEL_1", "sanction.maxSeverity == 1", "高风险", "MANUAL_REVIEW", 100),
+        return List.of(rule("SANCTION_LEVEL_1", "sanction.maxSeverity == 1", "高风险", "MANUAL_REVIEW", 100),
                 rule("SANCTION_OTHER", "sanction.maxSeverity >= 2", "高风险", "AUTO_DONE", 90),
-                rule("DATA_INCOMPLETE", "transaction.dataComplete == false",
-                        "中风险", "MANUAL_REVIEW", 80),
-                rule("UBO_UNVERIFIED", "corporate.uboRiskSeverity >= 2",
-                        "高风险", "MANUAL_REVIEW", 70),
-                rule("TXN_PATTERN_HIGH", "transaction.patternSeverity >= 2",
-                        "高风险", "AUTO_DONE", 60),
-                rule("TXN_ABNORMAL", "transaction.crossRatio > 20 && transaction.nightRatio > 30"
+                rule("DATA_INCOMPLETE", "transaction.dataComplete == false", "中风险", "MANUAL_REVIEW", 80),
+                rule("UBO_UNVERIFIED", "corporate.uboRiskSeverity >= 2", "高风险", "MANUAL_REVIEW", 70),
+                rule("TXN_PATTERN_HIGH", "transaction.patternSeverity >= 2", "高风险", "AUTO_DONE", 60),
+                rule("TXN_ABNORMAL",
+                        "transaction.crossRatio > 20 && transaction.nightRatio > 30"
                                 + " && transaction.riskExplained == false",
                         "高风险", "AUTO_DONE", 50),
-                rule("UBO_DOCUMENT_INCOMPLETE", "corporate.uboRiskSeverity == 1",
-                        "中风险", "AUTO_DONE", 40),
-                rule("TXN_MODERATE", "transaction.patternSeverity == 1",
-                        "中风险", "AUTO_DONE", 30),
-                rule("CROSS_BORDER_MODERATE", "transaction.crossRatio >= 10"
-                                + " && transaction.riskExplained == false",
+                rule("UBO_DOCUMENT_INCOMPLETE", "corporate.uboRiskSeverity == 1", "中风险", "AUTO_DONE", 40),
+                rule("TXN_MODERATE", "transaction.patternSeverity == 1", "中风险", "AUTO_DONE", 30),
+                rule("CROSS_BORDER_MODERATE", "transaction.crossRatio >= 10" + " && transaction.riskExplained == false",
                         "中风险", "AUTO_DONE", 20),
-                rule("NIGHT_ACTIVITY_MODERATE", "transaction.nightRatio >= 20"
-                                + " && transaction.riskExplained == false",
-                        "中风险", "AUTO_DONE", 10));
+                rule("NIGHT_ACTIVITY_MODERATE",
+                        "transaction.nightRatio >= 20" + " && transaction.riskExplained == false", "中风险", "AUTO_DONE",
+                        10));
     }
 
     private RiskRule rule(String code, String expression, String target, String action, int priority) {
@@ -87,4 +79,5 @@ class RuleRegressionEvaluatorTest {
         rule.setVersion(1);
         return rule;
     }
+
 }

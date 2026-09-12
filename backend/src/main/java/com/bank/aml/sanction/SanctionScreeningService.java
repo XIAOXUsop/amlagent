@@ -3,11 +3,6 @@ package com.bank.aml.sanction;
 import com.bank.aml.datasource.CustomerDataPort;
 import com.bank.aml.domain.CustomerProfile;
 import com.bank.aml.domain.SanctionRecord;
-import org.springframework.stereotype.Service;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.dao.DataIntegrityViolationException;
-import org.springframework.transaction.annotation.Transactional;
-
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
@@ -15,16 +10,23 @@ import java.util.Map;
 import java.util.Set;
 import java.util.function.Function;
 import java.util.stream.Collectors;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 /** 召回名单候选并生成按置信度排序的可解释筛查结果。 */
 @Service
 public class SanctionScreeningService {
 
     private static final Set<String> REVIEW_DECISIONS = Set.of("CONFIRM", "DISMISS", "REQUEST_MORE_INFO");
+
     private static final int MAX_COMMENT_LENGTH = 500;
 
     private final CustomerDataPort dataSource;
+
     private final SanctionMatchScorer scorer;
+
     private final SanctionCandidateReviewRepository reviewRepository;
 
     public SanctionScreeningService(CustomerDataPort dataSource, SanctionMatchScorer scorer) {
@@ -33,7 +35,7 @@ public class SanctionScreeningService {
 
     @Autowired
     public SanctionScreeningService(CustomerDataPort dataSource, SanctionMatchScorer scorer,
-                                    SanctionCandidateReviewRepository reviewRepository) {
+            SanctionCandidateReviewRepository reviewRepository) {
         this.dataSource = dataSource;
         this.scorer = scorer;
         this.reviewRepository = reviewRepository;
@@ -42,13 +44,13 @@ public class SanctionScreeningService {
     @Transactional(readOnly = true)
     public SanctionScreeningResult screen(String customerId) {
         CustomerProfile customer = dataSource.findCustomer(customerId)
-                .orElseThrow(() -> new IllegalArgumentException("客户不存在：" + customerId));
+            .orElseThrow(() -> new IllegalArgumentException("客户不存在：" + customerId));
         List<ScoredCandidate> scored = scoreCandidates(customer);
         List<SanctionCandidateMatch> matches = scored.stream().map(ScoredCandidate::match).toList();
         String status = matches.stream().anyMatch(m -> m.decision() == SanctionMatchDecision.CONFIRMED)
                 ? "CONFIRMED_MATCH"
                 : matches.stream().anyMatch(m -> m.decision() == SanctionMatchDecision.REVIEW_REQUIRED)
-                ? "REVIEW_REQUIRED" : "NO_MATCH";
+                        ? "REVIEW_REQUIRED" : "NO_MATCH";
         return new SanctionScreeningResult(customer.id(), customer.name(), status, dataSource.asOfTime(),
                 dataSource.sourceSystem(), dataSource.sourceVersion(), matches);
     }
@@ -57,15 +59,15 @@ public class SanctionScreeningService {
     @Transactional(readOnly = true)
     public List<SanctionRecord> actionableRecords(CustomerProfile customer) {
         return scoreCandidates(customer).stream()
-                .filter(candidate -> candidate.match().actionable())
-                .map(ScoredCandidate::record)
-                .toList();
+            .filter(candidate -> candidate.match().actionable())
+            .map(ScoredCandidate::record)
+            .toList();
     }
 
     /** 追加候选核验版本；旧 revision 或并发重复 revision 返回 409。 */
     @Transactional
     public SanctionScreeningResult review(String customerId, String candidateFingerprint, String decision,
-                                           String comment, int expectedRevision, String reviewerId) {
+            String comment, int expectedRevision, String reviewerId) {
         String normalizedDecision = decision == null ? "" : decision.trim().toUpperCase();
         if (!REVIEW_DECISIONS.contains(normalizedDecision)) {
             throw new IllegalArgumentException("非法候选复核决定：" + decision);
@@ -77,18 +79,18 @@ public class SanctionScreeningService {
         if (normalizedComment != null && normalizedComment.length() > MAX_COMMENT_LENGTH) {
             throw new IllegalArgumentException("核验意见过长（最多 500 字）");
         }
-        if (expectedRevision < 0) throw new IllegalArgumentException("候选复核版本不能为负数");
+        if (expectedRevision < 0)
+            throw new IllegalArgumentException("候选复核版本不能为负数");
 
         CustomerProfile customer = dataSource.findCustomer(customerId)
-                .orElseThrow(() -> new IllegalArgumentException("客户不存在：" + customerId));
+            .orElseThrow(() -> new IllegalArgumentException("客户不存在：" + customerId));
         ScoredCandidate candidate = scoreCandidates(customer).stream()
-                .filter(item -> item.match().candidateFingerprint().equals(candidateFingerprint))
-                .findFirst()
-                .orElseThrow(() -> new IllegalArgumentException("名单候选不存在或数据源已更新，请重新筛查"));
+            .filter(item -> item.match().candidateFingerprint().equals(candidateFingerprint))
+            .findFirst()
+            .orElseThrow(() -> new IllegalArgumentException("名单候选不存在或数据源已更新，请重新筛查"));
         int currentRevision = candidate.match().reviewRevision();
         if (currentRevision != expectedRevision) {
-            throw new SanctionReviewConflictException(
-                    "候选已被其他复核人更新，当前版本为 " + currentRevision + "，请刷新后重试");
+            throw new SanctionReviewConflictException("候选已被其他复核人更新，当前版本为 " + currentRevision + "，请刷新后重试");
         }
 
         SanctionCandidateReview review = new SanctionCandidateReview();
@@ -104,7 +106,8 @@ public class SanctionScreeningService {
         review.setReviewRevision(currentRevision + 1);
         try {
             reviewRepository.saveAndFlush(review);
-        } catch (DataIntegrityViolationException ex) {
+        }
+        catch (DataIntegrityViolationException ex) {
             throw new SanctionReviewConflictException("候选复核版本发生并发冲突，请刷新后重试");
         }
         return screen(customerId);
@@ -120,23 +123,26 @@ public class SanctionScreeningService {
 
     private List<ScoredCandidate> scoreCandidates(CustomerProfile customer) {
         Map<String, SanctionCandidateReview> latest = latestReviews(customer.id());
-        return recall(customer).stream()
-                .map(record -> {
-                    SanctionCandidateMatch match = scorer.score(customer, record);
-                    return new ScoredCandidate(record, match.withReview(latest.get(match.candidateFingerprint())));
-                })
-                .sorted(Comparator.comparingInt((ScoredCandidate item) -> item.match().score()).reversed()
-                        .thenComparing(item -> item.match().candidateName()))
-                .toList();
+        return recall(customer).stream().map(record -> {
+            SanctionCandidateMatch match = scorer.score(customer, record);
+            return new ScoredCandidate(record, match.withReview(latest.get(match.candidateFingerprint())));
+        })
+            .sorted(Comparator.comparingInt((ScoredCandidate item) -> item.match().score())
+                .reversed()
+                .thenComparing(item -> item.match().candidateName()))
+            .toList();
     }
 
     private Map<String, SanctionCandidateReview> latestReviews(String customerId) {
-        if (reviewRepository == null) return Map.of();
-        return reviewRepository.findByCustomerIdOrderByCreatedAtAsc(customerId).stream()
-                .collect(Collectors.toMap(SanctionCandidateReview::getCandidateFingerprint, Function.identity(),
-                        (left, right) -> left.getReviewRevision() >= right.getReviewRevision() ? left : right));
+        if (reviewRepository == null)
+            return Map.of();
+        return reviewRepository.findByCustomerIdOrderByCreatedAtAsc(customerId)
+            .stream()
+            .collect(Collectors.toMap(SanctionCandidateReview::getCandidateFingerprint, Function.identity(),
+                    (left, right) -> left.getReviewRevision() >= right.getReviewRevision() ? left : right));
     }
 
     private record ScoredCandidate(SanctionRecord record, SanctionCandidateMatch match) {
     }
+
 }

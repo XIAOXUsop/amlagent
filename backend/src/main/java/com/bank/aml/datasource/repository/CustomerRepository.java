@@ -1,14 +1,13 @@
 package com.bank.aml.datasource.repository;
 
 import com.bank.aml.datasource.entity.CustomerEntity;
+import java.util.List;
+import java.util.Optional;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
-
-import java.util.List;
-import java.util.Optional;
 
 public interface CustomerRepository extends JpaRepository<CustomerEntity, Long> {
 
@@ -33,4 +32,5 @@ public interface CustomerRepository extends JpaRepository<CustomerEntity, Long> 
               AND (c.customerNo LIKE %:kw% OR c.name LIKE %:kw%)
             """)
     Page<CustomerEntity> search(@Param("kw") String keyword, Pageable pageable);
+
 }

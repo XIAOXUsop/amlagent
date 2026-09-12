@@ -6,16 +6,15 @@ import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
-
 import java.time.LocalDateTime;
 
 /**
- * 待验证事实 Claim（v3 计划 §6）：六问题与材料之间的桥梁。
- * C1 主体与账户、C2 真实付款义务、C3 代付授权、C4 实际执行、C5 商业合理性、C6 反证与剩余未知。
- * 材料只说明某个来源提供了什么信息；核验动作说明如何检查；Claim 说明这些信息为什么足够或不足。
+ * 待验证事实 Claim（v3 计划 §6）：六问题与材料之间的桥梁。 C1 主体与账户、C2 真实付款义务、C3 代付授权、C4 实际执行、C5 商业合理性、C6
+ * 反证与剩余未知。 材料只说明某个来源提供了什么信息；核验动作说明如何检查；Claim 说明这些信息为什么足够或不足。
  *
- * <p>状态语义：SUPPORTED 表示"按已记录方法和限制，分析员认为证据支持"，
- * 不表示系统保证事实为真。C1~C4 在集团代付政策中不可整体跳过（NOT_APPLICABLE 需政策明确允许）。
+ * <p>
+ * 状态语义：SUPPORTED 表示"按已记录方法和限制，分析员认为证据支持"， 不表示系统保证事实为真。C1~C4 在集团代付政策中不可整体跳过（NOT_APPLICABLE
+ * 需政策明确允许）。
  */
 @Entity
 @Table(name = "explanation_claim")
@@ -82,37 +81,136 @@ public class ExplanationClaim {
     @Column(nullable = false)
     private LocalDateTime createdAt;
 
-    public Long getId() { return id; }
-    public Long getCaseId() { return caseId; }
-    public void setCaseId(Long value) { caseId = value; }
-    public Long getUnitId() { return unitId; }
-    public void setUnitId(Long value) { unitId = value; }
-    public String getClaimCode() { return claimCode; }
-    public void setClaimCode(String value) { claimCode = value; }
-    public String getStatus() { return status; }
-    public void setStatus(String value) { status = value; }
-    public String getImportance() { return importance; }
-    public void setImportance(String value) { importance = value; }
-    public String getSubjectRefs() { return subjectRefs; }
-    public void setSubjectRefs(String value) { subjectRefs = value; }
-    public String getTransactionIds() { return transactionIds; }
-    public void setTransactionIds(String value) { transactionIds = value; }
-    public String getOrderRefs() { return orderRefs; }
-    public void setOrderRefs(String value) { orderRefs = value; }
-    public String getJudgement() { return judgement; }
-    public void setJudgement(String value) { judgement = value; }
-    public String getMethodNote() { return methodNote; }
-    public void setMethodNote(String value) { methodNote = value; }
-    public String getLimitations() { return limitations; }
-    public void setLimitations(String value) { limitations = value; }
-    public String getNotApplicableReason() { return notApplicableReason; }
-    public void setNotApplicableReason(String value) { notApplicableReason = value; }
-    public int getClaimRevision() { return claimRevision; }
-    public void setClaimRevision(int value) { claimRevision = value; }
-    public String getUpdatedBy() { return updatedBy; }
-    public void setUpdatedBy(String value) { updatedBy = value; }
-    public LocalDateTime getUpdatedAt() { return updatedAt; }
-    public void setUpdatedAt(LocalDateTime value) { updatedAt = value; }
-    public LocalDateTime getCreatedAt() { return createdAt; }
-    public void setCreatedAt(LocalDateTime value) { createdAt = value; }
+    public Long getId() {
+        return id;
+    }
+
+    public Long getCaseId() {
+        return caseId;
+    }
+
+    public void setCaseId(Long value) {
+        caseId = value;
+    }
+
+    public Long getUnitId() {
+        return unitId;
+    }
+
+    public void setUnitId(Long value) {
+        unitId = value;
+    }
+
+    public String getClaimCode() {
+        return claimCode;
+    }
+
+    public void setClaimCode(String value) {
+        claimCode = value;
+    }
+
+    public String getStatus() {
+        return status;
+    }
+
+    public void setStatus(String value) {
+        status = value;
+    }
+
+    public String getImportance() {
+        return importance;
+    }
+
+    public void setImportance(String value) {
+        importance = value;
+    }
+
+    public String getSubjectRefs() {
+        return subjectRefs;
+    }
+
+    public void setSubjectRefs(String value) {
+        subjectRefs = value;
+    }
+
+    public String getTransactionIds() {
+        return transactionIds;
+    }
+
+    public void setTransactionIds(String value) {
+        transactionIds = value;
+    }
+
+    public String getOrderRefs() {
+        return orderRefs;
+    }
+
+    public void setOrderRefs(String value) {
+        orderRefs = value;
+    }
+
+    public String getJudgement() {
+        return judgement;
+    }
+
+    public void setJudgement(String value) {
+        judgement = value;
+    }
+
+    public String getMethodNote() {
+        return methodNote;
+    }
+
+    public void setMethodNote(String value) {
+        methodNote = value;
+    }
+
+    public String getLimitations() {
+        return limitations;
+    }
+
+    public void setLimitations(String value) {
+        limitations = value;
+    }
+
+    public String getNotApplicableReason() {
+        return notApplicableReason;
+    }
+
+    public void setNotApplicableReason(String value) {
+        notApplicableReason = value;
+    }
+
+    public int getClaimRevision() {
+        return claimRevision;
+    }
+
+    public void setClaimRevision(int value) {
+        claimRevision = value;
+    }
+
+    public String getUpdatedBy() {
+        return updatedBy;
+    }
+
+    public void setUpdatedBy(String value) {
+        updatedBy = value;
+    }
+
+    public LocalDateTime getUpdatedAt() {
+        return updatedAt;
+    }
+
+    public void setUpdatedAt(LocalDateTime value) {
+        updatedAt = value;
+    }
+
+    public LocalDateTime getCreatedAt() {
+        return createdAt;
+    }
+
+    public void setCreatedAt(LocalDateTime value) {
+        createdAt = value;
+    }
+
 }

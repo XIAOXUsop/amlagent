@@ -11,13 +11,15 @@ import jakarta.persistence.PrePersist;
 import jakarta.persistence.PreUpdate;
 import jakarta.persistence.Table;
 import jakarta.persistence.Version;
-
+import java.time.Clock;
 import java.time.LocalDateTime;
+import java.util.Objects;
 import java.util.UUID;
 
 @Entity
 @Table(name = "assistant_conversation")
 public class AssistantConversationEntity {
+
     @Id
     @Column(length = 36)
     private String id;
@@ -49,7 +51,7 @@ public class AssistantConversationEntity {
     private long version;
 
     public static AssistantConversationEntity create(String operatorUsername, CustomerEntity customer,
-                                                      LocalDateTime expiresAt) {
+            LocalDateTime expiresAt) {
         AssistantConversationEntity entity = new AssistantConversationEntity();
         entity.id = UUID.randomUUID().toString();
         entity.operatorUsername = operatorUsername;
@@ -57,32 +59,76 @@ public class AssistantConversationEntity {
         entity.customerNoAtCreation = customer.getCustomerNo();
         entity.status = AssistantConversationStatus.ACTIVE;
         entity.expiresAt = expiresAt;
-        entity.createdAt = LocalDateTime.now();
+        entity.createdAt = LocalDateTime.now(Clock.systemUTC());
         entity.updatedAt = entity.createdAt;
         return entity;
     }
 
     @PrePersist
     void onCreate() {
-        if (createdAt == null) createdAt = LocalDateTime.now();
-        if (updatedAt == null) updatedAt = createdAt;
+        if (createdAt == null)
+            createdAt = LocalDateTime.now(Clock.systemUTC());
+        if (updatedAt == null)
+            updatedAt = createdAt;
     }
 
     @PreUpdate
-    void onUpdate() { updatedAt = LocalDateTime.now(); }
+    void onUpdate() {
+        updatedAt = LocalDateTime.now(Clock.systemUTC());
+    }
 
-    public void touch() { updatedAt = LocalDateTime.now(); }
-    public void archive() { status = AssistantConversationStatus.ARCHIVED; touch(); }
-    public void expire() { status = AssistantConversationStatus.EXPIRED; touch(); }
-    public boolean isActive() { return status == AssistantConversationStatus.ACTIVE && expiresAt.isAfter(LocalDateTime.now()); }
+    public void touch() {
+        updatedAt = LocalDateTime.now(Clock.systemUTC());
+    }
 
-    public String getId() { return id; }
-    public String getOperatorUsername() { return operatorUsername; }
-    public Long getCustomerId() { return customerId; }
-    public String getCustomerNoAtCreation() { return customerNoAtCreation; }
-    public AssistantConversationStatus getStatus() { return status; }
-    public LocalDateTime getCreatedAt() { return createdAt; }
-    public LocalDateTime getUpdatedAt() { return updatedAt; }
-    public LocalDateTime getExpiresAt() { return expiresAt; }
-    public long getVersion() { return version; }
+    public void archive() {
+        status = AssistantConversationStatus.ARCHIVED;
+        touch();
+    }
+
+    public void expire() {
+        status = AssistantConversationStatus.EXPIRED;
+        touch();
+    }
+
+    public boolean isActiveAt(LocalDateTime now) {
+        return status == AssistantConversationStatus.ACTIVE && expiresAt.isAfter(Objects.requireNonNull(now, "now"));
+    }
+
+    public String getId() {
+        return id;
+    }
+
+    public String getOperatorUsername() {
+        return operatorUsername;
+    }
+
+    public Long getCustomerId() {
+        return customerId;
+    }
+
+    public String getCustomerNoAtCreation() {
+        return customerNoAtCreation;
+    }
+
+    public AssistantConversationStatus getStatus() {
+        return status;
+    }
+
+    public LocalDateTime getCreatedAt() {
+        return createdAt;
+    }
+
+    public LocalDateTime getUpdatedAt() {
+        return updatedAt;
+    }
+
+    public LocalDateTime getExpiresAt() {
+        return expiresAt;
+    }
+
+    public long getVersion() {
+        return version;
+    }
+
 }

@@ -1,8 +1,7 @@
 package com.bank.aml.messaging;
 
-import org.springframework.stereotype.Component;
-
 import java.util.UUID;
+import org.springframework.stereotype.Component;
 
 /**
  * Worker 实例标识：每次启动生成随机后缀，避免多实例部署时消费者标识冲突。
@@ -15,4 +14,5 @@ public class WorkerIdentity {
     public String consumerName() {
         return consumerName;
     }
+
 }

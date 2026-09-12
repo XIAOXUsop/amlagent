@@ -4,15 +4,15 @@ import com.bank.aml.assistant.config.AssistantProperties;
 import com.bank.aml.assistant.domain.AssistantResultType;
 import com.bank.aml.assistant.persistence.entity.AssistantMessageEntity;
 import com.bank.aml.assistant.persistence.repository.AssistantMessageRepository;
-import org.junit.jupiter.api.Test;
-
 import java.util.List;
+import org.junit.jupiter.api.Test;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 class AssistantHistoryLoaderTest {
+
     @Test
     void loadsOnlyCompletedPairsBeforeCurrentMessage() {
         AssistantMessageRepository repository = mock(AssistantMessageRepository.class);
@@ -25,12 +25,12 @@ class AssistantHistoryLoaderTest {
         failedAnswer.fail("失败", AssistantResultType.MODEL_UNAVAILABLE);
         AssistantMessageEntity current = AssistantMessageEntity.user("c", 5, "current", "当前问题");
         when(repository.findTop100ByConversationIdOrderBySequenceNoAsc("c"))
-                .thenReturn(List.of(oldUser, oldAnswer, failedUser, failedAnswer, current));
+            .thenReturn(List.of(oldUser, oldAnswer, failedUser, failedAnswer, current));
 
         var memory = new AssistantHistoryLoader(repository, properties).load("c", current.getId());
 
         assertThat(memory.messages()).hasSize(2);
-        assertThat(memory.messages().toString()).contains("旧问题", "旧回答")
-                .doesNotContain("失败问题", "当前问题");
+        assertThat(memory.messages().toString()).contains("旧问题", "旧回答").doesNotContain("失败问题", "当前问题");
     }
+
 }

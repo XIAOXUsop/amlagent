@@ -6,7 +6,6 @@ import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
-
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 
@@ -65,35 +64,128 @@ public class RefundEvent {
     @Column(name = "created_at", nullable = false)
     private LocalDateTime createdAt;
 
-    public Long getId() { return id; }
-    public Long getCaseId() { return caseId; }
-    public void setCaseId(Long value) { caseId = value; }
-    public String getSourceSystem() { return sourceSystem; }
-    public void setSourceSystem(String value) { sourceSystem = value; }
-    public String getExternalEventId() { return externalEventId; }
-    public void setExternalEventId(String value) { externalEventId = value; }
-    public String getEventStatus() { return eventStatus; }
-    public void setEventStatus(String value) { eventStatus = value; }
-    public String getPayerSubject() { return payerSubject; }
-    public void setPayerSubject(String value) { payerSubject = value; }
-    public String getPayeeSubject() { return payeeSubject; }
-    public void setPayeeSubject(String value) { payeeSubject = value; }
-    public String getPayeeAccountRef() { return payeeAccountRef; }
-    public void setPayeeAccountRef(String value) { payeeAccountRef = value; }
-    public BigDecimal getAmount() { return amount; }
-    public void setAmount(BigDecimal value) { amount = value; }
-    public String getCurrency() { return currency; }
-    public void setCurrency(String value) { currency = value; }
-    public LocalDateTime getEffectiveAt() { return effectiveAt; }
-    public void setEffectiveAt(LocalDateTime value) { effectiveAt = value; }
-    public LocalDateTime getRecordedAt() { return recordedAt; }
-    public void setRecordedAt(LocalDateTime value) { recordedAt = value; }
-    public String getPayloadDigest() { return payloadDigest; }
-    public void setPayloadDigest(String value) { payloadDigest = value; }
-    public Long getReversedEventId() { return reversedEventId; }
-    public void setReversedEventId(Long value) { reversedEventId = value; }
-    public String getCreatedBy() { return createdBy; }
-    public void setCreatedBy(String value) { createdBy = value; }
-    public LocalDateTime getCreatedAt() { return createdAt; }
-    public void setCreatedAt(LocalDateTime value) { createdAt = value; }
+    public Long getId() {
+        return id;
+    }
+
+    public Long getCaseId() {
+        return caseId;
+    }
+
+    public void setCaseId(Long value) {
+        caseId = value;
+    }
+
+    public String getSourceSystem() {
+        return sourceSystem;
+    }
+
+    public void setSourceSystem(String value) {
+        sourceSystem = value;
+    }
+
+    public String getExternalEventId() {
+        return externalEventId;
+    }
+
+    public void setExternalEventId(String value) {
+        externalEventId = value;
+    }
+
+    public String getEventStatus() {
+        return eventStatus;
+    }
+
+    public void setEventStatus(String value) {
+        eventStatus = value;
+    }
+
+    public String getPayerSubject() {
+        return payerSubject;
+    }
+
+    public void setPayerSubject(String value) {
+        payerSubject = value;
+    }
+
+    public String getPayeeSubject() {
+        return payeeSubject;
+    }
+
+    public void setPayeeSubject(String value) {
+        payeeSubject = value;
+    }
+
+    public String getPayeeAccountRef() {
+        return payeeAccountRef;
+    }
+
+    public void setPayeeAccountRef(String value) {
+        payeeAccountRef = value;
+    }
+
+    public BigDecimal getAmount() {
+        return amount;
+    }
+
+    public void setAmount(BigDecimal value) {
+        amount = value;
+    }
+
+    public String getCurrency() {
+        return currency;
+    }
+
+    public void setCurrency(String value) {
+        currency = value;
+    }
+
+    public LocalDateTime getEffectiveAt() {
+        return effectiveAt;
+    }
+
+    public void setEffectiveAt(LocalDateTime value) {
+        effectiveAt = value;
+    }
+
+    public LocalDateTime getRecordedAt() {
+        return recordedAt;
+    }
+
+    public void setRecordedAt(LocalDateTime value) {
+        recordedAt = value;
+    }
+
+    public String getPayloadDigest() {
+        return payloadDigest;
+    }
+
+    public void setPayloadDigest(String value) {
+        payloadDigest = value;
+    }
+
+    public Long getReversedEventId() {
+        return reversedEventId;
+    }
+
+    public void setReversedEventId(Long value) {
+        reversedEventId = value;
+    }
+
+    public String getCreatedBy() {
+        return createdBy;
+    }
+
+    public void setCreatedBy(String value) {
+        createdBy = value;
+    }
+
+    public LocalDateTime getCreatedAt() {
+        return createdAt;
+    }
+
+    public void setCreatedAt(LocalDateTime value) {
+        createdAt = value;
+    }
+
 }

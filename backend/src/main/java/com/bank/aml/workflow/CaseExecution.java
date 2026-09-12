@@ -9,7 +9,6 @@ import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
-
 import java.time.LocalDateTime;
 
 /**
@@ -20,7 +19,9 @@ import java.time.LocalDateTime;
 public class CaseExecution {
 
     public enum ExecutionStatus {
+
         RUNNING, SUCCESS, FAILED
+
     }
 
     @Id
@@ -152,4 +153,5 @@ public class CaseExecution {
     public void setErrorMessage(String errorMessage) {
         this.errorMessage = errorMessage;
     }
+
 }

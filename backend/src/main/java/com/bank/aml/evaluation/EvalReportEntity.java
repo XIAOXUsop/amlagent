@@ -7,7 +7,7 @@ import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.PrePersist;
 import jakarta.persistence.Table;
-
+import java.time.Clock;
 import java.time.LocalDateTime;
 
 /**
@@ -37,7 +37,7 @@ public class EvalReportEntity {
 
     @PrePersist
     void onCreate() {
-        this.createdAt = LocalDateTime.now();
+        this.createdAt = LocalDateTime.now(Clock.systemUTC());
     }
 
     public Long getId() {
@@ -71,4 +71,5 @@ public class EvalReportEntity {
     public LocalDateTime getCreatedAt() {
         return createdAt;
     }
+
 }

@@ -15,27 +15,32 @@ import com.bank.aml.config.LlmProperties;
 import com.bank.aml.observability.MetricsRecorder;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import java.time.LocalDateTime;
+import java.util.List;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-
-import java.util.List;
 
 /** 异步回调通过独立事务推进 run 和 AI 消息状态，避免长事务包围模型调用。 */
 @Service
 public class AssistantRunStateService {
+
     private final AssistantRunRepository runs;
+
     private final AssistantConversationRepository conversations;
+
     private final AssistantMessageRepository messages;
+
     private final AssistantToolTraceRepository traces;
+
     private final ObjectMapper objectMapper;
+
     private final LlmProperties llm;
+
     private final MetricsRecorder metrics;
 
-    public AssistantRunStateService(AssistantRunRepository runs,
-                                    AssistantConversationRepository conversations,
-                                    AssistantMessageRepository messages,
-                                    AssistantToolTraceRepository traces,
-                                    ObjectMapper objectMapper, LlmProperties llm, MetricsRecorder metrics) {
+    public AssistantRunStateService(AssistantRunRepository runs, AssistantConversationRepository conversations,
+            AssistantMessageRepository messages, AssistantToolTraceRepository traces, ObjectMapper objectMapper,
+            LlmProperties llm, MetricsRecorder metrics) {
         this.runs = runs;
         this.conversations = conversations;
         this.messages = messages;
@@ -49,11 +54,11 @@ public class AssistantRunStateService {
     public RunContext load(String runId) {
         AssistantRunEntity run = runs.findById(runId).orElseThrow(() -> new IllegalArgumentException("run 不存在"));
         AssistantConversationEntity conversation = conversations.findById(run.getConversationId())
-                .orElseThrow(ConversationNotFoundException::new);
+            .orElseThrow(ConversationNotFoundException::new);
         AssistantMessageEntity user = messages.findById(run.getUserMessageId())
-                .orElseThrow(() -> new IllegalStateException("用户消息不存在"));
+            .orElseThrow(() -> new IllegalStateException("用户消息不存在"));
         AssistantMessageEntity assistant = messages.findById(run.getAssistantMessageId())
-                .orElseThrow(() -> new IllegalStateException("AI 消息不存在"));
+            .orElseThrow(() -> new IllegalStateException("AI 消息不存在"));
         return new RunContext(run, conversation, user, assistant);
     }
 
@@ -66,7 +71,7 @@ public class AssistantRunStateService {
     }
 
     @Transactional
-    public void attachSnapshot(String runId, String snapshotId, String digest, java.time.LocalDateTime asOfTime) {
+    public void attachSnapshot(String runId, String snapshotId, String digest, LocalDateTime asOfTime) {
         AssistantRunEntity run = requireRun(runId);
         run.attachSnapshot(snapshotId, digest, asOfTime);
         runs.save(run);
@@ -98,7 +103,7 @@ public class AssistantRunStateService {
 
     @Transactional
     public void block(String runId, String content, String failureCode, long durationMs,
-                      List<AssistantToolTrace> toolTraces) {
+            List<AssistantToolTrace> toolTraces) {
         AssistantRunEntity run = requireRun(runId);
         AssistantMessageEntity answer = requireMessage(run.getAssistantMessageId());
         answer.block(content);
@@ -117,7 +122,7 @@ public class AssistantRunStateService {
 
     @Transactional
     public void fail(String runId, String publicMessage, String failureCode, long durationMs,
-                     List<AssistantToolTrace> toolTraces) {
+            List<AssistantToolTrace> toolTraces) {
         AssistantRunEntity run = requireRun(runId);
         AssistantMessageEntity answer = requireMessage(run.getAssistantMessageId());
         answer.fail(publicMessage, AssistantResultType.MODEL_UNAVAILABLE);
@@ -129,13 +134,15 @@ public class AssistantRunStateService {
     }
 
     private void saveTraces(String runId, List<AssistantToolTrace> toolTraces) {
-        if (toolTraces == null) return;
+        if (toolTraces == null)
+            return;
         for (AssistantToolTrace trace : toolTraces) {
             try {
-                traces.save(AssistantToolTraceEntity.create(runId, trace.sequenceNo(), trace.toolName(),
-                        trace.status(), trace.durationMs(), trace.resultDigest(),
-                        objectMapper.writeValueAsString(trace.evidenceIds()), trace.errorCode()));
-            } catch (JsonProcessingException e) {
+                traces.save(AssistantToolTraceEntity.create(runId, trace.sequenceNo(), trace.toolName(), trace.status(),
+                        trace.durationMs(), trace.resultDigest(), objectMapper.writeValueAsString(trace.evidenceIds()),
+                        trace.errorCode()));
+            }
+            catch (JsonProcessingException e) {
                 throw new IllegalStateException("工具证据轨迹序列化失败", e);
             }
         }
@@ -150,5 +157,7 @@ public class AssistantRunStateService {
     }
 
     public record RunContext(AssistantRunEntity run, AssistantConversationEntity conversation,
-                             AssistantMessageEntity userMessage, AssistantMessageEntity assistantMessage) {}
+            AssistantMessageEntity userMessage, AssistantMessageEntity assistantMessage) {
+    }
+
 }

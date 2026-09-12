@@ -1,6 +1,8 @@
 package com.bank.aml.security;
 
+import com.bank.aml.testinfra.IntegrationTestDatabase;
 import jakarta.servlet.http.Cookie;
+import java.util.UUID;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
@@ -21,21 +23,21 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 /**
  * Cookie 认证 + CSRF 完整链路安全测试（复用本机 Docker 的 MySQL/Redis/PGVector）。
- * <p>覆盖任务书 D10 的 MockMvc 安全矩阵：未认证 401、角色 403、Cookie 已认证但无 CSRF 403、
- * Cookie + 正确 CSRF 放行、login 豁免 CSRF、logout 需要 CSRF。
- * 运行：./mvnw -Pintegration-test test
+ * <p>
+ * 覆盖任务书 D10 的 MockMvc 安全矩阵：未认证 401、角色 403、Cookie 已认证但无 CSRF 403、 Cookie + 正确 CSRF
+ * 放行、login 豁免 CSRF、logout 需要 CSRF。 运行：./mvnw -Pintegration-test test
  */
 @SpringBootTest
 @AutoConfigureMockMvc
 @ActiveProfiles("test")
 @Tag("integration")
-@TestPropertySource(properties = {"aml.rag.rerank.enabled=false", "aml.assistant.enabled=true"})
+@TestPropertySource(properties = { "aml.rag.rerank.enabled=false", "aml.assistant.enabled=true" })
 class CsrfSecurityTest {
 
     @DynamicPropertySource
     static void isolatedInfrastructure(DynamicPropertyRegistry registry) {
-        com.bank.aml.testinfra.IntegrationTestDatabase.configure(registry, "aml_security_test");
-        String suffix = java.util.UUID.randomUUID().toString().substring(0, 8);
+        IntegrationTestDatabase.configure(registry, "aml_security_test");
+        String suffix = UUID.randomUUID().toString().substring(0, 8);
         registry.add("aml.queue.stream", () -> "aml:workflow:cases-security-" + suffix);
         registry.add("aml.queue.dead-stream", () -> "aml:workflow:dead-security-" + suffix);
         registry.add("aml.queue.group", () -> "aml-workers-security-" + suffix);
@@ -50,16 +52,14 @@ class CsrfSecurityTest {
     @Test
     @DisplayName("未认证访问业务接口返回 401")
     void unauthenticatedRequestReturns401() throws Exception {
-        mockMvc.perform(get("/api/cases"))
-                .andExpect(status().isUnauthorized());
+        mockMvc.perform(get("/api/cases")).andExpect(status().isUnauthorized());
     }
 
     @Test
     @DisplayName("query 参数 token 不被认证（JWT 仅从 Bearer/Cookie 读取）")
     void queryTokenIsNotAuthenticated() throws Exception {
         String token = tokenProvider.createToken("admin", "ADMIN", 0);
-        mockMvc.perform(get("/api/cases").queryParam("token", token))
-                .andExpect(status().isUnauthorized());
+        mockMvc.perform(get("/api/cases").queryParam("token", token)).andExpect(status().isUnauthorized());
     }
 
     @Test
@@ -67,8 +67,7 @@ class CsrfSecurityTest {
     void analystCannotAccessEvalStatus() throws Exception {
         Cookie token = login("analyst", "analyst123");
 
-        mockMvc.perform(get("/api/eval/agent/status").cookie(token))
-                .andExpect(status().isForbidden());
+        mockMvc.perform(get("/api/eval/agent/status").cookie(token)).andExpect(status().isForbidden());
     }
 
     @Test
@@ -76,8 +75,7 @@ class CsrfSecurityTest {
     void analystCannotAccessRagAdministration() throws Exception {
         Cookie token = login("analyst", "analyst123");
 
-        mockMvc.perform(get("/api/admin/rag/indexes").cookie(token))
-                .andExpect(status().isForbidden());
+        mockMvc.perform(get("/api/admin/rag/indexes").cookie(token)).andExpect(status().isForbidden());
     }
 
     @Test
@@ -95,7 +93,7 @@ class CsrfSecurityTest {
     void assistantConversationCreationRequiresCsrf() throws Exception {
         Cookie admin = login("admin", "admin123");
         mockMvc.perform(post("/api/admin/customers/1/assistant/conversations").cookie(admin))
-                .andExpect(status().isForbidden());
+            .andExpect(status().isForbidden());
     }
 
     @Test
@@ -103,11 +101,11 @@ class CsrfSecurityTest {
     void reviewerCannotReplayDeadLetter() throws Exception {
         Auth auth = loginWithCsrf("reviewer", "reviewer123");
 
-        mockMvc.perform(post("/api/queues/dead/999999/replay")
-                        .cookie(auth.token())
-                        .cookie(auth.xsrf())
-                        .header("X-XSRF-TOKEN", auth.csrfValue()))
-                .andExpect(status().isForbidden());
+        mockMvc
+            .perform(post("/api/queues/dead/999999/replay").cookie(auth.token())
+                .cookie(auth.xsrf())
+                .header("X-XSRF-TOKEN", auth.csrfValue()))
+            .andExpect(status().isForbidden());
     }
 
     @Test
@@ -115,16 +113,16 @@ class CsrfSecurityTest {
     void analystCannotReviewSanctionCandidate() throws Exception {
         Auth auth = loginWithCsrf("analyst", "analyst123");
 
-        mockMvc.perform(post("/api/sanctions/screen/C001/review")
-                        .cookie(auth.token())
-                        .cookie(auth.xsrf())
-                        .header("X-XSRF-TOKEN", auth.csrfValue())
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("""
-                                {"candidateFingerprint":"%s","decision":"DISMISS",
-                                 "comment":"权限边界测试","expectedRevision":0}
-                                """.formatted("a".repeat(64))))
-                .andExpect(status().isForbidden());
+        mockMvc
+            .perform(post("/api/sanctions/screen/C001/review").cookie(auth.token())
+                .cookie(auth.xsrf())
+                .header("X-XSRF-TOKEN", auth.csrfValue())
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""
+                        {"candidateFingerprint":"%s","decision":"DISMISS",
+                         "comment":"权限边界测试","expectedRevision":0}
+                        """.formatted("a".repeat(64))))
+            .andExpect(status().isForbidden());
     }
 
     @Test
@@ -132,11 +130,11 @@ class CsrfSecurityTest {
     void authenticatedPostWithoutCsrfReturns403() throws Exception {
         Cookie token = login("admin", "admin123");
 
-        mockMvc.perform(post("/api/cases")
-                        .cookie(token)
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"customerId\":\"C001\",\"alertRule\":\"测试\",\"autoProcess\":false}"))
-                .andExpect(status().isForbidden());
+        mockMvc
+            .perform(post("/api/cases").cookie(token)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"customerId\":\"C001\",\"alertRule\":\"测试\",\"autoProcess\":false}"))
+            .andExpect(status().isForbidden());
     }
 
     @Test
@@ -144,29 +142,28 @@ class CsrfSecurityTest {
     void authenticatedPostWithCsrfSucceeds() throws Exception {
         Auth auth = loginWithCsrf("admin", "admin123");
 
-        mockMvc.perform(post("/api/cases")
-                        .cookie(auth.token())
-                        .cookie(auth.xsrf())
-                        .header("X-XSRF-TOKEN", auth.csrfValue())
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"customerId\":\"C001\",\"alertRule\":\"CSRF 链路测试\",\"autoProcess\":false}"))
-                .andExpect(status().isOk());
+        mockMvc
+            .perform(post("/api/cases").cookie(auth.token())
+                .cookie(auth.xsrf())
+                .header("X-XSRF-TOKEN", auth.csrfValue())
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"customerId\":\"C001\",\"alertRule\":\"CSRF 链路测试\",\"autoProcess\":false}"))
+            .andExpect(status().isOk());
     }
 
     @Test
     @DisplayName("登录接口豁免 CSRF")
     void loginWithoutCsrfAllowed() throws Exception {
-        mockMvc.perform(post("/api/auth/login")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"username\":\"admin\",\"password\":\"admin123\"}"))
-                .andExpect(status().isOk());
+        mockMvc
+            .perform(post("/api/auth/login").contentType(MediaType.APPLICATION_JSON)
+                .content("{\"username\":\"admin\",\"password\":\"admin123\"}"))
+            .andExpect(status().isOk());
     }
 
     @Test
     @DisplayName("登出接口需要 CSRF（无 CSRF 返回 403）")
     void logoutWithoutCsrfReturns403() throws Exception {
-        mockMvc.perform(post("/api/auth/logout"))
-                .andExpect(status().isForbidden());
+        mockMvc.perform(post("/api/auth/logout")).andExpect(status().isForbidden());
     }
 
     private Cookie login(String username, String password) throws Exception {
@@ -175,16 +172,14 @@ class CsrfSecurityTest {
 
     /** 登录签发 HttpOnly Cookie，再调用 /auth/csrf 强制生成可读的 XSRF-TOKEN Cookie */
     private Auth loginWithCsrf(String username, String password) throws Exception {
-        MvcResult login = mockMvc.perform(post("/api/auth/login")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"username\":\"" + username + "\",\"password\":\"" + password + "\"}"))
-                .andExpect(status().isOk())
-                .andReturn();
+        MvcResult login = mockMvc
+            .perform(post("/api/auth/login").contentType(MediaType.APPLICATION_JSON)
+                .content("{\"username\":\"" + username + "\",\"password\":\"" + password + "\"}"))
+            .andExpect(status().isOk())
+            .andReturn();
         Cookie token = login.getResponse().getCookie("aml_token");
 
-        MvcResult csrf = mockMvc.perform(get("/api/auth/csrf").cookie(token))
-                .andExpect(status().isOk())
-                .andReturn();
+        MvcResult csrf = mockMvc.perform(get("/api/auth/csrf").cookie(token)).andExpect(status().isOk()).andReturn();
         Cookie xsrf = csrf.getResponse().getCookie("XSRF-TOKEN");
         return new Auth(token, xsrf);
     }
@@ -195,4 +190,5 @@ class CsrfSecurityTest {
             return xsrf == null ? null : xsrf.getValue();
         }
     }
+
 }

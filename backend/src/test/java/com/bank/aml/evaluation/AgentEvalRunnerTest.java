@@ -1,15 +1,15 @@
 package com.bank.aml.evaluation;
 
+import com.bank.aml.TestClocks;
 import com.bank.aml.agent.guardrail.GuardrailEngine;
 import com.bank.aml.config.LlmProperties;
 import com.bank.aml.config.LlmProviderProperties;
 import com.bank.aml.config.MockChatModel;
 import com.bank.aml.service.FinalDecisionAssembler;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import org.junit.jupiter.api.Test;
-
-import java.util.Map;
 import java.lang.reflect.Method;
+import java.util.Map;
+import org.junit.jupiter.api.Test;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -26,24 +26,25 @@ class AgentEvalRunnerTest {
         properties.setActiveProvider("mock");
         properties.setProviders(Map.of("mock", provider));
         AgentEvalDatasetLoader loader = new AgentEvalDatasetLoader(new ObjectMapper());
-        AgentEvalRunner runner = new AgentEvalRunner(
-                new MockChatModel("mock-test"), properties, loader, new AgentEvalSchemaValidator(),
-                new AgentEvalScorer(), mock(GuardrailEngine.class), new FinalDecisionAssembler(),
-                new ForbiddenClaimDetectorRegistry());
-        AgentEvalDataset.AgentEvalCase evalCase = loader.load().cases().stream()
-                .filter(candidate -> "AML-AE-001".equals(candidate.id()))
-                .findFirst().orElseThrow();
-        Method buildInput = AgentEvalRunner.class.getDeclaredMethod(
-                "buildInput", AgentEvalDataset.AgentEvalCase.class);
+        AgentEvalRunner runner = new AgentEvalRunner(new MockChatModel("mock-test"), properties, loader,
+                new AgentEvalSchemaValidator(), new AgentEvalScorer(), mock(GuardrailEngine.class),
+                new FinalDecisionAssembler(), new ForbiddenClaimDetectorRegistry(), TestClocks.FIXED,
+                com.bank.aml.TestProperties.aml());
+        AgentEvalDataset.AgentEvalCase evalCase = loader.load()
+            .cases()
+            .stream()
+            .filter(candidate -> "AML-AE-001".equals(candidate.id()))
+            .findFirst()
+            .orElseThrow();
+        Method buildInput = AgentEvalRunner.class.getDeclaredMethod("buildInput", AgentEvalDataset.AgentEvalCase.class);
         buildInput.setAccessible(true);
 
         String input = (String) buildInput.invoke(runner, evalCase);
 
-        assertThat(input).contains("法规检索关键词（searchLegal 的 query 至少逐字包含一项）："
-                + String.join("、", evalCase.toolFixture().legalQueryTerms()));
-        assertThat(input).doesNotContain(evalCase.toolFixture().legalQuery(),
-                "requiredFindingCodes", "allowedFindingCodes", "requiredActions",
-                "allowedActions", "mustEscalate", "forbiddenClaimCodes");
+        assertThat(input).contains(
+                "法规检索关键词（searchLegal 的 query 至少逐字包含一项）：" + String.join("、", evalCase.toolFixture().legalQueryTerms()));
+        assertThat(input).doesNotContain(evalCase.toolFixture().legalQuery(), "requiredFindingCodes",
+                "allowedFindingCodes", "requiredActions", "allowedActions", "mustEscalate", "forbiddenClaimCodes");
     }
 
     @Test
@@ -55,12 +56,10 @@ class AgentEvalRunnerTest {
         properties.setActiveProvider("mock");
         properties.setProviders(Map.of("mock", provider));
 
-        AgentEvalRunner runner = new AgentEvalRunner(
-                new MockChatModel("mock-test"), properties,
-                new AgentEvalDatasetLoader(new ObjectMapper()), new AgentEvalSchemaValidator(),
-                new AgentEvalScorer(), mock(GuardrailEngine.class), new FinalDecisionAssembler(),
-                new ForbiddenClaimDetectorRegistry()
-        );
+        AgentEvalRunner runner = new AgentEvalRunner(new MockChatModel("mock-test"), properties,
+                new AgentEvalDatasetLoader(new ObjectMapper()), new AgentEvalSchemaValidator(), new AgentEvalScorer(),
+                mock(GuardrailEngine.class), new FinalDecisionAssembler(), new ForbiddenClaimDetectorRegistry(),
+                TestClocks.FIXED, com.bank.aml.TestProperties.aml());
 
         var status = runner.readiness();
         var report = runner.runDev();
@@ -74,10 +73,9 @@ class AgentEvalRunnerTest {
         assertThat(report.scored()).isZero();
         assertThat(report.rawRisk().exactAccuracy().value()).isNull();
         assertThat(report.cases()).isEmpty();
-        assertThatThrownBy(runner::runTest)
-                .isInstanceOf(IllegalStateException.class)
-                .hasMessageContaining("领域专家审批")
-                .hasMessageContaining("DEMO_TEST");
+        assertThatThrownBy(runner::runTest).isInstanceOf(IllegalStateException.class)
+            .hasMessageContaining("领域专家审批")
+            .hasMessageContaining("DEMO_TEST");
         assertThat(report.efficiency().latencyPass()).isNull();
         assertThat(report.efficiency().tokenPass()).isNull();
     }
@@ -90,29 +88,31 @@ class AgentEvalRunnerTest {
         LlmProperties properties = new LlmProperties();
         properties.setActiveProvider("mock");
         properties.setProviders(Map.of("mock", provider));
-        AgentEvalRunner runner = new AgentEvalRunner(
-                new MockChatModel("mock-test"), properties,
-                new AgentEvalDatasetLoader(new ObjectMapper()), new AgentEvalSchemaValidator(),
-                new AgentEvalScorer(), mock(GuardrailEngine.class), new FinalDecisionAssembler(),
-                new ForbiddenClaimDetectorRegistry());
+        AgentEvalRunner runner = new AgentEvalRunner(new MockChatModel("mock-test"), properties,
+                new AgentEvalDatasetLoader(new ObjectMapper()), new AgentEvalSchemaValidator(), new AgentEvalScorer(),
+                mock(GuardrailEngine.class), new FinalDecisionAssembler(), new ForbiddenClaimDetectorRegistry(),
+                TestClocks.FIXED, com.bank.aml.TestProperties.aml());
 
         assertThatThrownBy(() -> runner.runDevCase("AML-AE-DOES-NOT-EXIST"))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("未知或非 DEV");
+            .isInstanceOf(IllegalArgumentException.class)
+            .hasMessageContaining("未知或非 DEV");
     }
 
     @Test
     void evaluationSnapshotPreservesLegalTextForHighImpactActionValidation() {
         AgentEvalDatasetLoader loader = new AgentEvalDatasetLoader(new ObjectMapper());
-        AgentEvalDataset.AgentEvalCase sanctionCase = loader.load().cases().stream()
-                .filter(candidate -> "AML-AE-006".equals(candidate.id()))
-                .findFirst().orElseThrow();
+        AgentEvalDataset.AgentEvalCase sanctionCase = loader.load()
+            .cases()
+            .stream()
+            .filter(candidate -> "AML-AE-006".equals(candidate.id()))
+            .findFirst()
+            .orElseThrow();
 
         var snapshot = new AgentEvalSchemaValidator().snapshot(sanctionCase);
 
         assertThat(snapshot.legalEvidence()).isNotEmpty();
-        assertThat(snapshot.legalEvidence().getFirst().content())
-                .contains("冻结", "停止相关金融服务", "主管机关报告")
-                .doesNotContain("fixture");
+        assertThat(snapshot.legalEvidence().getFirst().content()).contains("冻结", "停止相关金融服务", "主管机关报告")
+            .doesNotContain("fixture");
     }
+
 }

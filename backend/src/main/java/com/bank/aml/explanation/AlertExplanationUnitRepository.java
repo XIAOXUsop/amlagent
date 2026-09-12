@@ -1,9 +1,8 @@
 package com.bank.aml.explanation;
 
-import org.springframework.data.jpa.repository.JpaRepository;
-
 import java.util.List;
 import java.util.Optional;
+import org.springframework.data.jpa.repository.JpaRepository;
 
 public interface AlertExplanationUnitRepository extends JpaRepository<AlertExplanationUnit, Long> {
 
@@ -14,4 +13,5 @@ public interface AlertExplanationUnitRepository extends JpaRepository<AlertExpla
     List<AlertExplanationUnit> findByCaseIdOrderByIdAsc(Long caseId);
 
     List<AlertExplanationUnit> findByCaseIdAndHypothesisIdOrderByIdAsc(Long caseId, Long hypothesisId);
+
 }

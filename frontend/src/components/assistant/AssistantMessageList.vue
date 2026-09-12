@@ -11,26 +11,23 @@ function roleLabel(role: AssistantMessage['role']) {
 }
 
 function statusLabel(status: AssistantMessage['status']) {
-  return ({
-    ACCEPTED: '已接收',
-    PROCESSING: '分析中',
-    COMPLETED: '已完成',
-    REFUSED: '已拒绝',
-    FAILED: '失败',
-    BLOCKED: '已拦截',
-  } as const)[status]
+  return (
+    {
+      ACCEPTED: '已接收',
+      PROCESSING: '分析中',
+      COMPLETED: '已完成',
+      REFUSED: '已拒绝',
+      FAILED: '失败',
+      BLOCKED: '已拦截',
+    } as const
+  )[status]
 }
 </script>
 
 <template>
   <div class="message-list" aria-live="polite">
     <el-empty v-if="messages.length === 0" description="还没有对话，选择一个建议问题开始分析" />
-    <article
-      v-for="message in messages"
-      :key="message.id"
-      class="message"
-      :class="message.role.toLowerCase()"
-    >
+    <article v-for="message in messages" :key="message.id" class="message" :class="message.role.toLowerCase()">
       <header>
         <strong>{{ roleLabel(message.role) }}</strong>
         <el-tag
@@ -48,10 +45,40 @@ function statusLabel(status: AssistantMessage['status']) {
 </template>
 
 <style scoped>
-.message-list { display: flex; flex-direction: column; gap: 14px; min-height: 220px; }
-.message { max-width: 88%; padding: 12px 14px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); }
-.message.user { align-self: flex-end; background: #eff6ff; border-color: #bfdbfe; }
-.message.assistant { align-self: flex-start; }
-.message header { display: flex; align-items: center; gap: 8px; margin-bottom: 7px; color: var(--text-faint); font-size: 12px; }
-.content { margin: 0; color: var(--text); line-height: 1.7; overflow-wrap: anywhere; white-space: pre-wrap; }
+.message-list {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-height: 220px;
+}
+.message {
+  max-width: 88%;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+}
+.message.user {
+  align-self: flex-end;
+  background: #eff6ff;
+  border-color: #bfdbfe;
+}
+.message.assistant {
+  align-self: flex-start;
+}
+.message header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 7px;
+  color: var(--text-faint);
+  font-size: 12px;
+}
+.content {
+  margin: 0;
+  color: var(--text);
+  line-height: 1.7;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
 </style>

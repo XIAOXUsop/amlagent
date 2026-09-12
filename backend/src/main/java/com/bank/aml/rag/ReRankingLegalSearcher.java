@@ -1,44 +1,58 @@
 package com.bank.aml.rag;
 
-import com.bank.aml.rag.rerank.BgeRerankerScoringModel;
+import com.bank.aml.config.RagProperties;
+import com.bank.aml.evidence.LegalDoc;
 import com.bank.aml.observability.MetricsRecorder;
+import com.bank.aml.rag.rerank.BgeRerankerScoringModel;
 import dev.langchain4j.data.segment.TextSegment;
-import org.springframework.beans.factory.annotation.Value;
-import org.springframework.stereotype.Component;
-
+import java.time.Clock;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
 import java.util.stream.IntStream;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Component;
 
 /**
- * 召回 + 精排两步走：
- * 1. 混合检索召回 recallSize 条候选（SearchHit 保留 dense/lexical/fusion 分数）；
- * 2. bge-reranker（Cross-Encoder）对 query-候选 精排，写入 rerankScore 后返回 topK。
- * <p>rerank 状态机判定不可用时（熔断/超时/队列拥塞）保持召回原序，不阻塞检索。</p>
+ * 召回 + 精排两步走： 1. 混合检索召回 recallSize 条候选（SearchHit 保留 dense/lexical/fusion 分数）； 2.
+ * bge-reranker（Cross-Encoder）对 query-候选 精排，写入 rerankScore 后返回 topK。
+ * <p>
+ * rerank 状态机判定不可用时（熔断/超时/队列拥塞）保持召回原序，不阻塞检索。
+ * </p>
  */
 @Component
 public class ReRankingLegalSearcher implements LegalDocumentSearcher {
 
     private final HybridLegalSearcher hybridSearcher;
+
     private final BgeRerankerScoringModel reranker;
+
     private final int recallSize;
+
     private final MetricsRecorder metrics;
 
-    public ReRankingLegalSearcher(HybridLegalSearcher hybridSearcher, BgeRerankerScoringModel reranker,
-                                  @Value("${aml.rag.rerank.recall-size:20}") int recallSize) {
-        this(hybridSearcher, reranker, recallSize, null);
+    private final Clock clock;
+
+    public ReRankingLegalSearcher(HybridLegalSearcher hybridSearcher, BgeRerankerScoringModel reranker, int recallSize,
+            Clock clock) {
+        this(hybridSearcher, reranker, recallSize, null, clock);
     }
 
-    @org.springframework.beans.factory.annotation.Autowired
+    @Autowired
     public ReRankingLegalSearcher(HybridLegalSearcher hybridSearcher, BgeRerankerScoringModel reranker,
-                                  @Value("${aml.rag.rerank.recall-size:20}") int recallSize,
-                                  MetricsRecorder metrics) {
+            MetricsRecorder metrics, RagProperties properties, Clock clock) {
+        this(hybridSearcher, reranker, properties.getRerank().getRecallSize(), metrics, clock);
+    }
+
+    private ReRankingLegalSearcher(HybridLegalSearcher hybridSearcher, BgeRerankerScoringModel reranker, int recallSize,
+            MetricsRecorder metrics, Clock clock) {
         this.hybridSearcher = hybridSearcher;
         this.reranker = reranker;
         this.recallSize = recallSize;
         this.metrics = metrics;
+        this.clock = clock;
     }
 
     @Override
@@ -53,7 +67,7 @@ public class ReRankingLegalSearcher implements LegalDocumentSearcher {
 
     @Override
     public List<LegalDoc> search(String query, int topK) {
-        var request = new RetrievalRequest(query, query, Instant.now(), "CN", Set.of("PUBLIC_LEGAL"),
+        var request = new RetrievalRequest(query, query, clock.instant(), "CN", Set.of("PUBLIC_LEGAL"),
                 Math.max(1, topK), 0.0);
         return searchScored(request, topK).stream().map(SearchHit::document).toList();
     }
@@ -67,28 +81,26 @@ public class ReRankingLegalSearcher implements LegalDocumentSearcher {
         if (recalled.isEmpty()) {
             return recalled;
         }
-        List<TextSegment> segments = recalled.stream()
-                .map(hit -> TextSegment.from(hit.document().content()))
-                .toList();
+        List<TextSegment> segments = recalled.stream().map(hit -> TextSegment.from(hit.document().content())).toList();
         long started = System.nanoTime();
         // 可空推理：状态机决定是否可用；不可用时保持召回原序，不预先 isAvailable() 分流。
         Optional<List<Double>> maybeScores = reranker.tryScoreAll(segments, query);
         RetrievalTimings.add("rerank", Math.max(0, (System.nanoTime() - started) / 1_000_000));
         if (maybeScores.isEmpty()) {
-            if (metrics != null) metrics.ragRerankerFallback();
+            if (metrics != null)
+                metrics.ragRerankerFallback();
             return recalled.subList(0, Math.min(topK, recalled.size()));
         }
 
         List<Double> scores = maybeScores.get();
         List<Integer> indices = IntStream.range(0, recalled.size()).boxed().toList();
-        List<Integer> ranked = indices.stream()
-                .sorted((a, b) -> Double.compare(scores.get(b), scores.get(a)))
-                .toList();
-        List<SearchHit> result = new java.util.ArrayList<>();
+        List<Integer> ranked = indices.stream().sorted((a, b) -> Double.compare(scores.get(b), scores.get(a))).toList();
+        List<SearchHit> result = new ArrayList<>();
         int order = 1;
         for (int index : ranked.subList(0, Math.min(topK, ranked.size()))) {
             result.add(recalled.get(index).reranked(order++, scores.get(index)));
         }
         return result;
     }
+
 }

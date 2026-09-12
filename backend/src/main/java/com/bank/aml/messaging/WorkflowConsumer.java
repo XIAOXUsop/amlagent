@@ -1,6 +1,9 @@
 package com.bank.aml.messaging;
 
 import com.bank.aml.observability.MetricsRecorder;
+import java.time.Duration;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.DisposableBean;
@@ -10,24 +13,21 @@ import org.springframework.data.redis.connection.RedisConnectionFactory;
 import org.springframework.data.redis.connection.stream.Consumer;
 import org.springframework.data.redis.connection.stream.MapRecord;
 import org.springframework.data.redis.connection.stream.ReadOffset;
+import org.springframework.data.redis.connection.stream.StreamInfo.XInfoGroup;
 import org.springframework.data.redis.connection.stream.StreamOffset;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.serializer.RedisSerializer;
 import org.springframework.data.redis.stream.StreamMessageListenerContainer;
 import org.springframework.stereotype.Component;
 
-import java.time.Duration;
-import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicLong;
-
 /**
  * Redis Streams 消费者容器：消费尽调任务，应用重启后 Pending 消息可被重新投递接管。
- * <p>连接加固：消费者容器在 Redis 短暂中断（如 Docker 重启）后可能停摆不再消费，
- * 本实现配合 {@link StreamHealthMonitor} 实现自愈：
+ * <p>
+ * 连接加固：消费者容器在 Redis 短暂中断（如 Docker 重启）后可能停摆不再消费， 本实现配合 {@link StreamHealthMonitor} 实现自愈：
  * <ul>
- *   <li>暴露 {@link #probeLag()} 供健康监控读取消费 lag 与容器状态；</li>
- *   <li>暴露 {@link #restartIfNeeded(boolean)} 供监控在检测到停滞/连接异常时重建容器；</li>
- *   <li>容器内部错误回调 {@link #onContainerError()} 记录告警指标与日志。</li>
+ * <li>暴露 {@link #probeLag()} 供健康监控读取消费 lag 与容器状态；</li>
+ * <li>暴露 {@link #restartIfNeeded(boolean)} 供监控在检测到停滞/连接异常时重建容器；</li>
+ * <li>容器内部错误回调 {@link #onContainerError()} 记录告警指标与日志。</li>
  * </ul>
  */
 @Component
@@ -36,25 +36,35 @@ public class WorkflowConsumer implements ApplicationRunner, DisposableBean {
     private static final Logger log = LoggerFactory.getLogger(WorkflowConsumer.class);
 
     private final RedisConnectionFactory connectionFactory;
+
     private final StringRedisTemplate redisTemplate;
+
     private final QueueProperties props;
+
     private final WorkflowMessageHandler handler;
+
     private final WorkerIdentity workerIdentity;
+
     private final MetricsRecorder metrics;
+
     private final StreamConsumptionTracker consumptionTracker;
 
     private StreamMessageListenerContainer<String, MapRecord<String, String, String>> container;
+
     private final AtomicBoolean running = new AtomicBoolean(false);
+
     /** 最近一次探测到消费滞后的实际消息数 */
     private final AtomicLong lastLag = new AtomicLong(0);
+
     /** 最近一次探测是否因连接失败而未成功 */
     private final AtomicBoolean lastProbeFailed = new AtomicBoolean(false);
+
     /** 上次探测时的已 ACK 计数，用于判断消费者是否在推进 */
     private long lastAckTotal = 0;
 
     public WorkflowConsumer(RedisConnectionFactory connectionFactory, StringRedisTemplate redisTemplate,
-                            QueueProperties props, WorkflowMessageHandler handler, WorkerIdentity workerIdentity,
-                            MetricsRecorder metrics, StreamConsumptionTracker consumptionTracker) {
+            QueueProperties props, WorkflowMessageHandler handler, WorkerIdentity workerIdentity,
+            MetricsRecorder metrics, StreamConsumptionTracker consumptionTracker) {
         this.connectionFactory = connectionFactory;
         this.redisTemplate = redisTemplate;
         this.props = props;
@@ -76,35 +86,53 @@ public class WorkflowConsumer implements ApplicationRunner, DisposableBean {
         }
         try {
             if (firstStart) {
-                try {
-                    redisTemplate.opsForStream().createGroup(props.getStream(), ReadOffset.latest(), props.getGroup());
-                } catch (Exception e) {
-                    log.info("消费者组已存在或创建失败（忽略）：{}", e.getMessage());
-                }
+                createConsumerGroup();
             }
-            StreamMessageListenerContainer.StreamMessageListenerContainerOptions<String, MapRecord<String, String, String>> options =
-                    StreamMessageListenerContainer.StreamMessageListenerContainerOptions
-                            .<String, MapRecord<String, String, String>>builder()
-                            .pollTimeout(Duration.ofMillis(300))
-                            .serializer(RedisSerializer.string())
-                            .errorHandler(t -> onContainerError())
-                            .build();
+            var options = StreamMessageListenerContainer.StreamMessageListenerContainerOptions
+                .<String, MapRecord<String, String, String>>builder()
+                .pollTimeout(Duration.ofMillis(props.getConsumerPollTimeoutMs()))
+                .serializer(RedisSerializer.string())
+                .errorHandler(t -> onContainerError())
+                .build();
 
             container = StreamMessageListenerContainer.create(connectionFactory, options);
-            container.receive(
-                    Consumer.from(props.getGroup(), workerIdentity.consumerName()),
-                    StreamOffset.create(props.getStream(), ReadOffset.lastConsumed()),
-                    handler::onMessage);
+            container.receive(Consumer.from(props.getGroup(), workerIdentity.consumerName()),
+                    StreamOffset.create(props.getStream(), ReadOffset.lastConsumed()), handler::onMessage);
             container.start();
             running.set(true);
             lastProbeFailed.set(false);
-            log.info("Redis Streams 消费者已启动 stream={} group={} consumer={}",
-                    props.getStream(), props.getGroup(), workerIdentity.consumerName());
-        } catch (Exception e) {
+            log.info("Redis Streams 消费者已启动 stream={} group={} consumer={}", props.getStream(), props.getGroup(),
+                    workerIdentity.consumerName());
+        }
+        catch (Exception e) {
             running.set(false);
             log.error("Redis Streams 消费者启动失败，将在健康探测中重试：{}", e.toString());
             onContainerError();
         }
+    }
+
+    private void createConsumerGroup() {
+        try {
+            redisTemplate.opsForStream().createGroup(props.getStream(), ReadOffset.latest(), props.getGroup());
+        }
+        catch (RuntimeException creationFailure) {
+            if (!isConsumerGroupAlreadyExists(creationFailure)) {
+                throw creationFailure;
+            }
+            log.debug("Redis Streams 消费者组已存在 stream={} group={}", props.getStream(), props.getGroup());
+        }
+    }
+
+    static boolean isConsumerGroupAlreadyExists(Throwable failure) {
+        Throwable current = failure;
+        while (current != null) {
+            String message = current.getMessage();
+            if (message != null && message.contains("BUSYGROUP")) {
+                return true;
+            }
+            current = current.getCause();
+        }
+        return false;
     }
 
     /** 停止消费者容器（幂等）。 */
@@ -112,7 +140,8 @@ public class WorkflowConsumer implements ApplicationRunner, DisposableBean {
         if (container != null) {
             try {
                 container.stop();
-            } catch (Exception e) {
+            }
+            catch (Exception e) {
                 log.debug("停止消费者容器忽略异常：{}", e.toString());
             }
             container = null;
@@ -123,16 +152,14 @@ public class WorkflowConsumer implements ApplicationRunner, DisposableBean {
     /** 容器内部错误回调：记录告警指标与日志。 */
     private void onContainerError() {
         metrics.queueConsumerError();
-        log.error("Redis Streams 监听异常：消费者容器可能停摆（stream={}），将由健康监控检查并尝试恢复",
-                props.getStream());
+        log.error("Redis Streams 监听异常：消费者容器可能停摆（stream={}），将由健康监控检查并尝试恢复", props.getStream());
     }
 
     /**
      * 健康探测：评估消费者是否在正常推进。供 {@link StreamHealthMonitor} 周期调度调用。
-     * <p>判据：正常消费时，消费者持续读取并 ACK 消息。若 stream 中仍有未消费消息，
-     * 但已 ACK 计数不增长，说明消费者停摆（连接中断或 handler 卡死）。
-     * lag 估算为仍未 ACK 的 pending 数；pending 无法反映"完全未读取"部分时，
-     * 用"stream 非空且 ACK 不推进"作为停滞判据。
+     * <p>
+     * 判据：正常消费时，消费者持续读取并 ACK 消息。若 stream 中仍有未消费消息， 但已 ACK 计数不增长，说明消费者停摆（连接中断或 handler 卡死）。
+     * lag 估算为仍未 ACK 的 pending 数；pending 无法反映"完全未读取"部分时， 用"stream 非空且 ACK 不推进"作为停滞判据。
      * @return true 表示健康；false 表示停滞（有积压且消费者未推进）或连接异常。
      */
     public boolean probeLag() {
@@ -163,7 +190,8 @@ public class WorkflowConsumer implements ApplicationRunner, DisposableBean {
                 log.debug("Redis Stream 消费追赶中，剩余 pending={}", lag);
             }
             return !stalled;
-        } catch (Exception e) {
+        }
+        catch (Exception e) {
             lastProbeFailed.set(true);
             metrics.queueConsumerError();
             log.warn("Redis 健康探测失败（可能是连接中断）：{}", e.toString());
@@ -173,14 +201,16 @@ public class WorkflowConsumer implements ApplicationRunner, DisposableBean {
 
     /** 读取 Redis XINFO GROUPS 的 lag + pending；取不到返回 -1。 */
     private long groupLagCount() {
-        return redisTemplate.opsForStream().groups(props.getStream()).stream()
-                .filter(g -> props.getGroup().equals(g.groupName()))
-                .mapToLong(WorkflowConsumer::totalGroupLag)
-                .findFirst()
-                .orElse(-1L);
+        return redisTemplate.opsForStream()
+            .groups(props.getStream())
+            .stream()
+            .filter(g -> props.getGroup().equals(g.groupName()))
+            .mapToLong(WorkflowConsumer::totalGroupLag)
+            .findFirst()
+            .orElse(-1L);
     }
 
-    static long totalGroupLag(org.springframework.data.redis.connection.stream.StreamInfo.XInfoGroup group) {
+    static long totalGroupLag(XInfoGroup group) {
         long pending = group.pendingCount() == null ? 0L : group.pendingCount();
         Object rawLag = group.getRaw().get("lag");
         long undelivered = rawLag instanceof Number number ? number.longValue() : 0L;
@@ -195,8 +225,7 @@ public class WorkflowConsumer implements ApplicationRunner, DisposableBean {
     public synchronized boolean restartIfNeeded(boolean forced) {
         boolean broken = lastProbeFailed.get();
         if (forced || broken || !running.get()) {
-            log.info("重建 Redis Streams 消费者容器（forced={} probeFailed={} running={}）",
-                    forced, broken, running.get());
+            log.info("重建 Redis Streams 消费者容器（forced={} probeFailed={} running={}）", forced, broken, running.get());
             stopContainer();
             startContainer(false);
             return true;
@@ -218,4 +247,5 @@ public class WorkflowConsumer implements ApplicationRunner, DisposableBean {
     public void destroy() {
         stopContainer();
     }
+
 }

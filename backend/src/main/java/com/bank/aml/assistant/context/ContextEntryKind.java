@@ -1,8 +1,7 @@
 package com.bank.aml.assistant.context;
 
 /**
- * 上下文条目类型。**保留策略由类型决定，而不是由"有多旧"决定**——这是与本项目
- * 此前"最近 12 条窗口硬截断"的本质区别。
+ * 上下文条目类型。**保留策略由类型决定，而不是由"有多旧"决定**——这是与本项目 此前"最近 12 条窗口硬截断"的本质区别。
  */
 public enum ContextEntryKind {
 
@@ -19,6 +18,7 @@ public enum ContextEntryKind {
     FACT_REFERENCE(false, false);
 
     private final boolean pinned;
+
     private final boolean compressible;
 
     ContextEntryKind(boolean pinned, boolean compressible) {
@@ -40,4 +40,5 @@ public enum ContextEntryKind {
     public boolean zeroLoss() {
         return this == LEGAL_EVIDENCE || this == FACT_REFERENCE;
     }
+
 }

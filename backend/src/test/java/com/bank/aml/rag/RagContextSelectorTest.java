@@ -1,12 +1,15 @@
 package com.bank.aml.rag;
 
-import org.junit.jupiter.api.Test;
-
+import com.bank.aml.evidence.LegalDoc;
+import com.bank.aml.evidence.LegalEvidenceMetadata;
 import java.util.List;
+import java.util.Set;
+import org.junit.jupiter.api.Test;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
 class RagContextSelectorTest {
+
     @Test
     void limitsSingleDocumentAndRemovesNearDuplicates() {
         RagContextSelector selector = new RagContextSelector();
@@ -16,12 +19,13 @@ class RagContextSelectorTest {
         LegalDoc other = doc("D", "DOC-2", "命中恐怖活动名单后应当立即冻结资产。");
 
         assertThat(selector.select(List.of(a, duplicate, second, other), 1, 8000, 0.88))
-                .extracting(LegalDoc::evidenceId).containsExactly("A", "D");
+            .extracting(LegalDoc::evidenceId)
+            .containsExactly("A", "D");
     }
 
     private LegalDoc doc(String id, String documentId, String content) {
-        return new LegalDoc(id, documentId, "", "", content,
-                new LegalEvidenceMetadata(documentId, "", "CN", null, null,
-                        java.util.Set.of("PUBLIC_LEGAL"), "", "v1", "", "TRUSTED"));
+        return new LegalDoc(id, documentId, "", "", content, new LegalEvidenceMetadata(documentId, "", "CN", null, null,
+                Set.of("PUBLIC_LEGAL"), "", "v1", "", "TRUSTED"));
     }
+
 }

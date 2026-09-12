@@ -1,8 +1,8 @@
 # 下一阶段修复与迭代详细计划书 v2
 
-日期：2026-09-05  
-范围：`D:\JCode` 调查契约 v1 的剩余修复、发布验收与后续运营能力。  
-依据：[第二轮复审报告](../reviews/remediation-review-v2-2026-09-05.md)、[原修改计划](code-review-remediation-plan-2026-09-05.md)。  
+日期：2026-09-05
+范围：`D:\JCode` 调查契约 v1 的剩余修复、发布验收与后续运营能力。
+依据：[第二轮复审报告](../reviews/remediation-review-v2-2026-09-05.md)、[原修改计划](code-review-remediation-plan-2026-09-05.md)。
 状态：**实施计划，尚未执行其中的业务修改、数据库迁移及发布操作。**
 
 ## 1. 目标和当前基线

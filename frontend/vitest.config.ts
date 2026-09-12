@@ -10,6 +10,15 @@ export default defineConfig({
     environment: 'jsdom',
     globals: true,
     include: ['src/**/*.spec.ts'],
+    coverage: {
+      reporter: ['text', 'html', 'json-summary'],
+      thresholds: {
+        statements: 45,
+        branches: 35,
+        functions: 30,
+        lines: 45,
+      },
+    },
     onConsoleLog(log, type) {
       if (type === 'stderr' && log.includes('[Vue warn]: Failed to resolve component')) {
         return false

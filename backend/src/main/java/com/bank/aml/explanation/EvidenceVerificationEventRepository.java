@@ -1,8 +1,7 @@
 package com.bank.aml.explanation;
 
-import org.springframework.data.jpa.repository.JpaRepository;
-
 import java.util.List;
+import org.springframework.data.jpa.repository.JpaRepository;
 
 public interface EvidenceVerificationEventRepository extends JpaRepository<EvidenceVerificationEvent, Long> {
 
@@ -17,4 +16,5 @@ public interface EvidenceVerificationEventRepository extends JpaRepository<Evide
     /** 材料级通用核验（subjectFactKey 为 NULL，存量兼容）。 */
     List<EvidenceVerificationEvent> findByArtifactVersionIdAndSubjectFactKeyIsNullOrderByEventTimeAscIdAsc(
             Long artifactVersionId);
+
 }

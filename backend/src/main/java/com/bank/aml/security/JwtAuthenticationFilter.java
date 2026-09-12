@@ -6,6 +6,7 @@ import jakarta.servlet.ServletException;
 import jakarta.servlet.http.Cookie;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
+import java.io.IOException;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.core.userdetails.UserDetails;
@@ -15,19 +16,20 @@ import org.springframework.security.web.authentication.WebAuthenticationDetailsS
 import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
 
-import java.io.IOException;
 /**
- * JWT 认证过滤器：从 Authorization: Bearer 或 ?token=（SSE 场景）读取并校验。
+ * JWT 认证过滤器：从 Authorization: Bearer 或 HttpOnly Cookie 读取并校验。
  */
 @Component
 public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
     private final JwtTokenProvider tokenProvider;
+
     private final UserDetailsService userDetailsService;
+
     private final UserAccountRepository userAccounts;
 
     public JwtAuthenticationFilter(JwtTokenProvider tokenProvider, UserDetailsService userDetailsService,
-                                   UserAccountRepository userAccounts) {
+            UserAccountRepository userAccounts) {
         this.tokenProvider = tokenProvider;
         this.userDetailsService = userDetailsService;
         this.userAccounts = userAccounts;
@@ -52,25 +54,26 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
             UserDetails user;
             try {
                 user = userDetailsService.loadUserByUsername(username);
-            } catch (UsernameNotFoundException ignored) {
+            }
+            catch (UsernameNotFoundException accountMissing) {
                 chain.doFilter(request, response);
                 return;
             }
-            if (!user.isEnabled() || !user.isAccountNonLocked()
-                    || !user.isAccountNonExpired() || !user.isCredentialsNonExpired()) {
+            if (!user.isEnabled() || !user.isAccountNonLocked() || !user.isAccountNonExpired()
+                    || !user.isCredentialsNonExpired()) {
                 chain.doFilter(request, response);
                 return;
             }
             // 令牌版本吊销：登出/改密/禁用会递增数据库版本号，签发版本不一致的历史令牌一律失效
             Integer dbTokenVersion = userAccounts.findByUsername(username)
-                    .map(com.bank.aml.security.UserAccount::getTokenVersion)
-                    .orElse(null);
+                .map(UserAccount::getTokenVersion)
+                .orElse(null);
             if (dbTokenVersion == null || dbTokenVersion != tokenProvider.tokenVersion(claims)) {
                 chain.doFilter(request, response);
                 return;
             }
-            UsernamePasswordAuthenticationToken authentication = new UsernamePasswordAuthenticationToken(
-                    user, null, user.getAuthorities());
+            UsernamePasswordAuthenticationToken authentication = new UsernamePasswordAuthenticationToken(user, null,
+                    user.getAuthorities());
             authentication.setDetails(new WebAuthenticationDetailsSource().buildDetails(request));
             SecurityContextHolder.getContext().setAuthentication(authentication);
         }
@@ -93,4 +96,5 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
         }
         return null;
     }
+
 }

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { onMounted, onUnmounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import {
   createAdminCustomer,
@@ -12,6 +12,7 @@ import {
   type CustomerEditPayload,
 } from '../api/client'
 import { Plus, Search, Upload } from '@element-plus/icons-vue'
+import { apiErrorMessage } from '../utils/api-error'
 
 const list = ref<CustomerAdminItem[]>([])
 const router = useRouter()
@@ -33,39 +34,57 @@ const form = ref<CustomerEditPayload>({
   status: 'ENABLED',
 })
 const importing = ref(false)
+const mutatingCustomerIds = ref<Set<number>>(new Set())
+let listRequestSequence = 0
+let formVersion = 0
+let active = true
 
 onMounted(refresh)
 
 async function refresh() {
+  const requestSequence = ++listRequestSequence
+  const requestedPage = page.value
+  const requestedKeyword = keyword.value
   loading.value = true
   try {
-    const p = await listAdminCustomers(page.value, pageSize, keyword.value)
+    const p = await listAdminCustomers(requestedPage, pageSize, requestedKeyword)
+    if (requestSequence !== listRequestSequence || page.value !== requestedPage || keyword.value !== requestedKeyword)
+      return
     list.value = p.content
     total.value = p.totalElements
   } catch {
+    if (requestSequence !== listRequestSequence) return
     ElMessage.error('客户列表加载失败')
   } finally {
-    loading.value = false
+    if (requestSequence === listRequestSequence) loading.value = false
   }
 }
 
+onUnmounted(() => {
+  active = false
+  listRequestSequence += 1
+  formVersion += 1
+})
+
 function onSearch() {
   page.value = 0
-  refresh()
+  void refresh()
 }
 
 function onPageChange(p: number) {
   page.value = p - 1
-  refresh()
+  void refresh()
 }
 
 function openCreate() {
+  formVersion += 1
   editing.value = null
   form.value = { name: '', idCard: '', type: '个人', industry: '', region: '', regCapital: '', status: 'ENABLED' }
   dialogVisible.value = true
 }
 
 function openEdit(value: unknown) {
+  formVersion += 1
   const row = value as CustomerAdminItem
   editing.value = row
   form.value = {
@@ -82,7 +101,7 @@ function openEdit(value: unknown) {
 
 function openDetail(value: unknown) {
   const row = value as CustomerAdminItem
-  router.push(`/customers/${row.id}`)
+  void router.push(`/customers/${row.id}`)
 }
 
 async function save() {
@@ -94,80 +113,105 @@ async function save() {
     ElMessage.warning('请填写证件号')
     return
   }
+  const operationVersion = formVersion
+  const editingCustomer = editing.value
+  const submittedForm: CustomerEditPayload = { ...form.value }
   saving.value = true
   try {
-    if (editing.value) {
+    if (editingCustomer) {
       // 编辑时证件号非必填（留空表示不修改）
-      const payload: CustomerEditPayload = { ...form.value }
+      const payload: CustomerEditPayload = { ...submittedForm }
       if (!payload.idCard) delete payload.idCard
-      await updateAdminCustomer(editing.value.id, payload)
+      await updateAdminCustomer(editingCustomer.id, payload)
     } else {
-      await createAdminCustomer(form.value as CustomerEditPayload)
+      await createAdminCustomer(submittedForm)
     }
-    ElMessage.success(editing.value ? '客户已更新' : '客户已新增')
+    if (!active || operationVersion !== formVersion) {
+      if (active) void refresh()
+      return
+    }
+    ElMessage.success(editingCustomer ? '客户已更新' : '客户已新增')
     dialogVisible.value = false
     await refresh()
   } catch (error: unknown) {
+    if (!active || operationVersion !== formVersion) return
     ElMessage.error(apiErrorMessage(error, '保存失败'))
   } finally {
-    saving.value = false
+    if (active && operationVersion === formVersion) saving.value = false
   }
 }
 
 async function toggleStatus(value: unknown) {
   const row = value as CustomerAdminItem
+  if (mutatingCustomerIds.value.has(row.id)) return
+  mutatingCustomerIds.value = new Set(mutatingCustomerIds.value).add(row.id)
   const next = row.status === 'ENABLED' ? 'DISABLED' : 'ENABLED'
   try {
     await setCustomerStatus(row.id, next)
+    if (!active) return
     ElMessage.success(next === 'ENABLED' ? '已启用' : '已停用')
     await refresh()
   } catch (error: unknown) {
+    if (!active) return
     ElMessage.error(apiErrorMessage(error, '操作失败'))
+  } finally {
+    const remaining = new Set(mutatingCustomerIds.value)
+    remaining.delete(row.id)
+    mutatingCustomerIds.value = remaining
   }
 }
 
 async function remove(value: unknown) {
   const row = value as CustomerAdminItem
+  if (mutatingCustomerIds.value.has(row.id)) return
   try {
-    await ElMessageBox.confirm(`确认删除客户「${row.name}（${row.customerNo}）」？逻辑删除后不再出现在新建工单下拉中。`, '删除确认', { type: 'warning' })
+    await ElMessageBox.confirm(
+      `确认删除客户「${row.name}（${row.customerNo}）」？逻辑删除后不再出现在新建工单下拉中。`,
+      '删除确认',
+      { type: 'warning' },
+    )
   } catch {
     return
   }
+  if (!active || mutatingCustomerIds.value.has(row.id)) return
+  mutatingCustomerIds.value = new Set(mutatingCustomerIds.value).add(row.id)
   try {
     await deleteAdminCustomer(row.id)
+    if (!active) return
     ElMessage.success('已删除')
     await refresh()
   } catch (error: unknown) {
+    if (!active) return
     ElMessage.error(apiErrorMessage(error, '删除失败'))
+  } finally {
+    const remaining = new Set(mutatingCustomerIds.value)
+    remaining.delete(row.id)
+    mutatingCustomerIds.value = remaining
   }
 }
 
 async function onImport(file: { raw?: File }) {
   const raw = file?.raw
-  if (!raw) return
+  if (!raw || importing.value) return
   importing.value = true
   try {
     const r = await importCustomers(raw)
+    if (!active) return
     ElMessage.success(`导入完成：成功 ${r.success}，失败 ${r.failed}（共 ${r.total}）`)
     if (r.errors.length) {
       ElMessage.warning(r.errors.slice(0, 3).join('；'))
     }
     await refresh()
   } catch (error: unknown) {
+    if (!active) return
     ElMessage.error(apiErrorMessage(error, '导入失败，请使用 .xlsx 或 .xls 文件'))
   } finally {
-    importing.value = false
+    if (active) importing.value = false
   }
 }
 
 function fmtTime(s: string): string {
   return s?.replace('T', ' ').slice(0, 16) ?? '-'
-}
-
-function apiErrorMessage(error: unknown, fallback: string): string {
-  if (typeof error !== 'object' || error === null || !('response' in error)) return fallback
-  const response = (error as { response?: { data?: { message?: unknown } } }).response
-  return typeof response?.data?.message === 'string' ? response.data.message : fallback
 }
 </script>
 
@@ -178,18 +222,31 @@ function apiErrorMessage(error: unknown, fallback: string): string {
       <p>维护客户主数据，进入客户详情或发起 AI 辅助分析。</p>
     </header>
     <div class="toolbar card">
-      <el-input v-model="keyword" placeholder="搜索编号/姓名/证件号" clearable style="width: 260px" @keyup.enter="onSearch" />
+      <el-input
+        v-model="keyword"
+        aria-label="搜索客户"
+        placeholder="搜索编号/姓名/证件号"
+        clearable
+        style="width: 260px"
+        @keyup.enter="onSearch"
+      />
       <el-button type="primary" :icon="Search" @click="onSearch">搜索</el-button>
       <div class="spacer" />
       <el-button type="primary" plain :icon="Plus" @click="openCreate">新增人员</el-button>
-      <el-upload :show-file-list="false" :auto-upload="false" accept=".xlsx,.xls" :disabled="importing" @change="onImport">
+      <el-upload
+        :show-file-list="false"
+        :auto-upload="false"
+        accept=".xlsx,.xls"
+        :disabled="importing"
+        @change="onImport"
+      >
         <el-button plain :icon="Upload" :loading="importing">Excel 导入</el-button>
       </el-upload>
     </div>
 
     <div class="card">
       <h3 class="card-title">客户/人员列表</h3>
-      <el-table :data="list" v-loading="loading" stripe style="width: 100%">
+      <el-table v-loading="loading" :data="list" stripe style="width: 100%">
         <el-table-column prop="customerNo" label="编号" width="90" />
         <el-table-column prop="name" label="姓名" width="120" />
         <el-table-column prop="idCardMasked" label="证件号" min-width="170" />
@@ -213,15 +270,31 @@ function apiErrorMessage(error: unknown, fallback: string): string {
           <template #default="{ row }">
             <div class="row-actions">
               <el-button size="small" type="primary" link @click="openDetail(row)">查看</el-button>
-              <el-button size="small" @click="openEdit(row)">编辑</el-button>
-              <el-button size="small" @click="toggleStatus(row)">{{ row.status === 'ENABLED' ? '停用' : '启用' }}</el-button>
-              <el-button size="small" type="danger" link @click="remove(row)">删除</el-button>
+              <el-button size="small" :disabled="mutatingCustomerIds.has(row.id)" @click="openEdit(row)"
+                >编辑</el-button
+              >
+              <el-button size="small" :disabled="mutatingCustomerIds.has(row.id)" @click="toggleStatus(row)">{{
+                row.status === 'ENABLED' ? '停用' : '启用'
+              }}</el-button>
+              <el-button
+                size="small"
+                type="danger"
+                link
+                :disabled="mutatingCustomerIds.has(row.id)"
+                @click="remove(row)"
+                >删除</el-button
+              >
             </div>
           </template>
         </el-table-column>
       </el-table>
       <div class="pager">
-        <el-pagination layout="total, prev, pager, next" :total="total" :page-size="pageSize" @current-change="onPageChange" />
+        <el-pagination
+          layout="total, prev, pager, next"
+          :total="total"
+          :page-size="pageSize"
+          @current-change="onPageChange"
+        />
       </div>
     </div>
 
@@ -288,7 +361,11 @@ function apiErrorMessage(error: unknown, fallback: string): string {
 }
 
 @media (max-width: 720px) {
-  .toolbar :deep(.el-input) { width: 100% !important; }
-  .toolbar .spacer { display: none; }
+  .toolbar :deep(.el-input) {
+    width: 100% !important;
+  }
+  .toolbar .spacer {
+    display: none;
+  }
 }
 </style>

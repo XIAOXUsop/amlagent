@@ -1,21 +1,20 @@
 package com.bank.aml.security;
 
 import com.bank.aml.common.exception.TooManyRequestsException;
+import java.time.Duration;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Component;
 
-import java.time.Duration;
-
 /**
- * 通用端点限流（Redis 实现，多实例共享）：按维度 Key 做固定窗口计数。
- * 用于调试、评测等管理类昂贵端点；Redis 故障时 fail-open 并告警。
+ * 通用端点限流（Redis 实现，多实例共享）：按维度 Key 做固定窗口计数。 用于调试、评测等管理类昂贵端点；Redis 故障时 fail-open 并告警。
  */
 @Component
 public class RedisRateLimiter {
 
     private static final Logger log = LoggerFactory.getLogger(RedisRateLimiter.class);
+
     private static final String PREFIX = "aml:rate:";
 
     private final StringRedisTemplate redis;
@@ -26,9 +25,8 @@ public class RedisRateLimiter {
 
     /**
      * 超过窗口内上限时抛出 {@link TooManyRequestsException}。
-     *
-     * @param bucket        维度键（调用方负责拼接主体标识，如操作者用户名）
-     * @param limit         窗口内允许次数
+     * @param bucket 维度键（调用方负责拼接主体标识，如操作者用户名）
+     * @param limit 窗口内允许次数
      * @param windowSeconds 窗口秒数
      */
     public void checkLimit(String bucket, int limit, int windowSeconds) {
@@ -40,10 +38,13 @@ public class RedisRateLimiter {
             if (count != null && count > limit) {
                 throw new TooManyRequestsException("请求过于频繁，请稍后再试");
             }
-        } catch (TooManyRequestsException limited) {
+        }
+        catch (TooManyRequestsException limited) {
             throw limited;
-        } catch (RuntimeException e) {
+        }
+        catch (RuntimeException e) {
             log.warn("端点限流 Redis 不可用，降级放行: {}", e.getMessage());
         }
     }
+
 }

@@ -12,13 +12,14 @@ import jakarta.persistence.Enumerated;
 import jakarta.persistence.Id;
 import jakarta.persistence.PrePersist;
 import jakarta.persistence.Table;
-
+import java.time.Clock;
 import java.time.LocalDateTime;
 import java.util.UUID;
 
 @Entity
 @Table(name = "assistant_message")
 public class AssistantMessageEntity {
+
     @Id
     @Column(length = 36)
     private String id;
@@ -55,20 +56,19 @@ public class AssistantMessageEntity {
 
     private LocalDateTime completedAt;
 
-    public static AssistantMessageEntity user(String conversationId, long sequenceNo,
-                                              String clientMessageId, String content) {
-        return create(conversationId, sequenceNo, AssistantMessageRole.USER,
-                AssistantMessageStatus.ACCEPTED, clientMessageId, content);
+    public static AssistantMessageEntity user(String conversationId, long sequenceNo, String clientMessageId,
+            String content) {
+        return create(conversationId, sequenceNo, AssistantMessageRole.USER, AssistantMessageStatus.ACCEPTED,
+                clientMessageId, content);
     }
 
     public static AssistantMessageEntity assistantPlaceholder(String conversationId, long sequenceNo) {
-        return create(conversationId, sequenceNo, AssistantMessageRole.ASSISTANT,
-                AssistantMessageStatus.PROCESSING, null, "");
+        return create(conversationId, sequenceNo, AssistantMessageRole.ASSISTANT, AssistantMessageStatus.PROCESSING,
+                null, "");
     }
 
-    private static AssistantMessageEntity create(String conversationId, long sequenceNo,
-                                                 AssistantMessageRole role, AssistantMessageStatus status,
-                                                 String clientMessageId, String content) {
+    private static AssistantMessageEntity create(String conversationId, long sequenceNo, AssistantMessageRole role,
+            AssistantMessageStatus status, String clientMessageId, String content) {
         AssistantMessageEntity entity = new AssistantMessageEntity();
         entity.id = UUID.randomUUID().toString();
         entity.conversationId = conversationId;
@@ -77,12 +77,15 @@ public class AssistantMessageEntity {
         entity.status = status;
         entity.clientMessageId = clientMessageId;
         entity.setContent(content);
-        entity.createdAt = LocalDateTime.now();
+        entity.createdAt = LocalDateTime.now(Clock.systemUTC());
         return entity;
     }
 
     @PrePersist
-    void onCreate() { if (createdAt == null) createdAt = LocalDateTime.now(); }
+    void onCreate() {
+        if (createdAt == null)
+            createdAt = LocalDateTime.now(Clock.systemUTC());
+    }
 
     public void setContent(String content) {
         String safe = content == null ? "" : content;
@@ -90,14 +93,16 @@ public class AssistantMessageEntity {
         this.contentDigest = AssistantDigests.sha256(safe);
     }
 
-    public String content() { return SensitivePayloadCipher.decrypt(contentCiphertext); }
+    public String content() {
+        return SensitivePayloadCipher.decrypt(contentCiphertext);
+    }
 
     public void complete(String content, AssistantResultType resultType) {
         requirePendingAssistant();
         setContent(content);
         this.resultType = resultType;
         this.status = AssistantMessageStatus.COMPLETED;
-        this.completedAt = LocalDateTime.now();
+        this.completedAt = LocalDateTime.now(Clock.systemUTC());
     }
 
     public void refuse(String content, AssistantResultType resultType) {
@@ -105,7 +110,7 @@ public class AssistantMessageEntity {
         setContent(content);
         this.resultType = resultType;
         this.status = AssistantMessageStatus.REFUSED;
-        this.completedAt = LocalDateTime.now();
+        this.completedAt = LocalDateTime.now(Clock.systemUTC());
     }
 
     public void fail(String content, AssistantResultType resultType) {
@@ -113,7 +118,7 @@ public class AssistantMessageEntity {
         setContent(content);
         this.resultType = resultType;
         this.status = AssistantMessageStatus.FAILED;
-        this.completedAt = LocalDateTime.now();
+        this.completedAt = LocalDateTime.now(Clock.systemUTC());
     }
 
     public void block(String content) {
@@ -121,7 +126,7 @@ public class AssistantMessageEntity {
         setContent(content);
         this.resultType = AssistantResultType.OUTPUT_BLOCKED;
         this.status = AssistantMessageStatus.BLOCKED;
-        this.completedAt = LocalDateTime.now();
+        this.completedAt = LocalDateTime.now(Clock.systemUTC());
     }
 
     private void requirePendingAssistant() {
@@ -130,15 +135,48 @@ public class AssistantMessageEntity {
         }
     }
 
-    public String getId() { return id; }
-    public String getConversationId() { return conversationId; }
-    public long getSequenceNo() { return sequenceNo; }
-    public AssistantMessageRole getRole() { return role; }
-    public AssistantMessageStatus getStatus() { return status; }
-    public AssistantResultType getResultType() { return resultType; }
-    public String getContentCiphertext() { return contentCiphertext; }
-    public String getContentDigest() { return contentDigest; }
-    public String getClientMessageId() { return clientMessageId; }
-    public LocalDateTime getCreatedAt() { return createdAt; }
-    public LocalDateTime getCompletedAt() { return completedAt; }
+    public String getId() {
+        return id;
+    }
+
+    public String getConversationId() {
+        return conversationId;
+    }
+
+    public long getSequenceNo() {
+        return sequenceNo;
+    }
+
+    public AssistantMessageRole getRole() {
+        return role;
+    }
+
+    public AssistantMessageStatus getStatus() {
+        return status;
+    }
+
+    public AssistantResultType getResultType() {
+        return resultType;
+    }
+
+    public String getContentCiphertext() {
+        return contentCiphertext;
+    }
+
+    public String getContentDigest() {
+        return contentDigest;
+    }
+
+    public String getClientMessageId() {
+        return clientMessageId;
+    }
+
+    public LocalDateTime getCreatedAt() {
+        return createdAt;
+    }
+
+    public LocalDateTime getCompletedAt() {
+        return completedAt;
+    }
+
 }

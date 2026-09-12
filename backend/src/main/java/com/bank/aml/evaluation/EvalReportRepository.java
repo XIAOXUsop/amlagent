@@ -1,10 +1,10 @@
 package com.bank.aml.evaluation;
 
-import org.springframework.data.jpa.repository.JpaRepository;
-
 import java.util.List;
+import org.springframework.data.jpa.repository.JpaRepository;
 
 public interface EvalReportRepository extends JpaRepository<EvalReportEntity, Long> {
 
     List<EvalReportEntity> findByEvalTypeOrderByCreatedAtDesc(String evalType);
+
 }

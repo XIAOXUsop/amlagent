@@ -1,27 +1,46 @@
 package com.bank.aml.dossier;
 
+import com.bank.aml.TestClocks;
 import com.bank.aml.common.enums.CaseStatus;
 import com.bank.aml.datasource.entity.CaseEntity;
 import com.bank.aml.datasource.entity.InvestigationSnapshotEntity;
 import com.bank.aml.datasource.repository.CaseLogRepository;
 import com.bank.aml.datasource.repository.CaseRepository;
 import com.bank.aml.datasource.repository.InvestigationSnapshotRepository;
-import com.bank.aml.review.ManualReviewRepository;
-import com.bank.aml.review.ManualReview;
+import com.bank.aml.explanation.AlertExplanationUnit;
+import com.bank.aml.explanation.AlertExplanationUnitRepository;
+import com.bank.aml.explanation.ExplanationClaimRepository;
+import com.bank.aml.explanation.ExplanationIssueRepository;
+import com.bank.aml.explanation.ExplanationOutcome;
+import com.bank.aml.explanation.ExplanationSubmission;
+import com.bank.aml.explanation.ExplanationSubmissionRepository;
+import com.bank.aml.explanation.SubmissionState;
+import com.bank.aml.explanation.VerificationBasisRepository;
+import com.bank.aml.investigation.AlertInvestigationCoverageRepository;
+import com.bank.aml.investigation.AmlAlertRepository;
+import com.bank.aml.investigation.InvestigationEvidenceLinkRepository;
+import com.bank.aml.investigation.InvestigationHypothesisRepository;
+import com.bank.aml.operations.CaseOperationsService;
+import com.bank.aml.operations.CaseOperationsView;
+import com.bank.aml.operations.CasePriority;
+import com.bank.aml.operations.OperationPhase;
+import com.bank.aml.reporting.SuspiciousTransactionReportRepository;
+import com.bank.aml.review.EnhancedDueDiligenceEvidenceRepository;
 import com.bank.aml.review.EnhancedDueDiligenceRequest;
 import com.bank.aml.review.EnhancedDueDiligenceRequestRepository;
 import com.bank.aml.review.EnhancedDueDiligenceStatus;
+import com.bank.aml.review.ManualReview;
+import com.bank.aml.review.ManualReviewRepository;
 import com.bank.aml.sanction.SanctionCandidateReview;
 import com.bank.aml.sanction.SanctionCandidateReviewRepository;
 import com.bank.aml.tools.ToolExecutionTraceRepository;
 import com.bank.aml.workflow.CaseExecutionRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import org.junit.jupiter.api.Test;
-
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
+import org.junit.jupiter.api.Test;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -40,20 +59,13 @@ class CaseDossierServiceTest {
         InvestigationSnapshotRepository snapshots = mock(InvestigationSnapshotRepository.class);
         SanctionCandidateReviewRepository sanctionReviews = mock(SanctionCandidateReviewRepository.class);
         EnhancedDueDiligenceRequestRepository eddRequests = mock(EnhancedDueDiligenceRequestRepository.class);
-        com.bank.aml.review.EnhancedDueDiligenceEvidenceRepository eddEvidence =
-                mock(com.bank.aml.review.EnhancedDueDiligenceEvidenceRepository.class);
-        com.bank.aml.reporting.SuspiciousTransactionReportRepository suspiciousReports =
-                mock(com.bank.aml.reporting.SuspiciousTransactionReportRepository.class);
-        com.bank.aml.investigation.AmlAlertRepository alerts =
-                mock(com.bank.aml.investigation.AmlAlertRepository.class);
-        com.bank.aml.investigation.InvestigationHypothesisRepository hypotheses =
-                mock(com.bank.aml.investigation.InvestigationHypothesisRepository.class);
-        com.bank.aml.investigation.InvestigationEvidenceLinkRepository investigationEvidence =
-                mock(com.bank.aml.investigation.InvestigationEvidenceLinkRepository.class);
-        com.bank.aml.investigation.AlertInvestigationCoverageRepository alertCoverage =
-                mock(com.bank.aml.investigation.AlertInvestigationCoverageRepository.class);
-        com.bank.aml.operations.CaseOperationsService operations =
-                mock(com.bank.aml.operations.CaseOperationsService.class);
+        EnhancedDueDiligenceEvidenceRepository eddEvidence = mock(EnhancedDueDiligenceEvidenceRepository.class);
+        SuspiciousTransactionReportRepository suspiciousReports = mock(SuspiciousTransactionReportRepository.class);
+        AmlAlertRepository alerts = mock(AmlAlertRepository.class);
+        InvestigationHypothesisRepository hypotheses = mock(InvestigationHypothesisRepository.class);
+        InvestigationEvidenceLinkRepository investigationEvidence = mock(InvestigationEvidenceLinkRepository.class);
+        AlertInvestigationCoverageRepository alertCoverage = mock(AlertInvestigationCoverageRepository.class);
+        CaseOperationsService operations = mock(CaseOperationsService.class);
 
         CaseEntity caseEntity = new CaseEntity();
         caseEntity.setCustomerId("C001");
@@ -110,18 +122,16 @@ class CaseDossierServiceTest {
         when(hypotheses.findByCaseIdOrderByIdAsc(7L)).thenReturn(List.of());
         when(investigationEvidence.findByCaseIdOrderByCreatedAtAsc(7L)).thenReturn(List.of());
         when(alertCoverage.findByCaseIdOrderByAlertIdAsc(7L)).thenReturn(List.of());
-        LocalDateTime completedAt = LocalDateTime.of(2026, 9, 4, 12, 0);
-        when(operations.get(7L)).thenReturn(new com.bank.aml.operations.CaseOperationsView(
-                7L, "C001", "张伟", CaseStatus.DONE,
-                com.bank.aml.operations.CasePriority.CRITICAL, 100, List.of("名单身份核验场景"),
-                "P1_V1_DETERMINISTIC_CASE_PRIORITY", com.bank.aml.operations.OperationPhase.COMPLETED,
-                "COMPLETED", null, "已完成", completedAt, null, false, 0,
-                "P1_V1_SLA_COMPLETED", completedAt));
+        Instant completedAt = Instant.parse("2026-09-04T12:00:00Z");
+        when(operations.get(7L))
+            .thenReturn(new CaseOperationsView(7L, "C001", "张伟", CaseStatus.DONE, CasePriority.CRITICAL, 100,
+                    List.of("名单身份核验场景"), "P1_V1_DETERMINISTIC_CASE_PRIORITY", OperationPhase.COMPLETED, "COMPLETED",
+                    null, "已完成", completedAt, null, false, 0, "P1_V1_SLA_COMPLETED", completedAt));
 
         ObjectMapper mapper = new ObjectMapper().findAndRegisterModules();
         CaseDossierService service = new CaseDossierService(cases, logs, executions, traces, reviews, snapshots,
-                sanctionReviews, eddRequests, eddEvidence, suspiciousReports, alerts, hypotheses,
-                investigationEvidence, alertCoverage, operations, mapper);
+                sanctionReviews, eddRequests, eddEvidence, suspiciousReports, alerts, hypotheses, investigationEvidence,
+                alertCoverage, operations, mapper, TestClocks.FIXED);
         CaseDossier first = service.export(7L);
         CaseDossier second = service.export(7L);
 
@@ -130,17 +140,17 @@ class CaseDossierServiceTest {
         assertThat(first.content().reportParseStatus()).isEqualTo("VALID");
         assertThat(first.content().caseSummary().reviewDisposition()).isEqualTo("CONFIRM_SUSPICIOUS");
         assertThat(first.content().reviewHistory()).singleElement()
-                .satisfies(review -> assertThat(review.reasonCode()).isEqualTo("SANCTIONS_OR_WATCHLIST_MATCH"));
+            .satisfies(review -> assertThat(review.reasonCode()).isEqualTo("SANCTIONS_OR_WATCHLIST_MATCH"));
         assertThat(first.content().snapshot().sourceDigest()).isEqualTo("a".repeat(64));
         assertThat(first.content().sanctionReviewHistory()).singleElement()
-                .satisfies(review -> assertThat(review.reviewDecision()).isEqualTo("CONFIRM"));
+            .satisfies(review -> assertThat(review.reviewDecision()).isEqualTo("CONFIRM"));
         // RF-28（G3-3）：解释段按采用提交冻结 payload 回放，不用当前 draftJson 冒充
-        var unitRepo = org.mockito.Mockito.mock(com.bank.aml.explanation.AlertExplanationUnitRepository.class);
-        var claimRepo = org.mockito.Mockito.mock(com.bank.aml.explanation.ExplanationClaimRepository.class);
-        var issueRepo = org.mockito.Mockito.mock(com.bank.aml.explanation.ExplanationIssueRepository.class);
-        var basisRepo = org.mockito.Mockito.mock(com.bank.aml.explanation.VerificationBasisRepository.class);
-        var submissionRepo = org.mockito.Mockito.mock(com.bank.aml.explanation.ExplanationSubmissionRepository.class);
-        var unit = new com.bank.aml.explanation.AlertExplanationUnit();
+        var unitRepo = mock(AlertExplanationUnitRepository.class);
+        var claimRepo = mock(ExplanationClaimRepository.class);
+        var issueRepo = mock(ExplanationIssueRepository.class);
+        var basisRepo = mock(VerificationBasisRepository.class);
+        var submissionRepo = mock(ExplanationSubmissionRepository.class);
+        var unit = new AlertExplanationUnit();
         setId(unit, 100L);
         unit.setCaseId(7L);
         unit.setAlertId(11L);
@@ -150,14 +160,14 @@ class CaseDossierServiceTest {
         unit.setCurrentSubmissionId(900L);
         unit.setCreatedBy("analyst");
         unit.setUpdatedAt(LocalDateTime.of(2026, 9, 8, 0, 0));
-        var adopted = new com.bank.aml.explanation.ExplanationSubmission();
+        var adopted = new ExplanationSubmission();
         setId(adopted, 900L);
         adopted.setUnitId(100L);
         adopted.setCaseId(7L);
         adopted.setSubmissionNo(1);
         adopted.setPayloadJson("{\"outcome\":\"EXPLAINED\",\"frozen\":true}");
-        adopted.setOutcome(com.bank.aml.explanation.ExplanationOutcome.EXPLAINED);
-        adopted.setState(com.bank.aml.explanation.SubmissionState.CURRENT);
+        adopted.setOutcome(ExplanationOutcome.EXPLAINED);
+        adopted.setState(SubmissionState.CURRENT);
         adopted.setInputDigest("a".repeat(64));
         adopted.setSubmittedBy("analyst");
         adopted.setSubmittedAt(LocalDateTime.of(2026, 9, 5, 0, 0));
@@ -168,10 +178,10 @@ class CaseDossierServiceTest {
         when(basisRepo.findTopByCaseIdOrderByBasisRevisionDesc(7L)).thenReturn(Optional.empty());
 
         caseEntity.setInvestigationContractVersion(2); // RF-28 场景：v2 契约案件才输出解释段
-        CaseDossierService replayService = new CaseDossierService(cases, logs, executions, traces, reviews,
-                snapshots, sanctionReviews, eddRequests, eddEvidence, suspiciousReports, alerts, hypotheses,
-                investigationEvidence, alertCoverage, operations, unitRepo, claimRepo, issueRepo, basisRepo,
-                submissionRepo, mapper);
+        CaseDossierService replayService = new CaseDossierService(cases, logs, executions, traces, reviews, snapshots,
+                sanctionReviews, eddRequests, eddEvidence, suspiciousReports, alerts, hypotheses, investigationEvidence,
+                alertCoverage, operations, unitRepo, claimRepo, issueRepo, basisRepo, submissionRepo, mapper,
+                TestClocks.FIXED);
         CaseDossier replayed = replayService.export(7L);
         assertThat(replayed.content().explanation()).isNotNull();
         assertThat(replayed.content().explanation().units()).singleElement().satisfies(record -> {
@@ -183,7 +193,7 @@ class CaseDossierServiceTest {
         });
 
         assertThat(first.content().operations()).satisfies(operation -> {
-            assertThat(operation.priority()).isEqualTo(com.bank.aml.operations.CasePriority.CRITICAL);
+            assertThat(operation.priority()).isEqualTo(CasePriority.CRITICAL);
             assertThat(operation.priorityPolicy()).isEqualTo("P1_V1_DETERMINISTIC_CASE_PRIORITY");
             assertThat(operation.slaPolicy()).isEqualTo("P1_V1_SLA_COMPLETED");
         });
@@ -209,8 +219,9 @@ class CaseDossierServiceTest {
         when(reviews.findByCaseIdOrderByCreatedAtAsc(9L)).thenReturn(List.of());
 
         ObjectMapper mapper = new ObjectMapper().findAndRegisterModules();
-        CaseDossier dossier = new CaseDossierService(cases, logs, executions, traces, reviews, snapshots, mapper)
-                .export(9L);
+        CaseDossier dossier = new CaseDossierService(cases, logs, executions, traces, reviews, snapshots, mapper,
+                TestClocks.FIXED)
+            .export(9L);
 
         assertThat(dossier.content().reportParseStatus()).isEqualTo("INVALID");
         assertThat(dossier.content().report()).isNull();
@@ -244,20 +255,22 @@ class CaseDossierServiceTest {
         when(reviews.findByCaseIdOrderByCreatedAtAsc(11L)).thenReturn(List.of());
         when(eddRequests.findByCaseIdOrderByRoundNoAsc(11L)).thenReturn(List.of(corrupted));
 
-        CaseDossierService service = new CaseDossierService(cases, logs, executions, traces, reviews, snapshots,
-                null, eddRequests, new ObjectMapper().findAndRegisterModules());
+        CaseDossierService service = new CaseDossierService(cases, logs, executions, traces, reviews, snapshots, null,
+                eddRequests, new ObjectMapper().findAndRegisterModules(), TestClocks.FIXED);
 
-        assertThatThrownBy(() -> service.export(11L))
-                .isInstanceOf(IllegalStateException.class)
-                .hasMessageContaining("enhancedDueDiligence.requiredItems");
+        assertThatThrownBy(() -> service.export(11L)).isInstanceOf(IllegalStateException.class)
+            .hasMessageContaining("enhancedDueDiligence.requiredItems");
     }
+
     private static void setId(Object entity, Long id) {
         try {
             var field = entity.getClass().getDeclaredField("id");
             field.setAccessible(true);
             field.set(entity, id);
-        } catch (ReflectiveOperationException e) {
+        }
+        catch (ReflectiveOperationException e) {
             throw new IllegalStateException(e);
         }
     }
+
 }

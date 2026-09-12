@@ -3,20 +3,22 @@ package com.bank.aml.assistant.agent;
 import com.bank.aml.assistant.domain.AssistantEvidence;
 import com.bank.aml.assistant.domain.CustomerAssistantSnapshot;
 import com.bank.aml.assistant.guard.AssistantIntent;
-
 import java.util.stream.Collectors;
 
 /** 工具轮次耗尽时基于同一冻结快照生成只读、无模型二次调用的安全摘要。 */
 public final class AssistantToolBudgetFallback {
-    private AssistantToolBudgetFallback() {}
+
+    private AssistantToolBudgetFallback() {
+    }
 
     public static String create(CustomerAssistantSnapshot snapshot, AssistantIntent intent) {
         if (intent == AssistantIntent.BANKING_KNOWLEDGE) {
-            String evidence = snapshot.evidence().stream()
-                    .filter(item -> item.type() == AssistantEvidence.EvidenceType.AML_LEGAL
-                            || item.type() == AssistantEvidence.EvidenceType.BANKING_PUBLIC)
-                    .map(item -> "- " + item.title() + "：" + item.summary())
-                    .collect(Collectors.joining("\n"));
+            String evidence = snapshot.evidence()
+                .stream()
+                .filter(item -> item.type() == AssistantEvidence.EvidenceType.AML_LEGAL
+                        || item.type() == AssistantEvidence.EvidenceType.BANKING_PUBLIC)
+                .map(item -> "- " + item.title() + "：" + item.summary())
+                .collect(Collectors.joining("\n"));
             return "## 可核验证据摘要\n\n" + (evidence.isBlank() ? "当前数据不足。" : evidence)
                     + "\n\n> 数据局限：以上仅来自本次冻结的法规/银行金融证据，不构成自动审批或业务操作。";
         }
@@ -43,11 +45,11 @@ public final class AssistantToolBudgetFallback {
                 safe(customer.status()), transaction.transactionCount(), transaction.totalAmount(),
                 transaction.averageAmount(), transaction.nightRatio(), transaction.crossBorderRatio(),
                 transaction.largeTransactionCount(), transaction.patternSeverity(), ownership.relationCount(),
-                ownership.uboRiskSeverity(), sanction.hit() ? "是" : "否", sanction.hitCount(),
-                sanction.maxSeverity());
+                ownership.uboRiskSeverity(), sanction.hit() ? "是" : "否", sanction.hitCount(), sanction.maxSeverity());
     }
 
     private static String safe(String value) {
         return value == null || value.isBlank() ? "未知" : value;
     }
+
 }

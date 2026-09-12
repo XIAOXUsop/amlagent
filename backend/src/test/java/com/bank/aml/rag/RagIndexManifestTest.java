@@ -31,10 +31,11 @@ class RagIndexManifestTest {
         RagProperties right = properties();
         right.getPg().setDimensions(768);
         assertThat(RagIndexManifest.from("b".repeat(64), left).indexVersion())
-                .isNotEqualTo(RagIndexManifest.from("b".repeat(64), right).indexVersion());
+            .isNotEqualTo(RagIndexManifest.from("b".repeat(64), right).indexVersion());
     }
 
     private RagProperties properties() {
         return new RagProperties();
     }
+
 }

@@ -29,8 +29,12 @@ const amendExplanationUnit = vi.fn()
 const captureExplanationEvidence = vi.fn()
 const disposeExplanationIssue = vi.fn()
 const getExplanationReviewBasis = vi.fn().mockResolvedValue({
-  caseFactsEpoch: 0, reviewBasisToken: 'tok', canExclude: false, canConfirm: false,
-  confirmBlockers: [], excludeBlockers: [],
+  caseFactsEpoch: 0,
+  reviewBasisToken: 'tok',
+  canExclude: false,
+  canConfirm: false,
+  confirmBlockers: [],
+  excludeBlockers: [],
 })
 const fetchUnitNextActions = vi.fn().mockResolvedValue([])
 const proposeIssueDowngrade = vi.fn().mockResolvedValue({})
@@ -106,10 +110,7 @@ import ExplanationWorkspace from './ExplanationWorkspace.vue'
 describe('ExplanationWorkspace 草稿隔离（TP-28）', () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    getExplanationWorkspace.mockResolvedValue(workspace([
-      unitView(100, null, 0),
-      unitView(101, null, 0),
-    ]))
+    getExplanationWorkspace.mockResolvedValue(workspace([unitView(100, null, 0), unitView(101, null, 0)]))
   })
 
   async function mountView() {
@@ -128,7 +129,10 @@ describe('ExplanationWorkspace 草稿隔离（TP-28）', () => {
 
     // A 单元：点击"编辑草稿"按钮（第 1 个单元的第 1 个按钮）
     promptMock.mockResolvedValueOnce({ value: '{"draft":"A-unit-content"}' })
-    await wrapper.findAll('el-button').filter((b) => b.text().trim() === '编辑草稿')[0]!.trigger('click')
+    await wrapper
+      .findAll('el-button')
+      .find((button) => button.text().trim() === '编辑草稿')!
+      .trigger('click')
     await vi.dynamicImportSettled()
     expect(promptMock).toHaveBeenCalledTimes(1)
 
@@ -137,15 +141,16 @@ describe('ExplanationWorkspace 草稿隔离（TP-28）', () => {
       expect(opts.inputValue).not.toContain('A-unit-content')
       return Promise.resolve({ value: '{"draft":"B-unit-content"}' })
     })
-    await wrapper.findAll('el-button').filter((b) => b.text().trim() === '编辑草稿')[1]!.trigger('click')
+    await wrapper
+      .findAll('el-button')
+      .filter((b) => b.text().trim() === '编辑草稿')[1]
+      .trigger('click')
     await vi.dynamicImportSettled()
     expect(promptMock).toHaveBeenCalledTimes(2)
   })
 
   it('服务端返回 draftJson 时优先恢复服务器草稿', async () => {
-    getExplanationWorkspace.mockResolvedValue(workspace([
-      unitView(100, '{"draft":"server-saved"}', 3),
-    ]))
+    getExplanationWorkspace.mockResolvedValue(workspace([unitView(100, '{"draft":"server-saved"}', 3)]))
     const wrapper = await mountView()
 
     // 无本地内容 → 恢复服务器草稿
@@ -153,7 +158,10 @@ describe('ExplanationWorkspace 草稿隔离（TP-28）', () => {
       expect(opts.inputValue).toBe('{"draft":"server-saved"}')
       return Promise.resolve({ value: '{"draft":"server-saved"}' })
     })
-    await wrapper.findAll('el-button').filter((b) => b.text().trim() === '编辑草稿')[0]!.trigger('click')
+    await wrapper
+      .findAll('el-button')
+      .find((button) => button.text().trim() === '编辑草稿')!
+      .trigger('click')
     await vi.dynamicImportSettled()
     expect(promptMock).toHaveBeenCalledTimes(1)
   })
@@ -163,19 +171,28 @@ describe('ExplanationWorkspace 草稿隔离（TP-28）', () => {
 
     // 输入本地草稿
     promptMock.mockResolvedValueOnce({ value: '{"draft":"local-edit"}' })
-    await wrapper.findAll('el-button').filter((b) => b.text().trim() === '编辑草稿')[0]!.trigger('click')
+    await wrapper
+      .findAll('el-button')
+      .find((button) => button.text().trim() === '编辑草稿')!
+      .trigger('click')
     await vi.dynamicImportSettled()
 
     // 保存失败（网络错误）
     saveExplanationDraft.mockRejectedValueOnce(new Error('network down'))
-    await wrapper.findAll('el-button').filter((b) => b.text().trim() === '保存草稿')[0]!.trigger('click')
+    await wrapper
+      .findAll('el-button')
+      .find((button) => button.text().trim() === '保存草稿')!
+      .trigger('click')
     await vi.dynamicImportSettled()
     expect(messageError).toHaveBeenCalledWith('草稿保存失败，请刷新后重试')
 
     // 刷新后保存成功
     saveExplanationDraft.mockResolvedValueOnce({ draftRevision: 5 })
     getExplanationWorkspace.mockResolvedValue(workspace([unitView(100, '{"draft":"local-edit"}', 5)]))
-    await wrapper.findAll('el-button').filter((b) => b.text().trim() === '保存草稿')[0]!.trigger('click')
+    await wrapper
+      .findAll('el-button')
+      .find((button) => button.text().trim() === '保存草稿')!
+      .trigger('click')
     await vi.dynamicImportSettled()
     expect(messageSuccess).toHaveBeenCalled()
   })

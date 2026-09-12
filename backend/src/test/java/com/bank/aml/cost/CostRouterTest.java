@@ -50,4 +50,5 @@ class CostRouterTest {
         // COMPLEX + 报告流开启 → 主 Agent + 已落库结果的确定性流，不产生第二次模型调用
         assertThat(router.route("命中制裁名单", true, true)).isEqualTo(Route.AGENT_WITH_SUMMARY);
     }
+
 }

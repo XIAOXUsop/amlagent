@@ -13,10 +13,10 @@ class RagEvalDatasetLoaderTest {
 
         assertThat(loader.dataset().datasetVersion()).isEqualTo("rag-legal-dev-v2");
         assertThat(loader.dataset().cases()).hasSize(18)
-                .anyMatch(RagEvalDataset.RagEvalCase::answerable)
-                .anyMatch(c -> !c.answerable());
+            .anyMatch(RagEvalDataset.RagEvalCase::answerable)
+            .anyMatch(c -> !c.answerable());
         assertThat(loader.datasetHash()).hasSize(64);
-        assertThat(loader.dataset().cases()).extracting(RagEvalDataset.RagEvalCase::question)
-                .doesNotHaveDuplicates();
+        assertThat(loader.dataset().cases()).extracting(RagEvalDataset.RagEvalCase::question).doesNotHaveDuplicates();
     }
+
 }

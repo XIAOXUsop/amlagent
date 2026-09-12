@@ -1,7 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import {
-  evaluateDecision, hypothesisAggregate, isExplanationRevisionConflict,
-  type CaseDecisionContext, type Decision, type UnitDecisionInput,
+  evaluateDecision,
+  hypothesisAggregate,
+  isExplanationRevisionConflict,
+  type CaseDecisionContext,
+  type Decision,
+  type UnitDecisionInput,
 } from './explanation'
 
 /**
@@ -11,43 +15,149 @@ import {
  */
 // 与 docs/plans/examples/rapid-goods-v2-decision-cases.json 冻结设计一致的 21 个样例
 // （内联副本：与后端 ExplanationDecisionRulesTest 使用同一决策表口径；修改样例必须两处同步）。
-const designCases: Array<{
+const designCases: {
   id: string
   context?: Partial<Record<string, unknown>>
-  units: Array<Partial<UnitDecisionInput>>
+  units: Partial<UnitDecisionInput>[]
   expected: Decision
-}> = [
+}[] = [
   { id: 'DG-01', units: [{ outcome: 'EXPLAINED' }], expected: { canExclude: true, canConfirm: false } },
-  { id: 'DG-02', context: { continuationPlanReady: true }, units: [{ outcome: 'EXPLAINED', followupRequired: true }], expected: { canExclude: true, canConfirm: false } },
-  { id: 'DG-03', units: [{ outcome: 'UNRESOLVED', criticalUnknown: true }], expected: { canExclude: false, canConfirm: false } },
-  { id: 'DG-04', units: [{ outcome: 'EXPLAINED' }, { outcome: 'SUSPICIOUS', suspicionBasisComplete: true }], expected: { canExclude: false, canConfirm: true } },
-  { id: 'DG-05', units: [{ outcome: 'EXPLAINED' }, { outcome: 'UNRESOLVED' }], expected: { canExclude: false, canConfirm: false } },
-  { id: 'DG-06', units: [{ outcome: 'SUSPICIOUS', suspicionBasisComplete: true }, { outcome: 'UNRESOLVED' }], expected: { canExclude: false, canConfirm: false } },
-  { id: 'DG-07', context: { continuationPlanReady: true }, units: [{ outcome: 'SUSPICIOUS', suspicionBasisComplete: true }, { outcome: 'UNRESOLVED', unresolvedDisclosed: true }], expected: { canExclude: false, canConfirm: true } },
-  { id: 'DG-08', units: [{ outcome: 'SUSPICIOUS', suspicionBasisComplete: false }], expected: { canExclude: false, canConfirm: false } },
-  { id: 'DG-09', context: { scopeEnumerated: false }, units: [{ outcome: 'EXPLAINED' }], expected: { canExclude: false, canConfirm: false } },
-  { id: 'DG-10', context: { reviewBasisCurrent: false }, units: [{ outcome: 'EXPLAINED' }], expected: { canExclude: false, canConfirm: false } },
-  { id: 'DG-11', context: { reviewerIndependent: false }, units: [{ outcome: 'EXPLAINED' }], expected: { canExclude: false, canConfirm: false } },
-  { id: 'DG-12', context: { policyApplicable: false }, units: [{ outcome: 'EXPLAINED' }], expected: { canExclude: false, canConfirm: false } },
-  { id: 'DG-13', units: [{ outcome: 'EXPLAINED', criticalUnknown: true }], expected: { canExclude: false, canConfirm: false } },
-  { id: 'DG-14', context: { hasOpenDecisionSupportEdd: true, continuationPlanReady: true }, units: [{ outcome: 'SUSPICIOUS', suspicionBasisComplete: true }, { outcome: 'UNRESOLVED', unresolvedDisclosed: true }], expected: { canExclude: false, canConfirm: false } },
-  { id: 'DG-15', context: { hasOpenDecisionSupportEdd: true, continuationPlanReady: true, obligationTransferReady: true }, units: [{ outcome: 'SUSPICIOUS', suspicionBasisComplete: true }, { outcome: 'UNRESOLVED', unresolvedDisclosed: true }], expected: { canExclude: false, canConfirm: true } },
-  { id: 'DG-16', units: [{ outcome: 'EXPLAINED', followupRequired: true }], expected: { canExclude: false, canConfirm: false } },
-  { id: 'DG-17', context: { adoptedFactsUsable: false }, units: [{ outcome: 'SUSPICIOUS', suspicionBasisComplete: true }], expected: { canExclude: false, canConfirm: false } },
-  { id: 'DG-18', context: { otherScenarioGateSatisfied: false }, units: [{ outcome: 'SUSPICIOUS', suspicionBasisComplete: true }], expected: { canExclude: false, canConfirm: false } },
-  { id: 'DG-19', units: [{ outcome: 'EXPLAINED', assessmentValid: false }], expected: { canExclude: false, canConfirm: false } },
-  { id: 'DG-20', context: { caseStatus: 'DONE' }, units: [{ outcome: 'EXPLAINED' }], expected: { canExclude: false, canConfirm: false } },
+  {
+    id: 'DG-02',
+    context: { continuationPlanReady: true },
+    units: [{ outcome: 'EXPLAINED', followupRequired: true }],
+    expected: { canExclude: true, canConfirm: false },
+  },
+  {
+    id: 'DG-03',
+    units: [{ outcome: 'UNRESOLVED', criticalUnknown: true }],
+    expected: { canExclude: false, canConfirm: false },
+  },
+  {
+    id: 'DG-04',
+    units: [{ outcome: 'EXPLAINED' }, { outcome: 'SUSPICIOUS', suspicionBasisComplete: true }],
+    expected: { canExclude: false, canConfirm: true },
+  },
+  {
+    id: 'DG-05',
+    units: [{ outcome: 'EXPLAINED' }, { outcome: 'UNRESOLVED' }],
+    expected: { canExclude: false, canConfirm: false },
+  },
+  {
+    id: 'DG-06',
+    units: [{ outcome: 'SUSPICIOUS', suspicionBasisComplete: true }, { outcome: 'UNRESOLVED' }],
+    expected: { canExclude: false, canConfirm: false },
+  },
+  {
+    id: 'DG-07',
+    context: { continuationPlanReady: true },
+    units: [
+      { outcome: 'SUSPICIOUS', suspicionBasisComplete: true },
+      { outcome: 'UNRESOLVED', unresolvedDisclosed: true },
+    ],
+    expected: { canExclude: false, canConfirm: true },
+  },
+  {
+    id: 'DG-08',
+    units: [{ outcome: 'SUSPICIOUS', suspicionBasisComplete: false }],
+    expected: { canExclude: false, canConfirm: false },
+  },
+  {
+    id: 'DG-09',
+    context: { scopeEnumerated: false },
+    units: [{ outcome: 'EXPLAINED' }],
+    expected: { canExclude: false, canConfirm: false },
+  },
+  {
+    id: 'DG-10',
+    context: { reviewBasisCurrent: false },
+    units: [{ outcome: 'EXPLAINED' }],
+    expected: { canExclude: false, canConfirm: false },
+  },
+  {
+    id: 'DG-11',
+    context: { reviewerIndependent: false },
+    units: [{ outcome: 'EXPLAINED' }],
+    expected: { canExclude: false, canConfirm: false },
+  },
+  {
+    id: 'DG-12',
+    context: { policyApplicable: false },
+    units: [{ outcome: 'EXPLAINED' }],
+    expected: { canExclude: false, canConfirm: false },
+  },
+  {
+    id: 'DG-13',
+    units: [{ outcome: 'EXPLAINED', criticalUnknown: true }],
+    expected: { canExclude: false, canConfirm: false },
+  },
+  {
+    id: 'DG-14',
+    context: { hasOpenDecisionSupportEdd: true, continuationPlanReady: true },
+    units: [
+      { outcome: 'SUSPICIOUS', suspicionBasisComplete: true },
+      { outcome: 'UNRESOLVED', unresolvedDisclosed: true },
+    ],
+    expected: { canExclude: false, canConfirm: false },
+  },
+  {
+    id: 'DG-15',
+    context: { hasOpenDecisionSupportEdd: true, continuationPlanReady: true, obligationTransferReady: true },
+    units: [
+      { outcome: 'SUSPICIOUS', suspicionBasisComplete: true },
+      { outcome: 'UNRESOLVED', unresolvedDisclosed: true },
+    ],
+    expected: { canExclude: false, canConfirm: true },
+  },
+  {
+    id: 'DG-16',
+    units: [{ outcome: 'EXPLAINED', followupRequired: true }],
+    expected: { canExclude: false, canConfirm: false },
+  },
+  {
+    id: 'DG-17',
+    context: { adoptedFactsUsable: false },
+    units: [{ outcome: 'SUSPICIOUS', suspicionBasisComplete: true }],
+    expected: { canExclude: false, canConfirm: false },
+  },
+  {
+    id: 'DG-18',
+    context: { otherScenarioGateSatisfied: false },
+    units: [{ outcome: 'SUSPICIOUS', suspicionBasisComplete: true }],
+    expected: { canExclude: false, canConfirm: false },
+  },
+  {
+    id: 'DG-19',
+    units: [{ outcome: 'EXPLAINED', assessmentValid: false }],
+    expected: { canExclude: false, canConfirm: false },
+  },
+  {
+    id: 'DG-20',
+    context: { caseStatus: 'DONE' },
+    units: [{ outcome: 'EXPLAINED' }],
+    expected: { canExclude: false, canConfirm: false },
+  },
   { id: 'DG-21', units: [], expected: { canExclude: false, canConfirm: false } },
 ]
 
 const contextDefaults = {
-  caseStatus: 'HOLD', scopeEnumerated: true, adoptedFactsUsable: true, reviewBasisCurrent: true,
-  policyApplicable: true, reviewerIndependent: true, otherScenarioGateSatisfied: true,
-  hasOpenDecisionSupportEdd: false, obligationTransferReady: false, continuationPlanReady: false,
+  caseStatus: 'HOLD',
+  scopeEnumerated: true,
+  adoptedFactsUsable: true,
+  reviewBasisCurrent: true,
+  policyApplicable: true,
+  reviewerIndependent: true,
+  otherScenarioGateSatisfied: true,
+  hasOpenDecisionSupportEdd: false,
+  obligationTransferReady: false,
+  continuationPlanReady: false,
 }
 const unitDefaults = {
-  assessmentValid: true, criticalUnknown: false, suspicionBasisComplete: false,
-  unresolvedDisclosed: false, followupRequired: false,
+  assessmentValid: true,
+  criticalUnknown: false,
+  suspicionBasisComplete: false,
+  unresolvedDisclosed: false,
+  followupRequired: false,
 }
 
 function contextFrom(overrides: Record<string, unknown> | undefined): CaseDecisionContext {
@@ -66,9 +176,9 @@ function contextFrom(overrides: Record<string, unknown> | undefined): CaseDecisi
   }
 }
 
-function unitsFrom(units: Array<Partial<UnitDecisionInput>>): UnitDecisionInput[] {
+function unitsFrom(units: Partial<UnitDecisionInput>[]): UnitDecisionInput[] {
   return units.map((unit) => ({
-    outcome: unit.outcome as UnitDecisionInput['outcome'],
+    outcome: unit.outcome!,
     assessmentValid: unit.assessmentValid ?? unitDefaults.assessmentValid,
     criticalUnknown: unit.criticalUnknown ?? unitDefaults.criticalUnknown,
     suspicionBasisComplete: unit.suspicionBasisComplete ?? unitDefaults.suspicionBasisComplete,
@@ -78,8 +188,14 @@ function unitsFrom(units: Array<Partial<UnitDecisionInput>>): UnitDecisionInput[
 }
 
 describe('决策表镜像与冻结设计样例一致（21 案例）', () => {
-  const guardKeys = ['scopeEnumerated', 'adoptedFactsUsable', 'reviewBasisCurrent',
-    'policyApplicable', 'reviewerIndependent', 'otherScenarioGateSatisfied'] as const
+  const guardKeys = [
+    'scopeEnumerated',
+    'adoptedFactsUsable',
+    'reviewBasisCurrent',
+    'policyApplicable',
+    'reviewerIndependent',
+    'otherScenarioGateSatisfied',
+  ] as const
   let excludePositive = 0
   let confirmPositive = 0
   let neutral = 0
@@ -124,9 +240,11 @@ describe('假设汇总与冲突协议判定', () => {
   it('仅 409 + INVESTIGATION_REVISION_CONFLICT 被视为冲突', () => {
     const conflict = { response: { status: 409, data: { code: 'INVESTIGATION_REVISION_CONFLICT' } } }
     expect(isExplanationRevisionConflict(conflict)).toBe(true)
-    expect(isExplanationRevisionConflict({
-      response: { status: 409, data: { code: 'WORKFLOW_STATE_CONFLICT' } },
-    })).toBe(false)
+    expect(
+      isExplanationRevisionConflict({
+        response: { status: 409, data: { code: 'WORKFLOW_STATE_CONFLICT' } },
+      }),
+    ).toBe(false)
     expect(isExplanationRevisionConflict({ response: { status: 412, data: {} } })).toBe(false)
   })
 })

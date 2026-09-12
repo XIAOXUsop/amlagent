@@ -1,5 +1,12 @@
 package com.bank.aml.config;
 
+import jakarta.validation.constraints.DecimalMax;
+import jakarta.validation.constraints.DecimalMin;
+import jakarta.validation.constraints.Max;
+import jakarta.validation.constraints.Min;
+import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.Pattern;
+import jakarta.validation.constraints.Size;
 import java.time.Duration;
 import java.util.Optional;
 
@@ -9,24 +16,35 @@ import java.util.Optional;
 public class LlmProviderProperties {
 
     /** 提供商类型，默认 OpenAI 兼容 */
+    @NotBlank
+    @Pattern(regexp = "openai-compatible|anthropic|mock")
     private String type = "openai-compatible";
 
     /** API 基址（OpenAI 兼容端点，如 https://api.deepseek.com） */
+    @Pattern(regexp = "https?://.+", message = "LLM base-url 必须是 HTTP(S) URL")
     private String baseUrl;
 
     /** API Key（可用环境变量注入，如 ${DEEPSEEK_API_KEY:}） */
+    @Size(max = 512)
     private String apiKey;
 
     /** 模型名称（如 deepseek-chat / gpt-4o / qwen-plus / claude-sonnet-4-6） */
+    @Size(max = 128)
     private String modelName;
 
     /** 采样温度，金融场景默认较低以保证严谨 */
+    @DecimalMin("0.0")
+    @DecimalMax("2.0")
     private Double temperature = 0.2;
 
     /** 单次 LLM 调用超时（秒）；默认 60s 防止模型挂起无限阻塞 Worker */
+    @Min(1)
+    @Max(600)
     private int timeoutSeconds = 60;
 
     /** LLM 单次调用失败的最大自动重试次数（仅瞬时类错误），防止无限重试 */
+    @Min(0)
+    @Max(10)
     private int maxRetries = 2;
 
     public String getType() {
@@ -103,4 +121,5 @@ public class LlmProviderProperties {
     public boolean hasApiKey() {
         return Optional.ofNullable(apiKey).map(String::trim).filter(s -> !s.isEmpty()).isPresent();
     }
+
 }

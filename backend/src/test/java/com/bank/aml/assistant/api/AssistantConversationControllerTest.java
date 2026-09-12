@@ -4,6 +4,7 @@ import com.bank.aml.assistant.application.AssistantConversationService;
 import com.bank.aml.assistant.application.AssistantRateLimiter;
 import com.bank.aml.assistant.application.AssistantRunOrchestrator;
 import com.bank.aml.assistant.config.AssistantProperties;
+import java.util.List;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
@@ -15,20 +16,23 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class AssistantConversationControllerTest {
+
     @AfterEach
-    void clearSecurityContext() { SecurityContextHolder.clearContext(); }
+    void clearSecurityContext() {
+        SecurityContextHolder.clearContext();
+    }
 
     @Test
     void submitUsesAuthenticatedOperatorAndReturnsAcceptedRun() {
-        SecurityContextHolder.getContext().setAuthentication(
-                UsernamePasswordAuthenticationToken.authenticated("admin", null, java.util.List.of()));
+        SecurityContextHolder.getContext()
+            .setAuthentication(UsernamePasswordAuthenticationToken.authenticated("admin", null, List.of()));
         AssistantConversationService conversations = mock(AssistantConversationService.class);
         AssistantRunOrchestrator orchestrator = mock(AssistantRunOrchestrator.class);
         AssistantRateLimiter limiter = mock(AssistantRateLimiter.class);
         AssistantProperties properties = new AssistantProperties();
         properties.setEnabled(true);
         when(orchestrator.submitMessage("c-1", "admin", "client-1", "分析当前客户交易"))
-                .thenReturn(new AssistantConversationService.AcceptedRun("r-1", "u-1", "a-1", false));
+            .thenReturn(new AssistantConversationService.AcceptedRun("r-1", "u-1", "a-1", false));
         var controller = new AssistantConversationController(conversations, orchestrator, limiter, properties);
 
         var response = controller.submit("c-1",
@@ -47,4 +51,5 @@ class AssistantConversationControllerTest {
                 mock(AssistantRunOrchestrator.class), mock(AssistantRateLimiter.class), properties);
         assertThat(controller.status().enabled()).isFalse();
     }
+
 }

@@ -1,25 +1,30 @@
 package com.bank.aml.evaluation;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import org.springframework.core.io.ClassPathResource;
-import org.springframework.stereotype.Component;
-
 import java.io.InputStream;
 import java.security.MessageDigest;
 import java.util.HashSet;
 import java.util.HexFormat;
 import java.util.Set;
+import org.springframework.core.io.ClassPathResource;
+import org.springframework.stereotype.Component;
 
 /** 加载并校验固定 RAG DEV 数据集；禁止从当前向量表反向生成正式质量标签。 */
 @Component
 public class RagEvalDatasetLoader {
 
     private static final String RESOURCE = "evaluation/rag-cases-v2.json";
+
     private static final String ADVERSARIAL_RESOURCE = "evaluation/rag-cases-adversarial-v3.json";
+
     private final ObjectMapper objectMapper;
+
     private final RagEvalDataset dataset;
+
     private final String datasetHash;
+
     private volatile RagEvalDataset adversarialDataset;
+
     private volatile String adversarialHash;
 
     public RagEvalDatasetLoader(ObjectMapper objectMapper) {
@@ -29,7 +34,8 @@ public class RagEvalDatasetLoader {
             this.dataset = objectMapper.readValue(bytes, RagEvalDataset.class);
             this.datasetHash = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(bytes));
             validate(dataset);
-        } catch (Exception e) {
+        }
+        catch (Exception e) {
             throw new IllegalStateException("RAG 评测数据集加载失败: " + RESOURCE, e);
         }
     }
@@ -53,9 +59,9 @@ public class RagEvalDatasetLoader {
                         RagEvalDataset value = objectMapper.readValue(bytes, RagEvalDataset.class);
                         validate(value);
                         adversarialDataset = value;
-                        adversarialHash = HexFormat.of().formatHex(
-                                MessageDigest.getInstance("SHA-256").digest(bytes));
-                    } catch (Exception e) {
+                        adversarialHash = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(bytes));
+                    }
+                    catch (Exception e) {
                         throw new IllegalStateException("对抗性 RAG 评测数据集加载失败: " + ADVERSARIAL_RESOURCE, e);
                     }
                 }
@@ -91,4 +97,5 @@ public class RagEvalDatasetLoader {
     private boolean blank(String value) {
         return value == null || value.isBlank();
     }
+
 }

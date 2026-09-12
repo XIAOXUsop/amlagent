@@ -4,22 +4,26 @@ import com.bank.aml.datasource.CustomerDataPort;
 import com.bank.aml.datasource.entity.InvestigationSnapshotEntity;
 import com.bank.aml.datasource.repository.InvestigationSnapshotRepository;
 import com.bank.aml.domain.CustomerProfile;
+import com.bank.aml.domain.InvestigationAlertSnapshot;
 import com.bank.aml.domain.InvestigationSnapshot;
-import com.bank.aml.risk.RiskContext;
+import com.bank.aml.domain.RiskContext;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import org.junit.jupiter.api.Test;
-
 import java.time.Instant;
+import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicReference;
+import org.junit.jupiter.api.Test;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 class SnapshotArchiveServiceTest {
+
     @Test
     void encryptedArchiveRoundTripsWithoutPersistingPlainIdentity() {
         InvestigationSnapshotRepository repository = mock(InvestigationSnapshotRepository.class);
@@ -39,9 +43,8 @@ class SnapshotArchiveServiceTest {
 
         service.archive(snapshot);
 
-        assertThat(stored.get().getPayloadCiphertext())
-                .startsWith("enc:v1:")
-                .doesNotContain("张伟", "110101198506123456");
+        assertThat(stored.get().getPayloadCiphertext()).startsWith("enc:v1:")
+            .doesNotContain("张伟", "110101198506123456");
         InvestigationSnapshot restored = service.loadAndVerify("case-1-v1");
         assertThat(restored).isEqualTo(snapshot);
         assertThat(stored.get().getSourceSystem()).isEqualTo("BANK_CORE");
@@ -88,36 +91,28 @@ class SnapshotArchiveServiceTest {
 
         service.archive(snapshotWithAlerts("alerts-digest-1"));
 
-        org.assertj.core.api.Assertions.assertThatThrownBy(
-                        () -> service.archive(snapshotWithAlerts("alerts-digest-2")))
-                .isInstanceOf(IllegalStateException.class)
-                .hasMessageContaining("归档冲突");
+        assertThatThrownBy(() -> service.archive(snapshotWithAlerts("alerts-digest-2")))
+            .isInstanceOf(IllegalStateException.class)
+            .hasMessageContaining("归档冲突");
     }
 
     private InvestigationSnapshot snapshot() {
-        CustomerProfile customer = new CustomerProfile("C001", "张伟", "110101198506123456",
-                "企业", "贸易", "上海", "5000万");
-        RiskContext risk = new RiskContext(0, false, 0, 0, 0,
-                true, true, 0, 0, "低风险", 1);
-        return new InvestigationSnapshot("case-1-v1", 1L, 1,
-                Instant.parse("2026-08-19T00:00:00Z"), customer,
-                List.of(), List.of(), List.of(), List.of(), java.util.Map.of(), List.of("客户尽职调查"),
-                risk, "legal-hash", "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef");
+        CustomerProfile customer = new CustomerProfile("C001", "张伟", "110101198506123456", "企业", "贸易", "上海", "5000万");
+        RiskContext risk = new RiskContext(0, false, 0, 0, 0, true, true, 0, 0, "低风险", 1);
+        return new InvestigationSnapshot("case-1-v1", 1L, 1, Instant.parse("2026-08-19T00:00:00Z"), customer, List.of(),
+                List.of(), List.of(), List.of(), Map.of(), List.of("客户尽职调查"), risk, "legal-hash",
+                "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef");
     }
 
     private InvestigationSnapshot snapshotWithAlerts(String alertsDigest) {
-        CustomerProfile customer = new CustomerProfile("C001", "张伟", "110101198506123456",
-                "企业", "贸易", "上海", "5000万");
-        RiskContext risk = new RiskContext(0, false, 0, 0, 0,
-                true, true, 0, 0, "低风险", 1);
-        var alert = new com.bank.aml.domain.InvestigationAlertSnapshot(11L, "ALERT-A",
-                "RULE-001", "STRUCTURING", "客户通过拆分现金交易规避监测",
-                java.time.LocalDateTime.of(2026, 8, 1, 10, 0), 0);
-        return new InvestigationSnapshot("case-1-v1", 1L, 1,
-                Instant.parse("2026-08-19T00:00:00Z"), customer,
-                List.of(alert), List.of(), List.of(), List.of(), List.of(), java.util.Map.of(),
-                List.of("拆分"), risk, "legal-hash",
-                "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
-                alertsDigest, InvestigationSnapshot.SCHEMA_VERSION_WITH_ALERTS);
+        CustomerProfile customer = new CustomerProfile("C001", "张伟", "110101198506123456", "企业", "贸易", "上海", "5000万");
+        RiskContext risk = new RiskContext(0, false, 0, 0, 0, true, true, 0, 0, "低风险", 1);
+        var alert = new InvestigationAlertSnapshot(11L, "ALERT-A", "RULE-001", "STRUCTURING", "客户通过拆分现金交易规避监测",
+                LocalDateTime.of(2026, 8, 1, 10, 0), 0);
+        return new InvestigationSnapshot("case-1-v1", 1L, 1, Instant.parse("2026-08-19T00:00:00Z"), customer,
+                List.of(alert), List.of(), List.of(), List.of(), List.of(), Map.of(), List.of("拆分"), risk, "legal-hash",
+                "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef", alertsDigest,
+                InvestigationSnapshot.SCHEMA_VERSION_WITH_ALERTS);
     }
+
 }

@@ -1,11 +1,20 @@
 package com.bank.aml.service;
 
-import com.bank.aml.datasource.CustomerDataRefresh;
+import com.bank.aml.common.crypto.IdCardCipher;
 import com.bank.aml.common.exception.CustomerNotFoundException;
+import com.bank.aml.config.AmlProperties;
+import com.bank.aml.datasource.CustomerDataRefresh;
 import com.bank.aml.datasource.entity.CustomerEntity;
 import com.bank.aml.datasource.repository.CustomerRepository;
 import com.bank.aml.dto.CustomerDto;
-import com.bank.aml.security.IdCardCipher;
+import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.Pattern;
+import jakarta.validation.constraints.Size;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Locale;
+import java.util.UUID;
+import org.apache.poi.ss.usermodel.CellType;
 import org.apache.poi.ss.usermodel.Row;
 import org.apache.poi.ss.usermodel.Sheet;
 import org.apache.poi.ss.usermodel.Workbook;
@@ -20,36 +29,36 @@ import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.web.multipart.MultipartFile;
 
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Locale;
-import java.util.UUID;
-
 /**
  * 客户/人员管理：CRUD + Excel 批量导入。
- * <p>新增/修改/删除后调用当前数据 Adapter 的刷新钩子，使新建工单与 Agent 读取到已提交数据。
+ * <p>
+ * 新增/修改/删除后调用当前数据 Adapter 的刷新钩子，使新建工单与 Agent 读取到已提交数据。
  */
 @Service
 public class CustomerAdminService {
 
     private static final Logger log = LoggerFactory.getLogger(CustomerAdminService.class);
-    private static final long MAX_IMPORT_BYTES = 5L * 1024 * 1024;
-    private static final int MAX_IMPORT_ROWS = 1_000;
 
     private final CustomerRepository customerRepository;
+
     private final CustomerDataRefresh customerDataRefresh;
 
-    public CustomerAdminService(CustomerRepository customerRepository,
-                                CustomerDataRefresh customerDataRefresh) {
+    private final long maxImportBytes;
+
+    private final int maxImportRows;
+
+    public CustomerAdminService(CustomerRepository customerRepository, CustomerDataRefresh customerDataRefresh,
+            AmlProperties properties) {
         this.customerRepository = customerRepository;
         this.customerDataRefresh = customerDataRefresh;
+        this.maxImportBytes = properties.data().customerImportMaxBytes();
+        this.maxImportRows = properties.data().customerImportMaxRows();
     }
 
     public Page<CustomerDto> list(int page, int size, String keyword) {
         PageRequest pageable = PageRequest.of(page, Math.min(size, 100));
         Page<CustomerEntity> result = (keyword == null || keyword.isBlank())
-                ? customerRepository.findByDeletedFalse(pageable)
-                : customerRepository.search(keyword.trim(), pageable);
+                ? customerRepository.findByDeletedFalse(pageable) : customerRepository.search(keyword.trim(), pageable);
         return result.map(CustomerDto::from);
     }
 
@@ -60,8 +69,8 @@ public class CustomerAdminService {
             throw new CustomerNotFoundException(id);
         }
         CustomerEntity entity = customerRepository.findById(id)
-                .filter(customer -> !customer.isDeleted())
-                .orElseThrow(() -> new CustomerNotFoundException(id));
+            .filter(customer -> !customer.isDeleted())
+            .orElseThrow(() -> new CustomerNotFoundException(id));
         return CustomerDto.from(entity);
     }
 
@@ -105,11 +114,16 @@ public class CustomerAdminService {
             e.setName(required(req.name(), "姓名", 64));
         }
         e.setIdCard(newIdCard);
-        if (req.type() != null) e.setType(optional(req.type(), 32));
-        if (req.industry() != null) e.setIndustry(optional(req.industry(), 64));
-        if (req.region() != null) e.setRegion(optional(req.region(), 64));
-        if (req.regCapital() != null) e.setRegCapital(optional(req.regCapital(), 128));
-        if (req.status() != null) e.setStatus(normalizeStatus(req.status()));
+        if (req.type() != null)
+            e.setType(optional(req.type(), 32));
+        if (req.industry() != null)
+            e.setIndustry(optional(req.industry(), 64));
+        if (req.region() != null)
+            e.setRegion(optional(req.region(), 64));
+        if (req.regCapital() != null)
+            e.setRegCapital(optional(req.regCapital(), 128));
+        if (req.status() != null)
+            e.setStatus(normalizeStatus(req.status()));
         CustomerEntity saved = customerRepository.save(e);
         reloadAfterCommit();
         return CustomerDto.from(saved);
@@ -138,8 +152,8 @@ public class CustomerAdminService {
         if (file == null || file.isEmpty()) {
             throw new IllegalArgumentException("请上传 Excel 文件");
         }
-        if (file.getSize() > MAX_IMPORT_BYTES) {
-            throw new IllegalArgumentException("Excel 文件不能超过 5MB");
+        if (file.getSize() > maxImportBytes) {
+            throw new IllegalArgumentException("Excel 文件不能超过 " + maxImportBytes + " 字节");
         }
         String filename = file.getOriginalFilename() == null ? "" : file.getOriginalFilename().toLowerCase(Locale.ROOT);
         if (!filename.endsWith(".xlsx") && !filename.endsWith(".xls")) {
@@ -154,8 +168,8 @@ public class CustomerAdminService {
             }
             Sheet sheet = workbook.getSheetAt(0);
             validateHeader(sheet.getRow(0));
-            if (sheet.getLastRowNum() > MAX_IMPORT_ROWS) {
-                throw new IllegalArgumentException("Excel 数据行不能超过 " + MAX_IMPORT_ROWS + " 行");
+            if (sheet.getLastRowNum() > maxImportRows) {
+                throw new IllegalArgumentException("Excel 数据行不能超过 " + maxImportRows + " 行");
             }
             for (int i = 1; i <= sheet.getLastRowNum(); i++) {
                 Row row = sheet.getRow(i);
@@ -171,7 +185,8 @@ public class CustomerAdminService {
                     String region = optional(cell(row, 4), 64);
                     String regCapital = optional(cell(row, 5), 128);
                     if (customerRepository.existsByIdCardFingerprint(IdCardCipher.fingerprint(idCard))) {
-                        throw new IllegalArgumentException("第" + (i + 1) + "行：证件号已存在 " + CustomerDto.maskIdCard(idCard));
+                        throw new IllegalArgumentException(
+                                "第" + (i + 1) + "行：证件号已存在 " + CustomerDto.maskIdCard(idCard));
                     }
                     CustomerEntity e = new CustomerEntity();
                     e.setCustomerNo(nextCustomerNo());
@@ -185,13 +200,16 @@ public class CustomerAdminService {
                     e.setCreatedBy(optional(createdBy, 64));
                     customerRepository.save(e);
                     success++;
-                } catch (IllegalArgumentException ex) {
+                }
+                catch (IllegalArgumentException ex) {
                     errors.add(ex.getMessage());
                 }
             }
-        } catch (IllegalArgumentException e) {
+        }
+        catch (IllegalArgumentException e) {
             throw e;
-        } catch (Exception e) {
+        }
+        catch (Exception e) {
             log.error("Excel 解析失败", e);
             throw new IllegalArgumentException("Excel 解析失败，请使用 .xlsx 格式且表头为：姓名/证件号/类型/行业/地区/注册资本");
         }
@@ -201,7 +219,7 @@ public class CustomerAdminService {
 
     private CustomerEntity getActive(Long id) {
         CustomerEntity e = customerRepository.findById(id)
-                .orElseThrow(() -> new IllegalArgumentException("客户不存在：" + id));
+            .orElseThrow(() -> new IllegalArgumentException("客户不存在：" + id));
         if (e.isDeleted()) {
             throw new IllegalArgumentException("客户不存在：" + id);
         }
@@ -230,10 +248,10 @@ public class CustomerAdminService {
 
     private String identifierCell(Row row, int idx, int excelRow) {
         var c = row.getCell(idx);
-        if (c == null || c.getCellType() == org.apache.poi.ss.usermodel.CellType.BLANK) {
+        if (c == null || c.getCellType() == CellType.BLANK) {
             throw new IllegalArgumentException("第" + excelRow + "行：证件号不能为空");
         }
-        if (c.getCellType() != org.apache.poi.ss.usermodel.CellType.STRING) {
+        if (c.getCellType() != CellType.STRING) {
             throw new IllegalArgumentException("第" + excelRow + "行：证件号必须设置为文本格式，避免长数字精度丢失");
         }
         return required(c.getStringCellValue(), "第" + excelRow + "行证件号", 64);
@@ -242,9 +260,8 @@ public class CustomerAdminService {
     private boolean isBlank(Row row) {
         for (int i = 0; i < 6; i++) {
             var c = row.getCell(i);
-            if (c != null && c.getCellType() != org.apache.poi.ss.usermodel.CellType.BLANK
-                    && !(c.getCellType() == org.apache.poi.ss.usermodel.CellType.STRING
-                    && c.getStringCellValue().isBlank())) {
+            if (c != null && c.getCellType() != CellType.BLANK
+                    && !(c.getCellType() == CellType.STRING && c.getStringCellValue().isBlank())) {
                 return false;
             }
         }
@@ -308,20 +325,24 @@ public class CustomerAdminService {
     private void safeReload() {
         try {
             customerDataRefresh.refresh();
-        } catch (RuntimeException e) {
+        }
+        catch (RuntimeException e) {
             // 数据库事务已提交，刷新失败不能伪装成业务写入失败；记录后由下次变更/重启恢复快照。
             log.error("客户数据已提交，但内存快照刷新失败", e);
         }
     }
 
-    public record CreateRequest(String name, String idCard, String type, String industry,
-                                String region, String regCapital) {
+    public record CreateRequest(@NotBlank @Size(max = 64) String name, @NotBlank @Size(max = 64) String idCard,
+            @Size(max = 32) String type, @Size(max = 64) String industry, @Size(max = 64) String region,
+            @Size(max = 128) String regCapital) {
     }
 
-    public record UpdateRequest(String name, String idCard, String type, String industry,
-                                String region, String regCapital, String status) {
+    public record UpdateRequest(@Size(max = 64) String name, @Size(max = 64) String idCard, @Size(max = 32) String type,
+            @Size(max = 64) String industry, @Size(max = 64) String region, @Size(max = 128) String regCapital,
+            @Pattern(regexp = "ENABLED|DISABLED", message = "状态必须为 ENABLED 或 DISABLED") String status) {
     }
 
     public record ImportResult(int total, int success, int failed, List<String> errors) {
     }
+
 }

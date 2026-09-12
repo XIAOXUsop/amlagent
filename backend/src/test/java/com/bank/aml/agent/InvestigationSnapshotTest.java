@@ -3,47 +3,50 @@ package com.bank.aml.agent;
 import com.bank.aml.common.enums.CountryRegion;
 import com.bank.aml.datasource.CustomerDataPort;
 import com.bank.aml.domain.CustomerProfile;
+import com.bank.aml.domain.InvestigationAlertSnapshot;
 import com.bank.aml.domain.InvestigationSnapshot;
 import com.bank.aml.domain.SanctionRecord;
 import com.bank.aml.domain.ShareholdingRecord;
 import com.bank.aml.domain.TransactionRecord;
+import com.bank.aml.investigation.AlertSnapshotAssembler;
 import com.bank.aml.rag.EnterpriseLegalRetriever;
 import com.bank.aml.rag.RetrievalResponse;
 import com.bank.aml.risk.RiskFactAssembler;
-import com.bank.aml.service.LegalKeywordResolver;
 import com.bank.aml.tools.SnapshotToolSuite;
-import org.junit.jupiter.api.Test;
-
+import com.fasterxml.jackson.databind.ObjectMapper;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
+import org.junit.jupiter.api.Test;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
-import static org.mockito.ArgumentMatchers.any;
 
 /**
  * 验证 Snapshot First：快照在 Agent 推理前冻结，工具只读快照，数据源变化不影响当前执行。
  */
 class InvestigationSnapshotTest {
 
-    private static final CustomerProfile CUSTOMER = new CustomerProfile(
-            "C001", "张伟", "110101198506123456", "企业法人", "国际贸易", "上海", "注册资本5000万");
-    private static final TransactionRecord TXN_A = new TransactionRecord(
-            LocalDateTime.of(2026, 5, 1, 10, 0), new BigDecimal("100000"), "转出",
-            "贸易客户A", CountryRegion.CHINA, "企业网银", "货款结算", "CNY");
-    private static final TransactionRecord TXN_B = new TransactionRecord(
-            LocalDateTime.of(2026, 5, 2, 23, 0), new BigDecimal("99999999"), "转出",
-            "境外买方D(伊朗)", CountryRegion.IRAN, "跨境支付", "货款结算", "USD");
-    private static final ShareholdingRecord SHAREHOLDING = new ShareholdingRecord(
-            "张伟", "自然人股东", new BigDecimal("0.65"), "L1");
-    private static final SanctionRecord SANCTION = new SanctionRecord(
-            "ZHANG WEI（张伟）", "110101198506123456", "OFAC SDN", "制裁名单同名", 1);
+    private static final CustomerProfile CUSTOMER = new CustomerProfile("C001", "张伟", "110101198506123456", "企业法人",
+            "国际贸易", "上海", "注册资本5000万");
+
+    private static final TransactionRecord TXN_A = new TransactionRecord(LocalDateTime.of(2026, 5, 1, 10, 0),
+            new BigDecimal("100000"), "转出", "贸易客户A", CountryRegion.CHINA, "企业网银", "货款结算", "CNY");
+
+    private static final TransactionRecord TXN_B = new TransactionRecord(LocalDateTime.of(2026, 5, 2, 23, 0),
+            new BigDecimal("99999999"), "转出", "境外买方D(伊朗)", CountryRegion.IRAN, "跨境支付", "货款结算", "USD");
+
+    private static final ShareholdingRecord SHAREHOLDING = new ShareholdingRecord("张伟", "自然人股东", new BigDecimal("0.65"),
+            "L1");
+
+    private static final SanctionRecord SANCTION = new SanctionRecord("ZHANG WEI（张伟）", "110101198506123456", "OFAC SDN",
+            "制裁名单同名", 1);
 
     @Test
     void snapshotFreezesFactsWhenDataSourceChanges() {
@@ -111,11 +114,9 @@ class InvestigationSnapshotTest {
     void snapshotWithAlertsUsesAlertKeywordsForLegalRetrievalAndDigest() {
         CustomerDataPort dataSource = stubDataSource();
         InvestigationSnapshotFactory factory = factory(dataSource);
-        var alertA = new com.bank.aml.domain.InvestigationAlertSnapshot(11L, "ALERT-A",
-                "RULE-001", "CROSS_BORDER_ANOMALY", "客户连续发生夜间跨境转账",
+        var alertA = new InvestigationAlertSnapshot(11L, "ALERT-A", "RULE-001", "CROSS_BORDER_ANOMALY", "客户连续发生夜间跨境转账",
                 LocalDateTime.of(2026, 8, 1, 23, 0), 0);
-        var alertB = new com.bank.aml.domain.InvestigationAlertSnapshot(12L, "ALERT-B",
-                "RULE-002", "STRUCTURING", "客户通过拆分现金交易规避监测",
+        var alertB = new InvestigationAlertSnapshot(12L, "ALERT-B", "RULE-002", "STRUCTURING", "客户通过拆分现金交易规避监测",
                 LocalDateTime.of(2026, 8, 1, 10, 0), 0);
 
         InvestigationSnapshot snapshot = factory.create(1L, 1, CUSTOMER, "低风险", List.of(alertA, alertB));
@@ -128,11 +129,10 @@ class InvestigationSnapshotTest {
         assertThat(snapshot.hasFrozenAlerts()).isTrue();
 
         // 预警版本或原因变化会改变预警摘要
-        var changed = new com.bank.aml.domain.InvestigationAlertSnapshot(12L, "ALERT-B",
-                "RULE-002", "STRUCTURING", "命中原因已修订：拆分现金交易规避监测",
+        var changed = new InvestigationAlertSnapshot(12L, "ALERT-B", "RULE-002", "STRUCTURING", "命中原因已修订：拆分现金交易规避监测",
                 LocalDateTime.of(2026, 8, 1, 10, 0), 1);
         assertThat(factory.create(1L, 1, CUSTOMER, "低风险", List.of(alertA, changed)).alertsDigest())
-                .isNotEqualTo(snapshot.alertsDigest());
+            .isNotEqualTo(snapshot.alertsDigest());
     }
 
     @Test
@@ -152,12 +152,11 @@ class InvestigationSnapshotTest {
 
     private InvestigationSnapshotFactory factory(CustomerDataPort dataSource) {
         EnterpriseLegalRetriever retriever = mock(EnterpriseLegalRetriever.class);
-        when(retriever.retrieve(any())).thenReturn(new RetrievalResponse(
-                RetrievalResponse.Status.NO_RELEVANT_EVIDENCE, "v1", List.of()));
-        return new InvestigationSnapshotFactory(dataSource, new RiskFactAssembler(dataSource),
-                retriever, new LegalKeywordResolver(), () -> "v1",
-                new com.bank.aml.agent.AlertSnapshotAssembler(new com.fasterxml.jackson.databind.ObjectMapper()
-                        .findAndRegisterModules(), 8));
+        when(retriever.retrieve(any()))
+            .thenReturn(new RetrievalResponse(RetrievalResponse.Status.NO_RELEVANT_EVIDENCE, "v1", List.of()));
+        return new InvestigationSnapshotFactory(dataSource, new RiskFactAssembler(dataSource), retriever,
+                new LegalKeywordResolver(), () -> "v1",
+                new AlertSnapshotAssembler(new ObjectMapper().findAndRegisterModules(), 8));
     }
 
     private CustomerDataPort stubDataSource() {
@@ -170,4 +169,5 @@ class InvestigationSnapshotTest {
         when(dataSource.asOfTime()).thenReturn(Instant.parse("2026-06-30T00:00:00Z"));
         return dataSource;
     }
+
 }

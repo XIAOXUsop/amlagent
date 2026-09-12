@@ -7,12 +7,13 @@ import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.PrePersist;
 import jakarta.persistence.Table;
-
+import java.time.Clock;
 import java.time.LocalDateTime;
 
 /**
  * 生产工具调用轨迹持久化实体（对应 V2 迁移的 tool_execution_trace 表）。
- * <p>不保存参数明文（姓名/证件号/法规 query），只保存结果摘要哈希与 evidenceIds JSON。
+ * <p>
+ * 不保存参数明文（姓名/证件号/法规 query），只保存结果摘要哈希与 evidenceIds JSON。
  */
 @Entity
 @Table(name = "tool_execution_trace")
@@ -66,7 +67,7 @@ public class ToolExecutionTraceEntity {
 
     @PrePersist
     void onCreate() {
-        this.createdAt = LocalDateTime.now();
+        this.createdAt = LocalDateTime.now(Clock.systemUTC());
     }
 
     public Long getId() {
@@ -180,4 +181,5 @@ public class ToolExecutionTraceEntity {
     public LocalDateTime getCreatedAt() {
         return createdAt;
     }
+
 }

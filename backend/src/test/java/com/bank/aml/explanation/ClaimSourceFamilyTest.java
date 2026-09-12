@@ -5,8 +5,8 @@ import org.junit.jupiter.api.Test;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * G1-2 / RF-20：来源家族独立性——同源文件复制、转发、模型摘要不增加独立确认数；
- * 独立确认计数按 sourceFamily（sourceSystem + 归一化 sourceReference）去重。
+ * G1-2 / RF-20：来源家族独立性——同源文件复制、转发、模型摘要不增加独立确认数； 独立确认计数按 sourceFamily（sourceSystem + 归一化
+ * sourceReference）去重。
  */
 class ClaimSourceFamilyTest {
 
@@ -19,11 +19,10 @@ class ClaimSourceFamilyTest {
         v2.setVersion(2);
         EvidenceArtifactVersion other = artifact("CORE_BANKING", "TXN-DOC-002");
 
-        assertThat(ExplanationClaimService.sourceFamilyOf(v1))
-                .isEqualTo(ExplanationClaimService.sourceFamilyOf(v2))
-                .isEqualTo("core_banking:txn-doc-001");
+        assertThat(ExplanationClaimService.sourceFamilyOf(v1)).isEqualTo(ExplanationClaimService.sourceFamilyOf(v2))
+            .isEqualTo("core_banking:txn-doc-001");
         assertThat(ExplanationClaimService.sourceFamilyOf(other))
-                .isNotEqualTo(ExplanationClaimService.sourceFamilyOf(v1));
+            .isNotEqualTo(ExplanationClaimService.sourceFamilyOf(v1));
     }
 
     /** 相同内容不同来源系统 → 不同家族（来源系统是家族身份的一部分）。 */
@@ -32,7 +31,7 @@ class ClaimSourceFamilyTest {
         EvidenceArtifactVersion core = artifact("CORE_BANKING", "DOC-1");
         EvidenceArtifactVersion kyc = artifact("KYC_PLATFORM", "DOC-1");
         assertThat(ExplanationClaimService.sourceFamilyOf(core))
-                .isNotEqualTo(ExplanationClaimService.sourceFamilyOf(kyc));
+            .isNotEqualTo(ExplanationClaimService.sourceFamilyOf(kyc));
     }
 
     /** 名称大小写/空白归一：同引用不同大小写不产生虚假的"第二来源"。 */
@@ -41,7 +40,7 @@ class ClaimSourceFamilyTest {
         EvidenceArtifactVersion lower = artifact("CORE_BANKING", "txn-doc-001");
         EvidenceArtifactVersion upper = artifact("core_banking", "TXN-DOC-001");
         assertThat(ExplanationClaimService.sourceFamilyOf(lower))
-                .isEqualTo(ExplanationClaimService.sourceFamilyOf(upper));
+            .isEqualTo(ExplanationClaimService.sourceFamilyOf(upper));
     }
 
     private EvidenceArtifactVersion artifact(String system, String reference) {
@@ -54,4 +53,5 @@ class ClaimSourceFamilyTest {
         entity.setContentSha256("a".repeat(64));
         return entity;
     }
+
 }

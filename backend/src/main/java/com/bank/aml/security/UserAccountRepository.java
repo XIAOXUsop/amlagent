@@ -1,9 +1,8 @@
 package com.bank.aml.security;
 
-import org.springframework.data.jpa.repository.JpaRepository;
-
 import java.util.List;
 import java.util.Optional;
+import org.springframework.data.jpa.repository.JpaRepository;
 
 /**
  * 用户账户数据访问。
@@ -15,4 +14,5 @@ public interface UserAccountRepository extends JpaRepository<UserAccount, Long> 
     boolean existsByUsername(String username);
 
     List<UserAccount> findByRoleAndEnabledTrueOrderByUsernameAsc(String role);
+
 }

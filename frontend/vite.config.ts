@@ -29,6 +29,8 @@ export default defineConfig({
     },
   },
   build: {
+    // Element Plus 已单独拆为长期缓存 vendor chunk；558 kB 原始体积约 182 kB gzip。
+    chunkSizeWarningLimit: 600,
     rollupOptions: {
       output: {
         // 大依赖拆独立 chunk，降低首屏主包并利用浏览器长期缓存

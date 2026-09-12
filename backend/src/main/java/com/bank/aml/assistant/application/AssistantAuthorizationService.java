@@ -7,6 +7,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 @Service
 public class AssistantAuthorizationService {
+
     private final AssistantConversationRepository conversations;
 
     public AssistantAuthorizationService(AssistantConversationRepository conversations) {
@@ -16,7 +17,7 @@ public class AssistantAuthorizationService {
     @Transactional(readOnly = true)
     public AssistantConversationEntity requireOwned(String conversationId, String operatorUsername) {
         return conversations.findByIdAndOperatorUsername(conversationId, operatorUsername)
-                .orElseThrow(ConversationNotFoundException::new);
+            .orElseThrow(ConversationNotFoundException::new);
     }
 
     public static void requireOwner(AssistantConversationEntity conversation, String operatorUsername) {
@@ -25,4 +26,5 @@ public class AssistantAuthorizationService {
             throw new ConversationNotFoundException();
         }
     }
+
 }

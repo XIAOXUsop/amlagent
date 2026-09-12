@@ -1,5 +1,8 @@
 package com.bank.aml.rag;
 
+import com.bank.aml.evidence.LegalDoc;
+import com.bank.aml.evidence.LegalEvidenceMetadata;
+import com.bank.aml.observability.MetricsRecorder;
 import dev.langchain4j.data.document.Metadata;
 import dev.langchain4j.data.embedding.Embedding;
 import dev.langchain4j.data.segment.TextSegment;
@@ -7,10 +10,16 @@ import dev.langchain4j.model.embedding.EmbeddingModel;
 import dev.langchain4j.store.embedding.EmbeddingSearchRequest;
 import dev.langchain4j.store.embedding.EmbeddingSearchResult;
 import dev.langchain4j.store.embedding.EmbeddingStore;
-import org.springframework.stereotype.Component;
-
+import dev.langchain4j.store.embedding.filter.Filter;
+import dev.langchain4j.store.embedding.filter.MetadataFilterBuilder;
+import java.time.LocalDate;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
+import java.util.Set;
+import java.util.stream.Collectors;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Component;
 
 /**
  * 基于 PGVector 的向量法规语义召回（DENSE 通道）。
@@ -19,20 +28,23 @@ import java.util.List;
 public class VectorLegalSearcher implements LegalDocumentSearcher {
 
     private final EmbeddingModel embeddingModel;
+
     private final EmbeddingStore<TextSegment> embeddingStore;
+
     private final LegalIndexVersionProvider indexVersions;
+
     private final QueryEmbeddingCache embeddingCache;
-    private final com.bank.aml.observability.MetricsRecorder metrics;
+
+    private final MetricsRecorder metrics;
 
     public VectorLegalSearcher(EmbeddingModel embeddingModel, EmbeddingStore<TextSegment> embeddingStore,
-                               LegalIndexVersionProvider indexVersions) {
+            LegalIndexVersionProvider indexVersions) {
         this(embeddingModel, embeddingStore, indexVersions, null, null);
     }
 
-    @org.springframework.beans.factory.annotation.Autowired
+    @Autowired
     public VectorLegalSearcher(EmbeddingModel embeddingModel, EmbeddingStore<TextSegment> embeddingStore,
-                               LegalIndexVersionProvider indexVersions, QueryEmbeddingCache embeddingCache,
-                               com.bank.aml.observability.MetricsRecorder metrics) {
+            LegalIndexVersionProvider indexVersions, QueryEmbeddingCache embeddingCache, MetricsRecorder metrics) {
         this.embeddingModel = embeddingModel;
         this.embeddingStore = embeddingStore;
         this.indexVersions = indexVersions;
@@ -58,40 +70,33 @@ public class VectorLegalSearcher implements LegalDocumentSearcher {
     private List<SearchHit> searchScoredInternal(String query, int topK, RetrievalRequest request) {
         long started = System.nanoTime();
         String version = indexVersions.versionFor(request);
-        if (version.isBlank()) return List.of();
-        Embedding queryEmbedding = embeddingCache == null
-                ? embeddingModel.embed(query).content()
+        if (version.isBlank())
+            return List.of();
+        Embedding queryEmbedding = embeddingCache == null ? embeddingModel.embed(query).content()
                 : embeddingCache.getOrEmbed(query, version, embeddingModel, metrics);
-        dev.langchain4j.store.embedding.filter.Filter filter =
-                dev.langchain4j.store.embedding.filter.MetadataFilterBuilder.metadataKey("corpusVersion").isEqualTo(version);
+        Filter filter = MetadataFilterBuilder.metadataKey("corpusVersion").isEqualTo(version);
         if (request != null) {
-            filter = filter.and(dev.langchain4j.store.embedding.filter.MetadataFilterBuilder
-                    .metadataKey("jurisdiction").isEqualTo(request.jurisdiction()));
-            dev.langchain4j.store.embedding.filter.Filter scopeFilter = null;
+            filter = filter.and(MetadataFilterBuilder.metadataKey("jurisdiction").isEqualTo(request.jurisdiction()));
+            Filter scopeFilter = null;
             for (String scope : request.accessScopes()) {
-                var one = dev.langchain4j.store.embedding.filter.MetadataFilterBuilder
-                        .metadataKey("accessScopes").containsString(scope);
+                var one = MetadataFilterBuilder.metadataKey("accessScopes").containsString(scope);
                 scopeFilter = scopeFilter == null ? one : scopeFilter.or(one);
             }
-            if (scopeFilter != null) filter = filter.and(scopeFilter);
+            if (scopeFilter != null)
+                filter = filter.and(scopeFilter);
         }
-        EmbeddingSearchResult<TextSegment> result = embeddingStore.search(
-                EmbeddingSearchRequest.builder()
-                        .queryEmbedding(queryEmbedding)
-                        .maxResults(topK)
-                        .filter(filter)
-                        .build());
+        EmbeddingSearchResult<TextSegment> result = embeddingStore.search(EmbeddingSearchRequest.builder()
+            .queryEmbedding(queryEmbedding)
+            .maxResults(topK)
+            .filter(filter)
+            .build());
         List<SearchHit> docs = new ArrayList<>();
         int rank = 1;
         for (var match : result.matches()) {
             TextSegment seg = match.embedded();
             Metadata md = seg.metadata();
-            LegalDoc doc = new LegalDoc(
-                    value(md, "evidenceId"),
-                    value(md, "title"),
-                    value(md, "documentNumber"),
-                    value(md, "articleNumber"),
-                    seg.text(), metadata(md));
+            LegalDoc doc = new LegalDoc(value(md, "evidenceId"), value(md, "title"), value(md, "documentNumber"),
+                    value(md, "articleNumber"), seg.text(), metadata(md));
             docs.add(SearchHit.dense(rank++, match.score(), doc));
         }
         RetrievalTimings.add("dense", elapsedMs(started));
@@ -106,33 +111,44 @@ public class VectorLegalSearcher implements LegalDocumentSearcher {
             String contentDigest = value(md, "contentDigest");
             String corpusVersion = value(md, "corpusVersion");
             String securityStatus = value(md, "securityStatus");
-            if (documentId.isBlank() || jurisdiction.isBlank() || accessScopes.isBlank()
-                    || contentDigest.isBlank() || corpusVersion.isBlank() || !"TRUSTED".equals(securityStatus)) {
+            if (documentId.isBlank() || jurisdiction.isBlank() || accessScopes.isBlank() || contentDigest.isBlank()
+                    || corpusVersion.isBlank() || !"TRUSTED".equals(securityStatus)) {
                 return LegalEvidenceMetadata.untrustedMetadata();
             }
             return new LegalEvidenceMetadata(documentId, value(md, "parentSection"), jurisdiction,
                     date(value(md, "effectiveFrom")), date(value(md, "effectiveTo")), scopes(accessScopes),
                     contentDigest, corpusVersion, value(md, "sourceFile"), securityStatus);
-        } catch (RuntimeException malformedMetadata) {
+        }
+        catch (RuntimeException malformedMetadata) {
             return LegalEvidenceMetadata.untrustedMetadata();
         }
     }
 
-    private java.time.LocalDate date(String value) {
-        return value == null || value.isBlank() ? null : java.time.LocalDate.parse(value);
+    private LocalDate date(String value) {
+        return value == null || value.isBlank() ? null : LocalDate.parse(value);
     }
 
     private String value(Metadata metadata, String key) {
-        try { return metadata.getString(key); } catch (Exception ignored) { return ""; }
+        try {
+            return metadata.getString(key);
+        }
+        catch (Exception invalidMetadata) {
+            // 第三方向量存储可能返回类型不匹配的元数据；缺失值按空字符串进入后续 fail-closed 校验。
+            return "";
+        }
     }
 
-    private java.util.Set<String> scopes(String value) {
-        if (value == null || value.isBlank()) return java.util.Set.of("QUARANTINED");
-        return java.util.Arrays.stream(value.split(",")).map(String::trim).filter(v -> !v.isBlank())
-                .collect(java.util.stream.Collectors.toUnmodifiableSet());
+    private Set<String> scopes(String value) {
+        if (value == null || value.isBlank())
+            return Set.of("QUARANTINED");
+        return Arrays.stream(value.split(","))
+            .map(String::trim)
+            .filter(v -> !v.isBlank())
+            .collect(Collectors.toUnmodifiableSet());
     }
 
     private long elapsedMs(long started) {
         return Math.max(0, (System.nanoTime() - started) / 1_000_000);
     }
+
 }

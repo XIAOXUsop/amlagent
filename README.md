@@ -176,6 +176,54 @@ npm run dev
 AI 小助仅在开发环境默认启用。ADMIN 可进入“客户管理 → 查看 → AI 小助”；生产环境必须显式设置
 `AML_ASSISTANT_ENABLED=true`，否则入口与接口保持关闭。它不能修改客户、工单、账户或审核状态，也不能跨客户比较。
 
+下列运行策略均可通过环境变量调整；未设置时采用表中默认值。单位是变量名所示的毫秒、秒、分钟或天。
+
+| 环境变量 | 默认值 | 用途 |
+|---|---:|---|
+| `VITE_API_TIMEOUT_MS` | 120000 | 浏览器 API 请求整体超时（毫秒） |
+| `AML_CUSTOMER_IMPORT_MAX_BYTES` | 5242880 | Excel 客户导入及 multipart 单文件上限（字节） |
+| `AML_CUSTOMER_IMPORT_MAX_REQUEST_BYTES` | 6291456 | Excel multipart 总请求上限（字节，必须不小于文件上限） |
+| `AML_CUSTOMER_IMPORT_MAX_ROWS` | 1000 | Excel 客户导入最大数据行数 |
+| `AML_SANCTION_RECALL_LIMIT` | 50 | 生产制裁名单单次候选召回容量 |
+| `AML_QUEUE_CONSUMER_POLL_TIMEOUT_MS` | 300 | Redis Stream 消费者阻塞轮询超时（毫秒） |
+| `AML_QUEUE_OUTBOX_CLAIM_STALE_SECONDS` | 30 | 工作流 Outbox 发布 Claim 接管窗口（秒） |
+| `AML_QUEUE_OUTBOX_PUBLISH_BATCH_SIZE` | 200 | 工作流 Outbox 单轮发布上限 |
+| `AML_QUEUE_RETRY_BACKOFF_EXPONENT_CAP` | 6 | 重试指数退避的指数上限 |
+| `AML_QUEUE_HEALTH_PROBE_SECONDS` | 15 | Redis Stream 健康探测周期（秒） |
+| `AML_QUEUE_HEALTH_INITIAL_DELAY_SECONDS` | 5 | 首次健康探测等待时间（秒） |
+| `AML_QUEUE_MINIMUM_LAG_RECOVERY_CYCLES` | 2 | 积压恢复前最少连续异常周期 |
+| `AML_QUEUE_HEARTBEAT_EXECUTOR_THREADS` | 2 | Worker 租约心跳调度线程数 |
+| `AML_QUEUE_SUMMARY_EXECUTOR_THREADS` | 2 | 最终报告推送执行线程数 |
+| `AML_WORKFLOW_EVENT_HEARTBEAT_SECONDS` | 15 | 工单 SSE 心跳间隔（秒） |
+| `AML_WORKFLOW_EVENT_HEARTBEAT_THREADS` | 2 | 工单 SSE 共享心跳线程数 |
+| `AML_AUDIT_OUTBOX_POLL_MS` | 2000 | 可靠审计 Outbox 扫描周期（毫秒） |
+| `AML_AUDIT_OUTBOX_BATCH_SIZE` | 200 | 可靠审计单轮投递上限 |
+| `AML_ASSISTANT_EVENT_READ_BLOCK_SECONDS` | 2 | AI 小助事件流单次阻塞读取时长（秒） |
+| `AML_ASSISTANT_EVENT_READ_BATCH_SIZE` | 50 | AI 小助事件流单次读取上限 |
+| `AML_ASSISTANT_EVENT_HEARTBEAT_SECONDS` | 15 | AI 小助 SSE 心跳间隔（秒） |
+| `AML_ASSISTANT_RECOVERY_GRACE_SECONDS` | 30 | 启动恢复判定失联任务的宽限时间（秒） |
+| `AML_ASSISTANT_RETENTION_SCAN_MS` | 3600000 | AI 小助会话过期扫描周期（毫秒） |
+| `AML_ASSISTANT_FROZEN_KNOWLEDGE_RESULT_LIMIT` | 3 | AI 小助单次冻结知识检索结果上限 |
+| `AML_ASSISTANT_TASK_CORE_POOL_SIZE` / `AML_ASSISTANT_TASK_MAX_POOL_SIZE` | 2 / 4 | AI 小助运行线程池核心/最大线程数 |
+| `AML_ASSISTANT_TASK_QUEUE_CAPACITY` | 50 | AI 小助运行线程池队列容量 |
+| `AML_ASSISTANT_LEASE_SCHEDULER_THREADS` | 1 | AI 小助租约续期线程数 |
+| `AML_ASSISTANT_SSE_CORE_POOL_SIZE` / `AML_ASSISTANT_SSE_MAX_POOL_SIZE` | 4 / 12 | AI 小助 SSE 线程池核心/最大线程数 |
+| `AML_ASSISTANT_SSE_QUEUE_CAPACITY` | 50 | AI 小助 SSE 线程池队列容量 |
+| `AML_AGENT_MAX_TOOL_ROUND_TRIPS` | 3 | 合规尽调 Agent 最大工具调用轮次 |
+| `AML_AGENT_OUTPUT_MAX_TEXT_CHARACTERS` | 8000 | 尽调 Agent 单个输出文本字段的最大字符数 |
+| `AML_AGENT_OUTPUT_MAX_LIST_ITEMS` | 50 | 尽调 Agent 单个输出列表的最大元素数 |
+| `AML_EVAL_P95_LATENCY_BUDGET_MS` | 10000 | Agent 评测 P95 延迟预算（毫秒） |
+| `AML_EVAL_AVERAGE_TOKENS_PER_CASE_BUDGET` | 6000 | Agent 评测单案例平均令牌预算 |
+| `AML_RAG_BUILD_LEASE_MINUTES` | 15 | 法规索引构建租约时长（分钟） |
+| `AML_RISK_RULE_CACHE_TTL_SECONDS` | 60 | 风险规则缓存有效期（秒） |
+| `AML_INVESTIGATION_FUTURE_TIMESTAMP_TOLERANCE_MINUTES` | 5 | 外部预警未来时间容忍窗口（分钟） |
+| `AML_REVIEW_EDD_DEFAULT_DUE_DAYS` | 14 | 分析员补充尽调建议的默认期限（天） |
+| `AML_REVIEW_EDD_MAXIMUM_DUE_DAYS` | 90 | 补充尽调任务允许的最长期限（天） |
+
+后端配置由 `@ConfigurationProperties` 绑定并校验范围；非法值会使应用启动失败。前端的 `VITE_*` 值会进入浏览器构建产物，不能用于存放密钥。
+运营优先级/SLA、交易风险、名单匹配、解释提醒和 RAG 证据阈值集中在主配置的
+`aml.operations`、`aml.risk`、`aml.explanation` 与 `aml.rag.retrieval` 中，并通过版本号或跨字段校验保护；这些是业务政策，不应按部署环境随意漂移。
+
 ## 配置 LLM（可选）
 
 默认未配置 API Key 时自动降级到 **Mock 模型**（可离线演示完整链路）。
@@ -295,7 +343,7 @@ docker-compose.yml        MySQL + PostgreSQL(pgvector) + Redis
 <details>
 <summary><b>展开全部 20 项关键设计</b></summary>
 
-- **可靠异步任务**：Transactional Outbox（工单与事件同事务，`caseId:eventType:executionVersion` 幂等键防重复发布）→ **发布抢占（PENDING→PUBLISHING→PUBLISHED 原子状态机，多实例并发只允许一个发布器投递，杜绝重复/错投；崩溃残留由陈旧 Claim 30s 回收）** → Redis Streams 消费组 → 条件更新抢占（`executionVersion`）→ 版本化租约 + Worker 心跳（心跳/完成/失败均绑定 worker+version，防旧 Worker 污染新执行版本）→ 指数退避重试（RETRY_WAIT）→ 死信队列 → Pending 超时接管（服务重启任务不丢失）。重试、接管、死信重放统一走 Outbox，消除数据库提交与 Redis 投递之间的双写丢失窗口；Stream 按 MAXLEN 近似裁剪，防止已 ACK 消息长期驻留导致内存无限增长。
+- **可靠异步任务**：Transactional Outbox（工单与事件同事务，`caseId:eventType:executionVersion` 幂等键防重复发布）→ **发布抢占（PENDING→PUBLISHING→PUBLISHED 原子状态机，多实例并发只允许一个发布器投递，杜绝重复/错投；崩溃残留由可配置的陈旧 Claim 窗口回收）** → Redis Streams 消费组 → 条件更新抢占（`executionVersion`）→ 版本化租约 + Worker 心跳（心跳/完成/失败均绑定 worker+version，防旧 Worker 污染新执行版本）→ 指数退避重试（RETRY_WAIT）→ 死信队列 → Pending 超时接管（服务重启任务不丢失）。重试、接管、死信重放统一走 Outbox，消除数据库提交与 Redis 投递之间的双写丢失窗口。工作流 Stream 禁止使用 MAXLEN 直接裁剪，避免删除尚未 ACK 的消息正文；容量治理必须依据所有消费组的安全位点执行。
 - **Guardrails 配置化**：`risk_rule` 表驱动（DSL 条件表达式 + 优先级 + 生效时间），决策可解释（ruleCode / version / evidence / 动作），一级制裁命中零漏报并强制转人工。规则加载带 60s TTL 缓存，避免每次护栏评估查库。
 - **RAG 证据追溯**：结构化检索显式携带法域、适用时间和访问范围，存储层预过滤并二次 fail-closed 校验；法规片段带 `evidenceId`，按主题冻结到快照，关键处置必须由被引用条文直接支持。
 - **可回滚索引供应链**：语料、分块、元数据、Embedding 制品与距离度量共同构成完整索引身份；中央租约/心跳构建、Smoke Test、原子发布、显式回滚、可恢复清理和管理员审计避免半成品污染在线检索。

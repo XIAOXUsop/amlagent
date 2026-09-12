@@ -55,4 +55,5 @@ class PromptInjectionGuardTest {
         assertThat(guard.scan("").suspicious()).isFalse();
         assertThat(guard.scan(null).suspicious()).isFalse();
     }
+
 }

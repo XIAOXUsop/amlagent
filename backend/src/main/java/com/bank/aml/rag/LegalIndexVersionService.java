@@ -1,59 +1,75 @@
 package com.bank.aml.rag;
 
-import com.bank.aml.datasource.repository.LegalIndexStateRepository;
-import com.bank.aml.datasource.repository.RagIndexManifestRepository;
+import com.bank.aml.config.RagProperties;
 import com.bank.aml.datasource.entity.LegalIndexStateEntity;
 import com.bank.aml.datasource.entity.RagIndexManifestEntity;
+import com.bank.aml.datasource.repository.LegalIndexStateRepository;
+import com.bank.aml.datasource.repository.RagIndexManifestRepository;
+import java.time.Clock;
+import java.time.LocalDateTime;
+import java.util.List;
+import java.util.Set;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-
-import java.time.LocalDateTime;
 
 /** MySQL 中央发布指针：所有实例检索和缓存使用同一个 active corpus hash。 */
 @Service
 public class LegalIndexVersionService implements LegalIndexVersionProvider {
+
     private final LegalIndexStateRepository repository;
+
     private final RagIndexManifestRepository manifests;
 
-    public LegalIndexVersionService(LegalIndexStateRepository repository,
-                                    RagIndexManifestRepository manifests) {
+    private final Clock clock;
+
+    private final long buildLeaseMinutes;
+
+    @Autowired
+    public LegalIndexVersionService(LegalIndexStateRepository repository, RagIndexManifestRepository manifests,
+            RagProperties properties, Clock clock) {
         this.repository = repository;
         this.manifests = manifests;
+        this.clock = clock;
+        this.buildLeaseMinutes = properties.getIngestion().getBuildLeaseMinutes();
     }
 
     @Override
     public String activeVersion() {
-        return repository.findById("legal").map(s -> s.getActiveVersion() == null ? "" : s.getActiveVersion())
-                .orElse("");
+        return repository.findById("legal")
+            .map(s -> s.getActiveVersion() == null ? "" : s.getActiveVersion())
+            .orElse("");
     }
 
     /** 候选目标：优先返回正由本实例/本租约构建的版本，其次最近一个候选/评估中版本。 */
     @Override
     public String candidateVersion() {
         return repository.findById("legal")
-                .map(LegalIndexStateEntity::getBuildingVersion)
-                .filter(v -> v != null && !v.isBlank())
-                .orElseGet(() -> {
-                    var evaluating = manifests.findByStatusOrderByUpdatedAtDesc("EVALUATING");
-                    if (!evaluating.isEmpty()) return evaluating.get(0).getIndexVersion();
-                    var candidate = manifests.findByStatusOrderByUpdatedAtDesc("CANDIDATE");
-                    return candidate.isEmpty() ? "" : candidate.get(0).getIndexVersion();
-                });
+            .map(LegalIndexStateEntity::getBuildingVersion)
+            .filter(v -> v != null && !v.isBlank())
+            .orElseGet(() -> {
+                var evaluating = manifests.findByStatusOrderByUpdatedAtDesc("EVALUATING");
+                if (!evaluating.isEmpty())
+                    return evaluating.get(0).getIndexVersion();
+                var candidate = manifests.findByStatusOrderByUpdatedAtDesc("CANDIDATE");
+                return candidate.isEmpty() ? "" : candidate.get(0).getIndexVersion();
+            });
     }
 
     @Transactional
     public boolean claimBuild(String version, String owner) {
-        LocalDateTime now = LocalDateTime.now();
+        LocalDateTime now = LocalDateTime.now(clock);
         // Flyway 会预置该行；这里仍做并发安全自愈，兼容 ddl-auto 开发/测试库和被误删的状态行。
         repository.ensureStateRow(now);
-        return repository.claimBuild(version, owner, now, now.plusMinutes(15)) == 1;
+        return repository.claimBuild(version, owner, now, now.plusMinutes(buildLeaseMinutes)) == 1;
     }
 
     /** 幂等登记完整索引身份；同一 indexVersion 的字段由哈希定义，不允许被覆盖。 */
     @Transactional
     public void register(RagIndexManifest manifest) {
-        if (manifests.existsById(manifest.indexVersion())) return;
-        LocalDateTime now = LocalDateTime.now();
+        if (manifests.existsById(manifest.indexVersion()))
+            return;
+        LocalDateTime now = LocalDateTime.now(clock);
         RagIndexManifestEntity entity = new RagIndexManifestEntity();
         entity.setIndexVersion(manifest.indexVersion());
         entity.setCorpusHash(manifest.corpusHash());
@@ -73,15 +89,16 @@ public class LegalIndexVersionService implements LegalIndexVersionProvider {
     }
 
     public boolean renewBuildLease(String version, String owner) {
-        LocalDateTime now = LocalDateTime.now();
-        return repository.renewBuildLease(version, owner, now, now.plusMinutes(15)) == 1;
+        LocalDateTime now = LocalDateTime.now(clock);
+        return repository.renewBuildLease(version, owner, now, now.plusMinutes(buildLeaseMinutes)) == 1;
     }
 
     @Transactional
     public boolean activate(String version, String owner, int segmentCount, String qualityReportJson) {
-        LocalDateTime now = LocalDateTime.now();
+        LocalDateTime now = LocalDateTime.now(clock);
         String oldActive = activeVersion();
-        if (repository.activate(version, owner, segmentCount, now) != 1) return false;
+        if (repository.activate(version, owner, segmentCount, now) != 1)
+            return false;
         if (!oldActive.isBlank() && !oldActive.equals(version)) {
             manifests.findById(oldActive).ifPresent(old -> {
                 old.setStatus("RETIRED");
@@ -91,7 +108,7 @@ public class LegalIndexVersionService implements LegalIndexVersionProvider {
             });
         }
         RagIndexManifestEntity active = manifests.findById(version)
-                .orElseThrow(() -> new IllegalStateException("索引 Manifest 不存在: " + version));
+            .orElseThrow(() -> new IllegalStateException("索引 Manifest 不存在: " + version));
         active.setStatus("ACTIVE");
         active.setSegmentCount(segmentCount);
         active.setQualityReportJson(qualityReportJson == null ? "{}" : qualityReportJson);
@@ -110,25 +127,27 @@ public class LegalIndexVersionService implements LegalIndexVersionProvider {
     @Transactional
     public boolean markStatus(String version, String owner, String status, String qualityReportJson) {
         return repository.findById("legal")
-                .filter(s -> version.equals(s.getBuildingVersion()) && owner.equals(s.getBuildOwner()))
-                .map(s -> manifests.findById(version).map(manifest -> {
-                    manifest.setStatus(status);
-                    if (qualityReportJson != null) manifest.setQualityReportJson(qualityReportJson);
-                    if ("REJECTED".equals(status)) {
-                        manifest.setFailureCode("PUBLICATION_GATE_REJECTED");
-                    } else {
-                        manifest.setFailureCode(null);
-                    }
-                    manifest.setUpdatedAt(LocalDateTime.now());
-                    manifests.save(manifest);
-                    return true;
-                }).orElse(false))
-                .orElse(false);
+            .filter(s -> version.equals(s.getBuildingVersion()) && owner.equals(s.getBuildOwner()))
+            .map(s -> manifests.findById(version).map(manifest -> {
+                manifest.setStatus(status);
+                if (qualityReportJson != null)
+                    manifest.setQualityReportJson(qualityReportJson);
+                if ("REJECTED".equals(status)) {
+                    manifest.setFailureCode("PUBLICATION_GATE_REJECTED");
+                }
+                else {
+                    manifest.setFailureCode(null);
+                }
+                manifest.setUpdatedAt(LocalDateTime.now(clock));
+                manifests.save(manifest);
+                return true;
+            }).orElse(false))
+            .orElse(false);
     }
 
     @Transactional
     public void release(String version, String owner) {
-        LocalDateTime now = LocalDateTime.now();
+        LocalDateTime now = LocalDateTime.now(clock);
         if (repository.releaseBuild(version, owner, now) == 1) {
             manifests.findById(version).ifPresent(candidate -> {
                 candidate.setStatus("FAILED");
@@ -140,64 +159,71 @@ public class LegalIndexVersionService implements LegalIndexVersionProvider {
     }
 
     /**
-     * 仅释放构建租约，不改写候选版本的终态。
-     * 用于发布门禁已经明确写入 REJECTED 的路径，避免通用失败清理把拒绝原因覆盖为 FAILED。
+     * 仅释放构建租约，不改写候选版本的终态。 用于发布门禁已经明确写入 REJECTED 的路径，避免通用失败清理把拒绝原因覆盖为 FAILED。
      */
     @Transactional
     public boolean releaseLease(String version, String owner) {
-        return repository.releaseBuild(version, owner, LocalDateTime.now()) == 1;
+        return repository.releaseBuild(version, owner, LocalDateTime.now(clock)) == 1;
     }
 
     /** 仅允许回滚到已成功发布过的 ACTIVE/RETIRED 版本。 */
     @Transactional
     public boolean rollback(String targetVersion) {
         // 与 cleanup 共用 legal_index_state 行锁，避免“刚回滚为 ACTIVE 又被并发清理”的竞态。
-        var state = repository.findForUpdate("legal")
-                .orElseThrow(() -> new IllegalStateException("法规索引状态行不存在"));
+        var state = repository.findForUpdate("legal").orElseThrow(() -> new IllegalStateException("法规索引状态行不存在"));
         RagIndexManifestEntity target = manifests.findById(targetVersion)
-                .orElseThrow(() -> new IllegalArgumentException("目标索引版本不存在"));
-        if (!java.util.Set.of("ACTIVE", "RETIRED").contains(target.getStatus())) {
+            .orElseThrow(() -> new IllegalArgumentException("目标索引版本不存在"));
+        if (!Set.of("ACTIVE", "RETIRED").contains(target.getStatus())) {
             throw new IllegalStateException("目标索引从未成功发布，禁止回滚");
         }
-        LocalDateTime now = LocalDateTime.now();
+        LocalDateTime now = LocalDateTime.now(clock);
         String oldActive = state.getActiveVersion() == null ? "" : state.getActiveVersion();
-        if (oldActive.equals(targetVersion)) return true;
+        if (oldActive.equals(targetVersion))
+            return true;
         state.setPreviousVersion(oldActive);
         state.setActiveVersion(targetVersion);
         state.setSegmentCount(target.getSegmentCount());
         state.setUpdatedAt(now);
         manifests.findById(oldActive).ifPresent(old -> {
-            old.setStatus("RETIRED"); old.setRetiredAt(now); old.setUpdatedAt(now); manifests.save(old);
+            old.setStatus("RETIRED");
+            old.setRetiredAt(now);
+            old.setUpdatedAt(now);
+            manifests.save(old);
         });
-        target.setStatus("ACTIVE"); target.setActivatedAt(now); target.setRetiredAt(null); target.setUpdatedAt(now);
+        target.setStatus("ACTIVE");
+        target.setActivatedAt(now);
+        target.setRetiredAt(null);
+        target.setUpdatedAt(now);
         manifests.save(target);
         return true;
     }
 
     /** 在中央状态行锁保护下把可清理版本转为 PURGING；一旦提交，rollback 将拒绝该版本。 */
     @Transactional
-    public boolean markPurgingIfSafe(String version, java.util.Set<String> additionallyProtected) {
-        var state = repository.findForUpdate("legal")
-                .orElseThrow(() -> new IllegalStateException("法规索引状态行不存在"));
+    public boolean markPurgingIfSafe(String version, Set<String> additionallyProtected) {
+        var state = repository.findForUpdate("legal").orElseThrow(() -> new IllegalStateException("法规索引状态行不存在"));
         if (version.equals(state.getActiveVersion()) || version.equals(state.getPreviousVersion())
                 || additionallyProtected.contains(version)) {
             return false;
         }
         return manifests.findById(version).map(manifest -> {
-            if (!java.util.Set.of("FAILED", "RETIRED", "PURGING").contains(manifest.getStatus())) return false;
+            if (!Set.of("FAILED", "RETIRED", "PURGING").contains(manifest.getStatus()))
+                return false;
             manifest.setStatus("PURGING");
-            manifest.setUpdatedAt(LocalDateTime.now());
+            manifest.setUpdatedAt(LocalDateTime.now(clock));
             manifests.save(manifest);
             return true;
         }).orElse(false);
     }
 
-    public java.util.List<RagIndexManifestEntity> manifests() {
+    public List<RagIndexManifestEntity> manifests() {
         return manifests.findAllByOrderByCreatedAtDesc();
     }
 
     public String previousVersion() {
-        return repository.findById("legal").map(s -> s.getPreviousVersion() == null ? "" : s.getPreviousVersion())
-                .orElse("");
+        return repository.findById("legal")
+            .map(s -> s.getPreviousVersion() == null ? "" : s.getPreviousVersion())
+            .orElse("");
     }
+
 }

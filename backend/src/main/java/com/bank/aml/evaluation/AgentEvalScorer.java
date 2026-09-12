@@ -2,8 +2,8 @@ package com.bank.aml.evaluation;
 
 import com.bank.aml.evaluation.AgentEvalReport.BinaryMetrics;
 import com.bank.aml.evaluation.AgentEvalReport.CaseResult;
-import com.bank.aml.evaluation.AgentEvalReport.CodeMetrics;
 import com.bank.aml.evaluation.AgentEvalReport.CitationMetrics;
+import com.bank.aml.evaluation.AgentEvalReport.CodeMetrics;
 import com.bank.aml.evaluation.AgentEvalReport.ForbiddenMetrics;
 import com.bank.aml.evaluation.AgentEvalReport.GuardrailMetrics;
 import com.bank.aml.evaluation.AgentEvalReport.LatencyMetrics;
@@ -12,16 +12,19 @@ import com.bank.aml.evaluation.AgentEvalReport.RiskMetrics;
 import com.bank.aml.evaluation.AgentEvalReport.SchemaMetrics;
 import com.bank.aml.evaluation.AgentEvalReport.TokenMetrics;
 import com.bank.aml.evaluation.AgentEvalReport.ToolMetrics;
-import org.springframework.stereotype.Component;
-
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.function.Function;
 import java.util.stream.Collectors;
+import org.springframework.stereotype.Component;
 
-/** Aggregates deterministic metrics; it never asks a second model to judge the first model. */
+/**
+ * Aggregates deterministic metrics; it never asks a second model to judge the first
+ * model.
+ */
 @Component
 public class AgentEvalScorer {
 
@@ -31,39 +34,28 @@ public class AgentEvalScorer {
         List<CaseResult> scored = cases.stream().filter(c -> "SCORED".equals(c.status())).toList();
         long strictPasses = scored.stream().filter(CaseResult::strictPass).count();
         long taskPasses = scored.stream().filter(CaseResult::endToEndTaskPass).count();
-        return new Aggregate(
-                strictPasses,
-                rate(strictPasses, cases.size()),
-                taskPasses,
-                rate(taskPasses, cases.size()),
-                schemaMetrics(cases),
-                riskMetrics(cases, CaseResult::actualRawRisk, CaseResult::actualRawEscalation),
-                riskMetrics(cases, CaseResult::finalRisk, c -> c.finalEscalation()),
-                guardrailMetrics(scored),
-                binaryMetrics(cases, CaseResult::actualRawEscalation),
-                binaryMetrics(cases, c -> c.finalEscalation()),
+        return new Aggregate(strictPasses, rate(strictPasses, cases.size()), taskPasses, rate(taskPasses, cases.size()),
+                schemaMetrics(cases), riskMetrics(cases, CaseResult::actualRawRisk, CaseResult::actualRawEscalation),
+                riskMetrics(cases, CaseResult::finalRisk, c -> c.finalEscalation()), guardrailMetrics(scored),
+                binaryMetrics(cases, CaseResult::actualRawEscalation), binaryMetrics(cases, c -> c.finalEscalation()),
                 codeMetrics(cases, CaseResult::requiredFindings, CaseResult::missingFindings,
                         CaseResult::unsupportedFindings),
                 codeMetrics(cases, CaseResult::requiredActions, CaseResult::missingActions,
                         CaseResult::unsupportedActions),
-                citationMetrics(cases),
-                toolMetrics(cases),
-                forbiddenMetrics(cases),
-                latencyMetrics(cases),
-                tokenMetrics(cases)
-        );
+                citationMetrics(cases), toolMetrics(cases), forbiddenMetrics(cases), latencyMetrics(cases),
+                tokenMetrics(cases));
     }
 
     private SchemaMetrics schemaMetrics(List<CaseResult> cases) {
         long successes = cases.stream().filter(c -> "SCORED".equals(c.status())).count();
         Map<String, Long> counts = cases.stream()
-                .flatMap(c -> c.schemaViolations().stream())
-                .collect(Collectors.groupingBy(Function.identity(), LinkedHashMap::new, Collectors.counting()));
+            .flatMap(c -> c.schemaViolations().stream())
+            .collect(Collectors.groupingBy(Function.identity(), LinkedHashMap::new, Collectors.counting()));
         return new SchemaMetrics(rate(successes, cases.size()), counts);
     }
 
     private RiskMetrics riskMetrics(List<CaseResult> cases, Function<CaseResult, String> prediction,
-                                    Function<CaseResult, Boolean> escalation) {
+            Function<CaseResult, Boolean> escalation) {
         Map<String, Map<String, Long>> confusion = emptyConfusion();
         long correct = 0;
         long highExpected = 0;
@@ -121,16 +113,10 @@ public class AgentEvalScorer {
             recalls.add(recall);
             f1Values.add(precision + recall == 0 ? 0 : 2 * precision * recall / (precision + recall));
         }
-        return new RiskMetrics(
-                rate(correct, cases.size()),
-                rate(highHit, highExpected),
+        return new RiskMetrics(rate(correct, cases.size()), rate(highHit, highExpected),
                 round(f1Values.stream().mapToDouble(Double::doubleValue).average().orElse(0) * 100),
                 round(recalls.stream().mapToDouble(Double::doubleValue).average().orElse(0) * 100),
-                cases.isEmpty() ? null : round(absoluteError / cases.size()),
-                under,
-                criticalMiss,
-                confusion
-        );
+                cases.isEmpty() ? null : round(absoluteError / cases.size()), under, criticalMiss, confusion);
     }
 
     private BinaryMetrics binaryMetrics(List<CaseResult> cases, Function<CaseResult, Boolean> prediction) {
@@ -140,42 +126,46 @@ public class AgentEvalScorer {
             Boolean predicted = prediction.apply(evalCase);
             boolean validPrediction = "SCORED".equals(evalCase.status()) && predicted != null;
             boolean actual = Boolean.TRUE.equals(predicted);
-            if (validPrediction && expected == actual) correct++;
-            if (validPrediction && actual) predictedPositive++;
-            if (expected) actualPositive++;
-            if (validPrediction && expected && actual) truePositive++;
-            if (expected && (!validPrediction || !actual)) falseNegative++;
+            if (validPrediction && expected == actual)
+                correct++;
+            if (validPrediction && actual)
+                predictedPositive++;
+            if (expected)
+                actualPositive++;
+            if (validPrediction && expected && actual)
+                truePositive++;
+            if (expected && (!validPrediction || !actual))
+                falseNegative++;
         }
         return new BinaryMetrics(rate(correct, cases.size()), rate(truePositive, predictedPositive),
                 rate(truePositive, actualPositive), falseNegative);
     }
 
-    private CodeMetrics codeMetrics(List<CaseResult> cases,
-                                    Function<CaseResult, List<String>> required,
-                                    Function<CaseResult, List<String>> missing,
-                                    Function<CaseResult, List<String>> unsupported) {
+    private CodeMetrics codeMetrics(List<CaseResult> cases, Function<CaseResult, List<String>> required,
+            Function<CaseResult, List<String>> missing, Function<CaseResult, List<String>> unsupported) {
         long requiredTotal = cases.stream().map(required).mapToLong(List::size).sum();
         long missingTotal = cases.stream().map(missing).mapToLong(List::size).sum();
         long unsupportedTotal = cases.stream().map(unsupported).mapToLong(List::size).sum();
         long emittedTotal = requiredTotal - missingTotal + unsupportedTotal;
         long fullCoverage = cases.stream().filter(c -> missing.apply(c).isEmpty()).count();
-        return new CodeMetrics(
-                rate(requiredTotal - missingTotal, requiredTotal),
-                rate(emittedTotal - unsupportedTotal, emittedTotal),
-                rate(fullCoverage, cases.size()),
-                unsupportedTotal
-        );
+        return new CodeMetrics(rate(requiredTotal - missingTotal, requiredTotal),
+                rate(emittedTotal - unsupportedTotal, emittedTotal), rate(fullCoverage, cases.size()),
+                unsupportedTotal);
     }
 
     private GuardrailMetrics guardrailMetrics(List<CaseResult> cases) {
         long upgrades = cases.stream().filter(c -> riskCode(c.finalRisk()) > riskCode(c.actualRawRisk())).count();
-        long falseUpgrades = cases.stream().filter(c -> riskCode(c.finalRisk()) > riskCode(c.actualRawRisk())
-                && !c.expectedRawRisk().equals(c.finalRisk())).count();
-        long preventedCritical = cases.stream().filter(c ->
-                isCriticalMiss(c, c.actualRawRisk(), c.actualRawEscalation())
-                        && !isCriticalMiss(c, c.finalRisk(), c.finalEscalation())).count();
-        Map<String, Long> rules = cases.stream().flatMap(c -> c.triggeredGuardrailRules().stream())
-                .collect(Collectors.groupingBy(Function.identity(), LinkedHashMap::new, Collectors.counting()));
+        long falseUpgrades = cases.stream()
+            .filter(c -> riskCode(c.finalRisk()) > riskCode(c.actualRawRisk())
+                    && !c.expectedRawRisk().equals(c.finalRisk()))
+            .count();
+        long preventedCritical = cases.stream()
+            .filter(c -> isCriticalMiss(c, c.actualRawRisk(), c.actualRawEscalation())
+                    && !isCriticalMiss(c, c.finalRisk(), c.finalEscalation()))
+            .count();
+        Map<String, Long> rules = cases.stream()
+            .flatMap(c -> c.triggeredGuardrailRules().stream())
+            .collect(Collectors.groupingBy(Function.identity(), LinkedHashMap::new, Collectors.counting()));
         return new GuardrailMetrics(upgrades, falseUpgrades, preventedCritical, rules);
     }
 
@@ -197,29 +187,33 @@ public class AgentEvalScorer {
             }
         }
         long precisionDenominator = matched + invalidArgs + duplicates + failures;
-        return new ToolMetrics(rate(matched, required), rate(matched, precisionDenominator),
-                rate(validCalls, allCalls), rate(exactCases, cases.size()), invalidArgs, duplicates, failures,
+        return new ToolMetrics(rate(matched, required), rate(matched, precisionDenominator), rate(validCalls, allCalls),
+                rate(exactCases, cases.size()), invalidArgs, duplicates, failures,
                 cases.isEmpty() ? 0 : round((double) allCalls / cases.size()));
     }
 
     private CitationMetrics citationMetrics(List<CaseResult> cases) {
         long required = cases.stream().mapToLong(c -> c.requiredEvidenceIds().size()).sum();
         long missing = cases.stream().mapToLong(c -> c.missingEvidenceIds().size()).sum();
-        long full = cases.stream().filter(c -> c.missingEvidenceIds().isEmpty()
-                && "SCORED".equals(c.status())).count();
+        long full = cases.stream().filter(c -> c.missingEvidenceIds().isEmpty() && "SCORED".equals(c.status())).count();
         return new CitationMetrics(rate(required - missing, required), rate(full, cases.size()));
     }
 
     private ForbiddenMetrics forbiddenMetrics(List<CaseResult> cases) {
-        long pass = cases.stream().flatMap(c -> c.forbiddenChecks().stream())
-                .filter(check -> "PASS".equals(check.status())).count();
-        long violations = cases.stream().flatMap(c -> c.forbiddenChecks().stream())
-                .filter(check -> "VIOLATION".equals(check.status())).count();
-        long unscorable = cases.stream().flatMap(c -> c.forbiddenChecks().stream())
-                .filter(check -> "UNSCORABLE".equals(check.status())).count();
+        long pass = cases.stream()
+            .flatMap(c -> c.forbiddenChecks().stream())
+            .filter(check -> "PASS".equals(check.status()))
+            .count();
+        long violations = cases.stream()
+            .flatMap(c -> c.forbiddenChecks().stream())
+            .filter(check -> "VIOLATION".equals(check.status()))
+            .count();
+        long unscorable = cases.stream()
+            .flatMap(c -> c.forbiddenChecks().stream())
+            .filter(check -> "UNSCORABLE".equals(check.status()))
+            .count();
         long expectedChecks = cases.stream().mapToLong(c -> c.expectedForbiddenClaims().size()).sum();
-        return new ForbiddenMetrics(rate(pass, pass + violations),
-                rate(pass + violations, expectedChecks), violations,
+        return new ForbiddenMetrics(rate(pass, pass + violations), rate(pass + violations, expectedChecks), violations,
                 Math.max(unscorable, expectedChecks - pass - violations));
     }
 
@@ -230,20 +224,30 @@ public class AgentEvalScorer {
 
     private TokenMetrics tokenMetrics(List<CaseResult> cases) {
         return new TokenMetrics(
-                cases.stream().map(CaseResult::model).filter(java.util.Objects::nonNull)
-                        .mapToLong(AgentEvalModelObserver.Snapshot::inputTokens).sum(),
-                cases.stream().map(CaseResult::model).filter(java.util.Objects::nonNull)
-                        .mapToLong(AgentEvalModelObserver.Snapshot::outputTokens).sum(),
-                cases.stream().map(CaseResult::model).filter(java.util.Objects::nonNull)
-                        .mapToLong(AgentEvalModelObserver.Snapshot::totalTokens).sum(),
-                cases.stream().map(CaseResult::model).filter(java.util.Objects::nonNull)
-                        .mapToInt(AgentEvalModelObserver.Snapshot::requestCount).sum()
-        );
+                cases.stream()
+                    .map(CaseResult::model)
+                    .filter(Objects::nonNull)
+                    .mapToLong(AgentEvalModelObserver.Snapshot::inputTokens)
+                    .sum(),
+                cases.stream()
+                    .map(CaseResult::model)
+                    .filter(Objects::nonNull)
+                    .mapToLong(AgentEvalModelObserver.Snapshot::outputTokens)
+                    .sum(),
+                cases.stream()
+                    .map(CaseResult::model)
+                    .filter(Objects::nonNull)
+                    .mapToLong(AgentEvalModelObserver.Snapshot::totalTokens)
+                    .sum(),
+                cases.stream()
+                    .map(CaseResult::model)
+                    .filter(Objects::nonNull)
+                    .mapToInt(AgentEvalModelObserver.Snapshot::requestCount)
+                    .sum());
     }
 
     static Rate rate(long numerator, long denominator) {
-        return new Rate(numerator, denominator,
-                denominator == 0 ? null : round(100.0 * numerator / denominator));
+        return new Rate(numerator, denominator, denominator == 0 ? null : round(100.0 * numerator / denominator));
     }
 
     private Map<String, Map<String, Long>> emptyConfusion() {
@@ -275,7 +279,8 @@ public class AgentEvalScorer {
     }
 
     private long percentile(long[] values, double percentile) {
-        if (values.length == 0) return 0;
+        if (values.length == 0)
+            return 0;
         int index = Math.max(0, (int) Math.ceil(percentile * values.length) - 1);
         return values[index];
     }
@@ -284,24 +289,11 @@ public class AgentEvalScorer {
         return Math.round(value * 10.0) / 10.0;
     }
 
-    public record Aggregate(
-            long strictPassCount,
-            Rate strictPassRate,
-            long taskPassCount,
-            Rate taskPassRate,
-            SchemaMetrics schema,
-            RiskMetrics rawRisk,
-            RiskMetrics finalRisk,
-            GuardrailMetrics guardrails,
-            BinaryMetrics rawEscalation,
-            BinaryMetrics finalEscalation,
-            CodeMetrics findings,
-            CodeMetrics actions,
-            CitationMetrics citations,
-            ToolMetrics tools,
-            ForbiddenMetrics forbiddenClaims,
-            LatencyMetrics latency,
-            TokenMetrics tokens
-    ) {
+    public record Aggregate(long strictPassCount, Rate strictPassRate, long taskPassCount, Rate taskPassRate,
+            SchemaMetrics schema, RiskMetrics rawRisk, RiskMetrics finalRisk, GuardrailMetrics guardrails,
+            BinaryMetrics rawEscalation, BinaryMetrics finalEscalation, CodeMetrics findings, CodeMetrics actions,
+            CitationMetrics citations, ToolMetrics tools, ForbiddenMetrics forbiddenClaims, LatencyMetrics latency,
+            TokenMetrics tokens) {
     }
+
 }

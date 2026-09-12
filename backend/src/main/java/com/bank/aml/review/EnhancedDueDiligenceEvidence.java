@@ -7,7 +7,7 @@ import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.PrePersist;
 import jakarta.persistence.Table;
-
+import java.time.Clock;
 import java.time.LocalDateTime;
 
 /** 补充尽调证据的可信元数据索引；附件正文仍由来源系统保管。 */
@@ -49,26 +49,82 @@ public class EnhancedDueDiligenceEvidence {
 
     @PrePersist
     void onCreate() {
-        if (createdAt == null) createdAt = LocalDateTime.now();
-        if (capturedAt == null) capturedAt = createdAt;
+        if (createdAt == null)
+            createdAt = LocalDateTime.now(Clock.systemUTC());
+        if (capturedAt == null)
+            capturedAt = createdAt;
     }
 
-    public Long getId() { return id; }
-    public Long getRequestId() { return requestId; }
-    public void setRequestId(Long requestId) { this.requestId = requestId; }
-    public Long getCaseId() { return caseId; }
-    public void setCaseId(Long caseId) { this.caseId = caseId; }
-    public String getRequiredItemCode() { return requiredItemCode; }
-    public void setRequiredItemCode(String requiredItemCode) { this.requiredItemCode = requiredItemCode; }
-    public String getSourceSystem() { return sourceSystem; }
-    public void setSourceSystem(String sourceSystem) { this.sourceSystem = sourceSystem; }
-    public String getSourceReference() { return sourceReference; }
-    public void setSourceReference(String sourceReference) { this.sourceReference = sourceReference; }
-    public String getContentSha256() { return contentSha256; }
-    public void setContentSha256(String contentSha256) { this.contentSha256 = contentSha256; }
-    public String getCapturedBy() { return capturedBy; }
-    public void setCapturedBy(String capturedBy) { this.capturedBy = capturedBy; }
-    public LocalDateTime getCapturedAt() { return capturedAt; }
-    public void setCapturedAt(LocalDateTime capturedAt) { this.capturedAt = capturedAt; }
-    public LocalDateTime getCreatedAt() { return createdAt; }
+    public Long getId() {
+        return id;
+    }
+
+    public Long getRequestId() {
+        return requestId;
+    }
+
+    public void setRequestId(Long requestId) {
+        this.requestId = requestId;
+    }
+
+    public Long getCaseId() {
+        return caseId;
+    }
+
+    public void setCaseId(Long caseId) {
+        this.caseId = caseId;
+    }
+
+    public String getRequiredItemCode() {
+        return requiredItemCode;
+    }
+
+    public void setRequiredItemCode(String requiredItemCode) {
+        this.requiredItemCode = requiredItemCode;
+    }
+
+    public String getSourceSystem() {
+        return sourceSystem;
+    }
+
+    public void setSourceSystem(String sourceSystem) {
+        this.sourceSystem = sourceSystem;
+    }
+
+    public String getSourceReference() {
+        return sourceReference;
+    }
+
+    public void setSourceReference(String sourceReference) {
+        this.sourceReference = sourceReference;
+    }
+
+    public String getContentSha256() {
+        return contentSha256;
+    }
+
+    public void setContentSha256(String contentSha256) {
+        this.contentSha256 = contentSha256;
+    }
+
+    public String getCapturedBy() {
+        return capturedBy;
+    }
+
+    public void setCapturedBy(String capturedBy) {
+        this.capturedBy = capturedBy;
+    }
+
+    public LocalDateTime getCapturedAt() {
+        return capturedAt;
+    }
+
+    public void setCapturedAt(LocalDateTime capturedAt) {
+        this.capturedAt = capturedAt;
+    }
+
+    public LocalDateTime getCreatedAt() {
+        return createdAt;
+    }
+
 }

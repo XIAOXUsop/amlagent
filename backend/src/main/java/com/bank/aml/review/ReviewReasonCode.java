@@ -1,9 +1,11 @@
 package com.bank.aml.review;
 
+import com.bank.aml.domain.ReviewDecision;
 import java.util.Locale;
 
 /** 可审计的处置原因码；自由文本仅用于补充分析过程。 */
 public enum ReviewReasonCode {
+
     TRANSACTION_PATTERN_INCONSISTENT(ReviewDecision.CONFIRM_SUSPICIOUS),
     SANCTIONS_OR_WATCHLIST_MATCH(ReviewDecision.CONFIRM_SUSPICIOUS),
     SOURCE_OF_FUNDS_UNCLEAR(ReviewDecision.CONFIRM_SUSPICIOUS),
@@ -32,7 +34,8 @@ public enum ReviewReasonCode {
         final ReviewReasonCode reason;
         try {
             reason = valueOf(value.trim().toUpperCase(Locale.ROOT));
-        } catch (IllegalArgumentException ignored) {
+        }
+        catch (IllegalArgumentException invalidReasonCode) {
             throw new IllegalArgumentException("非法处置原因码：" + value);
         }
         if (reason.decision != decision) {
@@ -40,4 +43,5 @@ public enum ReviewReasonCode {
         }
         return reason;
     }
+
 }

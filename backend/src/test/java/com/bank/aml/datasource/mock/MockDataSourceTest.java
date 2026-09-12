@@ -3,10 +3,9 @@ package com.bank.aml.datasource.mock;
 import com.bank.aml.common.enums.CountryRegion;
 import com.bank.aml.domain.CustomerProfile;
 import com.bank.aml.domain.TransactionRecord;
+import java.util.List;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-
-import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -70,4 +69,5 @@ class MockDataSourceTest {
         assertThat(CountryRegion.HK.isCrossBorder()).isTrue();
         assertThat(CountryRegion.CHINA.isCrossBorder()).isFalse();
     }
+
 }

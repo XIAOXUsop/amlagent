@@ -5,7 +5,8 @@ import dev.langchain4j.service.UserMessage;
 
 /**
  * 基础合规尽调助手接口。
- * <p>通过 {@link dev.langchain4j.service.AiServices} 动态实现，验证普通对话与结构化输出（POJO 返回）。
+ * <p>
+ * 通过 {@link dev.langchain4j.service.AiServices} 动态实现，验证普通对话与结构化输出（POJO 返回）。
  */
 public interface AgentAssistant {
 
@@ -24,4 +25,5 @@ public interface AgentAssistant {
             只输出结果，不要解释。
             """)
     RiskSummary assess(@UserMessage String caseDescription);
+
 }

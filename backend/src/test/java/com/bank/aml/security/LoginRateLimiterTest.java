@@ -1,18 +1,18 @@
 package com.bank.aml.security;
 
 import com.bank.aml.common.exception.TooManyRequestsException;
+import java.time.Duration;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.ValueOperations;
-
-import java.time.Duration;
 
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.contains;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.mock;
@@ -24,9 +24,12 @@ import static org.mockito.Mockito.when;
 class LoginRateLimiterTest {
 
     private final StringRedisTemplate redis = mock(StringRedisTemplate.class);
+
     @SuppressWarnings("unchecked")
     private final ValueOperations<String, String> values = mock(ValueOperations.class);
+
     private final LoginRateLimitProperties props = new LoginRateLimitProperties();
+
     private final LoginRateLimiter limiter = new LoginRateLimiter(props, redis);
 
     @BeforeEach
@@ -41,7 +44,7 @@ class LoginRateLimiterTest {
         when(redis.hasKey("aml:login:lock:10.0.0.1|alice")).thenReturn(true);
 
         assertThatThrownBy(() -> limiter.checkBlocked("10.0.0.1", "alice"))
-                .isInstanceOf(TooManyRequestsException.class);
+            .isInstanceOf(TooManyRequestsException.class);
     }
 
     @Test
@@ -51,8 +54,7 @@ class LoginRateLimiterTest {
 
         limiter.recordFailure("10.0.0.1", "alice");
 
-        verify(values).set(org.mockito.ArgumentMatchers.eq("aml:login:lock:10.0.0.1|alice"),
-                org.mockito.ArgumentMatchers.eq("1"), any(Duration.class));
+        verify(values).set(eq("aml:login:lock:10.0.0.1|alice"), eq("1"), any(Duration.class));
         verify(redis).delete("aml:login:fail:10.0.0.1|alice");
     }
 
@@ -64,7 +66,7 @@ class LoginRateLimiterTest {
         limiter.recordFailure("10.0.0.1", "bob");
 
         verify(values).increment("aml:login:fail:10.0.0.1|bob");
-        verify(redis).expire(org.mockito.ArgumentMatchers.eq("aml:login:fail:10.0.0.1|bob"), any(Duration.class));
+        verify(redis).expire(eq("aml:login:fail:10.0.0.1|bob"), any(Duration.class));
         verify(values, never()).set(anyString(), anyString(), any(Duration.class));
     }
 
@@ -94,4 +96,5 @@ class LoginRateLimiterTest {
         verify(redis, never()).hasKey(anyString());
         verify(redis, never()).delete(contains("alice"));
     }
+
 }

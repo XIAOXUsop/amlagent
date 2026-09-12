@@ -5,11 +5,15 @@ backend/src/main/resources/application-local*.yml
 *.key
 *.pem
 .env
+!frontend/.env
 
 # ===== 构建产物 =====
 backend/target/
 frontend/node_modules/
 frontend/dist/
+frontend/coverage/
+frontend/playwright-report/
+frontend/test-results/
 *.class
 
 # ===== 日志 / 临时文件 =====
@@ -19,6 +23,9 @@ frontend/dist/
 e2e_*.py
 verify_*.py
 *.out.txt
+.ruff_cache/
+__pycache__/
+.venv/
 
 # ===== 运行时生成的 RAG 法规索引版本（启动时重算，不提交）=====
 backend/data/**/.index-version

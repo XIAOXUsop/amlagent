@@ -1,6 +1,6 @@
 # AI 小助 V1 分阶段对抗性审查记录
 
-> 日期：2026-08-23  
+> 日期：2026-08-23
 > 依据：`docs/specs/ai-customer-assistant-v1-spec.md` 与 `docs/plans/ai-customer-assistant-v1-implementation-plan.md`
 
 ## 审查规则

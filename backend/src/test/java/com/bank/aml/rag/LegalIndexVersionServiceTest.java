@@ -1,15 +1,18 @@
 package com.bank.aml.rag;
 
+import com.bank.aml.TestClocks;
+import com.bank.aml.config.RagProperties;
 import com.bank.aml.datasource.entity.LegalIndexStateEntity;
 import com.bank.aml.datasource.entity.RagIndexManifestEntity;
 import com.bank.aml.datasource.repository.LegalIndexStateRepository;
 import com.bank.aml.datasource.repository.RagIndexManifestRepository;
-import org.junit.jupiter.api.Test;
-
 import java.util.Optional;
 import java.util.Set;
+import org.junit.jupiter.api.Test;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -18,8 +21,11 @@ import static org.mockito.Mockito.when;
 class LegalIndexVersionServiceTest {
 
     private final LegalIndexStateRepository states = mock(LegalIndexStateRepository.class);
+
     private final RagIndexManifestRepository manifests = mock(RagIndexManifestRepository.class);
-    private final LegalIndexVersionService service = new LegalIndexVersionService(states, manifests);
+
+    private final LegalIndexVersionService service = new LegalIndexVersionService(states, manifests,
+            new RagProperties(), TestClocks.FIXED);
 
     @Test
     void cleanupTransitionCannotMarkCurrentActiveVersionAsPurging() {
@@ -53,9 +59,7 @@ class LegalIndexVersionServiceTest {
 
     @Test
     void releasingRejectedLeaseDoesNotOverwriteManifestTerminalStatus() {
-        when(states.releaseBuild(org.mockito.ArgumentMatchers.eq("rejected"),
-                org.mockito.ArgumentMatchers.eq("owner"), org.mockito.ArgumentMatchers.any()))
-                .thenReturn(1);
+        when(states.releaseBuild(eq("rejected"), eq("owner"), any())).thenReturn(1);
 
         assertThat(service.releaseLease("rejected", "owner")).isTrue();
 
@@ -69,4 +73,5 @@ class LegalIndexVersionServiceTest {
         entity.setSegmentCount(segments);
         return entity;
     }
+
 }

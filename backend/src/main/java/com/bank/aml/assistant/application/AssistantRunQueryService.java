@@ -7,7 +7,9 @@ import org.springframework.transaction.annotation.Transactional;
 
 @Service
 public class AssistantRunQueryService {
+
     private final AssistantRunRepository runs;
+
     private final AssistantConversationService conversations;
 
     public AssistantRunQueryService(AssistantRunRepository runs, AssistantConversationService conversations) {
@@ -21,4 +23,5 @@ public class AssistantRunQueryService {
         conversations.get(run.getConversationId(), operatorUsername);
         return run;
     }
+
 }

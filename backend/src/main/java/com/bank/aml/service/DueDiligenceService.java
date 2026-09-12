@@ -1,8 +1,8 @@
 package com.bank.aml.service;
 
-import com.bank.aml.agent.DueDiligenceAgentFactory;
 import com.bank.aml.agent.AgentAnalysis;
 import com.bank.aml.agent.AgentReportStabilizer;
+import com.bank.aml.agent.DueDiligenceAgentFactory;
 import com.bank.aml.agent.DueDiligenceContext;
 import com.bank.aml.agent.DueDiligenceReport;
 import com.bank.aml.agent.InvestigationSnapshotFactory;
@@ -14,101 +14,151 @@ import com.bank.aml.common.exception.NonRetryableWorkflowException;
 import com.bank.aml.common.exception.RetryableWorkflowException;
 import com.bank.aml.common.exception.WorkflowStateConflictException;
 import com.bank.aml.common.fault.FaultInjector;
+import com.bank.aml.config.AmlProperties;
 import com.bank.aml.config.LlmProperties;
 import com.bank.aml.config.LlmProviderProperties;
 import com.bank.aml.cost.CostRouter;
-import com.bank.aml.security.PromptInjectionGuard;
+import com.bank.aml.datasource.CustomerDataPort;
 import com.bank.aml.datasource.entity.CaseEntity;
 import com.bank.aml.datasource.entity.CaseLogEntity;
-import com.bank.aml.datasource.CustomerDataPort;
+import com.bank.aml.datasource.repository.CaseLogRepository;
+import com.bank.aml.datasource.repository.CaseRepository;
 import com.bank.aml.domain.CustomerProfile;
 import com.bank.aml.domain.InvestigationAlertSnapshot;
 import com.bank.aml.domain.InvestigationSnapshot;
-import com.bank.aml.datasource.repository.CaseLogRepository;
-import com.bank.aml.datasource.repository.CaseRepository;
-import com.bank.aml.agent.AlertSnapshotAssembler;
+import com.bank.aml.investigation.AlertSnapshotAssembler;
+import com.bank.aml.investigation.AlertStatus;
 import com.bank.aml.investigation.AmlAlertRepository;
-import com.bank.aml.messaging.WorkflowCommandService;
 import com.bank.aml.investigation.CaseIntakeService;
 import com.bank.aml.messaging.ExecutionLease;
+import com.bank.aml.messaging.WorkflowCommandService;
+import com.bank.aml.messaging.WorkflowProcessor;
 import com.bank.aml.observability.MetricsRecorder;
+import com.bank.aml.security.PromptInjectionGuard;
 import com.bank.aml.tools.ToolExecutionTrace;
 import com.bank.aml.tools.ToolExecutionTraceEntity;
 import com.bank.aml.tools.ToolExecutionTraceRepository;
-import com.bank.aml.workflow.CaseExecution;
 import com.bank.aml.workflow.CaseExecution.ExecutionStatus;
+import com.bank.aml.workflow.CaseExecution;
 import com.bank.aml.workflow.CaseExecutionRepository;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Value;
-import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
-
+import java.time.Clock;
 import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Set;
+import java.util.stream.Collectors;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 /**
- * 尽调工作流编排：
- * PENDING → PLANNING → COLLECTING → REASONING → GUARDRAIL → REPORTING → DONE/HOLD/FAILED
- * <p>阶段执行均写入 {@link CaseExecution} 检查点；失败按异常类型抛出，由 Worker 决定重试/死信。
+ * 尽调工作流编排： PENDING → PLANNING → COLLECTING → REASONING → GUARDRAIL → REPORTING →
+ * DONE/HOLD/FAILED
+ * <p>
+ * 阶段执行均写入 {@link CaseExecution} 检查点；失败按异常类型抛出，由 Worker 决定重试/死信。
  */
 @Service
-public class DueDiligenceService {
+public class DueDiligenceService implements WorkflowProcessor {
 
     private static final Logger log = LoggerFactory.getLogger(DueDiligenceService.class);
 
     private final CaseRepository caseRepository;
+
     private final CaseLogRepository caseLogRepository;
+
     private final CaseExecutionRepository caseExecutionRepository;
+
     private final WorkflowCommandService workflowCommandService;
+
     private final MetricsRecorder metrics;
+
     private final DueDiligenceAgentFactory agentFactory;
+
     private final RuleBasedReporter ruleReporter;
+
     private final GuardrailEngine guardrailEngine;
+
     private final AgentOutputValidator agentOutputValidator;
+
     private final FinalDecisionAssembler finalDecisionAssembler;
+
     private final InvestigationSnapshotFactory snapshotFactory;
+
     private final WorkflowEventService workflowEventService;
+
     private final CustomerDataPort dataSource;
+
     private final AmlAlertRepository alertRepository;
+
     private final AlertSnapshotAssembler alertAssembler;
+
     private final FaultInjector faultInjector;
+
     private final PromptInjectionGuard promptInjectionGuard;
+
     private final CostRouter costRouter;
+
     private final boolean ruleFallbackEnabled;
+
     private final boolean summaryEnabled;
+
     private final FinalReportStreamingService finalReportStreamingService;
+
     private final SnapshotArchiveService snapshotArchiveService;
+
     private final ObjectMapper objectMapper;
+
     private final ToolExecutionTraceRepository toolTraceRepository;
+
     private final LlmProperties llmProperties;
+
     private final CaseIntakeService caseIntakeService;
+
+    private final Clock clock;
 
     /** 阶段耗时测量（每工单独立） */
     private final ThreadLocal<LocalDateTime> lastStageAt = new ThreadLocal<>();
+
     /** 当前执行租约（每工单独立线程），用于旧 Worker 副作用隔离 */
     private final ThreadLocal<ExecutionLease> currentLease = new ThreadLocal<>();
 
+    @Autowired
     public DueDiligenceService(CaseRepository caseRepository, CaseLogRepository caseLogRepository,
-                               CaseExecutionRepository caseExecutionRepository, WorkflowCommandService workflowCommandService,
-                               MetricsRecorder metrics,
-                               DueDiligenceAgentFactory agentFactory, RuleBasedReporter ruleReporter,
-                               GuardrailEngine guardrailEngine, AgentOutputValidator agentOutputValidator,
-                               FinalDecisionAssembler finalDecisionAssembler,
-                               InvestigationSnapshotFactory snapshotFactory,
-                               WorkflowEventService workflowEventService,
-                               CustomerDataPort dataSource, AmlAlertRepository alertRepository,
-                               AlertSnapshotAssembler alertAssembler, FaultInjector faultInjector,
-                               PromptInjectionGuard promptInjectionGuard, CostRouter costRouter,
-                               @Value("${aml.cost-routing.rule-fallback-enabled:false}") boolean ruleFallbackEnabled,
-                               @Value("${aml.cost-routing.summary-enabled:false}") boolean summaryEnabled,
-                               FinalReportStreamingService finalReportStreamingService, ObjectMapper objectMapper,
-                               SnapshotArchiveService snapshotArchiveService,
-                               ToolExecutionTraceRepository toolTraceRepository, LlmProperties llmProperties,
-                               CaseIntakeService caseIntakeService) {
+            CaseExecutionRepository caseExecutionRepository, WorkflowCommandService workflowCommandService,
+            MetricsRecorder metrics, DueDiligenceAgentFactory agentFactory, RuleBasedReporter ruleReporter,
+            GuardrailEngine guardrailEngine, AgentOutputValidator agentOutputValidator,
+            FinalDecisionAssembler finalDecisionAssembler, InvestigationSnapshotFactory snapshotFactory,
+            WorkflowEventService workflowEventService, CustomerDataPort dataSource, AmlAlertRepository alertRepository,
+            AlertSnapshotAssembler alertAssembler, FaultInjector faultInjector,
+            PromptInjectionGuard promptInjectionGuard, CostRouter costRouter, AmlProperties properties,
+            FinalReportStreamingService finalReportStreamingService, ObjectMapper objectMapper,
+            SnapshotArchiveService snapshotArchiveService, ToolExecutionTraceRepository toolTraceRepository,
+            LlmProperties llmProperties, CaseIntakeService caseIntakeService, Clock clock) {
+        this(caseRepository, caseLogRepository, caseExecutionRepository, workflowCommandService, metrics, agentFactory,
+                ruleReporter, guardrailEngine, agentOutputValidator, finalDecisionAssembler, snapshotFactory,
+                workflowEventService, dataSource, alertRepository, alertAssembler, faultInjector, promptInjectionGuard,
+                costRouter, properties.costRouting().ruleFallbackEnabled(), properties.costRouting().summaryEnabled(),
+                finalReportStreamingService, objectMapper, snapshotArchiveService, toolTraceRepository, llmProperties,
+                caseIntakeService, clock);
+    }
+
+    public DueDiligenceService(CaseRepository caseRepository, CaseLogRepository caseLogRepository,
+            CaseExecutionRepository caseExecutionRepository, WorkflowCommandService workflowCommandService,
+            MetricsRecorder metrics, DueDiligenceAgentFactory agentFactory, RuleBasedReporter ruleReporter,
+            GuardrailEngine guardrailEngine, AgentOutputValidator agentOutputValidator,
+            FinalDecisionAssembler finalDecisionAssembler, InvestigationSnapshotFactory snapshotFactory,
+            WorkflowEventService workflowEventService, CustomerDataPort dataSource, AmlAlertRepository alertRepository,
+            AlertSnapshotAssembler alertAssembler, FaultInjector faultInjector,
+            PromptInjectionGuard promptInjectionGuard, CostRouter costRouter, boolean ruleFallbackEnabled,
+            boolean summaryEnabled, FinalReportStreamingService finalReportStreamingService, ObjectMapper objectMapper,
+            SnapshotArchiveService snapshotArchiveService, ToolExecutionTraceRepository toolTraceRepository,
+            LlmProperties llmProperties, CaseIntakeService caseIntakeService, Clock clock) {
         this.caseRepository = caseRepository;
         this.caseLogRepository = caseLogRepository;
         this.caseExecutionRepository = caseExecutionRepository;
@@ -135,6 +185,7 @@ public class DueDiligenceService {
         this.toolTraceRepository = toolTraceRepository;
         this.llmProperties = llmProperties;
         this.caseIntakeService = caseIntakeService;
+        this.clock = clock;
     }
 
     /** 创建预警工单；autoProcess=true 时与工单同事务写入 Outbox，自动触发尽调 */
@@ -153,21 +204,22 @@ public class DueDiligenceService {
         workflowCommandService.enqueueCaseCreated(caseId);
     }
 
-    /** 手动触发/开始调查：短事务内锁定案件并复查状态，仅 PENDING 可触发（否则 409）。
-     *  锁内复查避免“读取时 PENDING、入队时已被 Worker 抢占”的竞态；残留的旧版本消息仍由
-     *  Worker 抢占的 executionVersion 校验丢弃。启动前同步校验关联预警容量：超限时案件保持
-     *  可拆分的 PENDING 状态，不会进入执行后才失败。 */
+    /**
+     * 手动触发/开始调查：短事务内锁定案件并复查状态，仅 PENDING 可触发（否则 409）。 锁内复查避免“读取时 PENDING、入队时已被 Worker
+     * 抢占”的竞态；残留的旧版本消息仍由 Worker 抢占的 executionVersion 校验丢弃。启动前同步校验关联预警容量：超限时案件保持 可拆分的
+     * PENDING 状态，不会进入执行后才失败。
+     */
     @Transactional
     public void trigger(Long caseId) {
         CaseEntity c = caseRepository.findByIdForUpdate(caseId)
-                .orElseThrow(() -> new IllegalArgumentException("工单不存在：" + caseId));
+            .orElseThrow(() -> new IllegalArgumentException("工单不存在：" + caseId));
         if (c.getStatus() != CaseStatus.PENDING) {
-            throw new WorkflowStateConflictException(caseId, c.getStatus(), java.util.Set.of(CaseStatus.PENDING));
+            throw new WorkflowStateConflictException(caseId, c.getStatus(), Set.of(CaseStatus.PENDING));
         }
-        long linkedAlerts = alertRepository.countByCaseIdAndStatus(caseId, com.bank.aml.investigation.AlertStatus.LINKED);
+        long linkedAlerts = alertRepository.countByCaseIdAndStatus(caseId, AlertStatus.LINKED);
         if (linkedAlerts > alertAssembler.capacity()) {
-            throw new IllegalStateException("案件关联预警 " + linkedAlerts + " 条超出单次尽调容量上限 "
-                    + alertAssembler.capacity() + "；请先拆分预警后再开始调查");
+            throw new IllegalStateException(
+                    "案件关联预警 " + linkedAlerts + " 条超出单次尽调容量上限 " + alertAssembler.capacity() + "；请先拆分预警后再开始调查");
         }
         workflowCommandService.triggerManual(caseId, c.getExecutionVersion());
     }
@@ -178,15 +230,14 @@ public class DueDiligenceService {
     }
 
     /**
-     * 执行尽调工作流（由 Worker 消费任务后调用）。
-     * 正常完成置 DONE/HOLD；失败按异常类型抛出（重试/不可重试），由 Worker 决定重试策略。
+     * 执行尽调工作流（由 Worker 消费任务后调用）。 正常完成置 DONE/HOLD；失败按异常类型抛出（重试/不可重试），由 Worker 决定重试策略。
      */
     public CaseEntity process(Long caseId, String worker, int executionVersion, ExecutionLease lease) {
         lastStageAt.remove();
         currentLease.set(lease);
         DueDiligenceReport streamingReport = null;
         CaseEntity c = caseRepository.findById(caseId)
-                .orElseThrow(() -> new NonRetryableWorkflowException("工单不存在：" + caseId));
+            .orElseThrow(() -> new NonRetryableWorkflowException("工单不存在：" + caseId));
 
         try {
             // 0. Prompt 注入检测（代码层确定性防护，命中仍继续由模型按 prompt 隔离处理）
@@ -205,30 +256,29 @@ public class DueDiligenceService {
             record(c, WorkflowStage.COLLECTING, "成本路由：" + route);
 
             CustomerProfile customer = dataSource.findCustomer(c.getCustomerId())
-                    .orElseThrow(() -> new NonRetryableWorkflowException("客户不存在：" + c.getCustomerId()));
+                .orElseThrow(() -> new NonRetryableWorkflowException("客户不存在：" + c.getCustomerId()));
             // Worker 抢占案件后冻结关联预警：归并/拆分只能在 PENDING 案件上完成，抢占后的归并必然失败，
             // 因此本读取结果就是本次执行的案件边界；模型、法规预检索与加密归档共用同一份预警集合。
             List<InvestigationAlertSnapshot> frozenAlerts = alertAssembler.fromLinkedAlerts(c.getId(),
                     alertRepository.findByCaseIdOrderByOccurredAtAsc(c.getId()));
             if (c.getInvestigationContractVersion() >= 1 && frozenAlerts.isEmpty()) {
-                throw new NonRetryableWorkflowException("案件没有有效关联预警，调查契约 v"
-                        + c.getInvestigationContractVersion() + " 要求冻结预警事实后才能开始尽调");
+                throw new NonRetryableWorkflowException(
+                        "案件没有有效关联预警，调查契约 v" + c.getInvestigationContractVersion() + " 要求冻结预警事实后才能开始尽调");
             }
             // 命中原因是模型可控输入，注入检测扩展到全部关联预警；命中仍继续由 prompt 隔离处理。
             for (InvestigationAlertSnapshot alert : frozenAlerts) {
-                PromptInjectionGuard.InjectionResult alertInjection =
-                        promptInjectionGuard.scan(alert.hitReason());
+                PromptInjectionGuard.InjectionResult alertInjection = promptInjectionGuard.scan(alert.hitReason());
                 if (alertInjection.suspicious()) {
-                    record(c, WorkflowStage.PLANNING, "⚠ 预警 [" + alert.externalAlertId()
-                            + "] 命中原因疑似提示注入：" + alertInjection.matchedPatterns());
+                    record(c, WorkflowStage.PLANNING,
+                            "⚠ 预警 [" + alert.externalAlertId() + "] 命中原因疑似提示注入：" + alertInjection.matchedPatterns());
                 }
             }
-            InvestigationSnapshot snapshot = snapshotFactory.create(c.getId(), executionVersion, customer,
-                    null, frozenAlerts);
+            InvestigationSnapshot snapshot = snapshotFactory.create(c.getId(), executionVersion, customer, null,
+                    frozenAlerts);
             // 审计前置：快照无法持久化时禁止继续调用模型，避免产出无法回放的合规结论。
             snapshotArchiveService.archive(snapshot);
-            record(c, WorkflowStage.COLLECTING, "尽调快照已冻结 snapshotId=" + snapshot.snapshotId()
-                    + " sourceDigest=" + snapshot.sourceDigest());
+            record(c, WorkflowStage.COLLECTING,
+                    "尽调快照已冻结 snapshotId=" + snapshot.snapshotId() + " sourceDigest=" + snapshot.sourceDigest());
 
             DueDiligenceContext context = buildContext(snapshot, c);
             record(c, WorkflowStage.COLLECTING, "调用工具并行采集数据（交易画像 / 股权穿透 / 黑名单 / 法规检索）...");
@@ -251,28 +301,33 @@ public class DueDiligenceService {
                 if (rawAgentReport != null) {
                     // 原始留痕只保存模型边界 DTO，禁止把后端随后补入的可信身份字段混入模型原文。
                     c.setRawReportJson(writeJson(rawAgentAnalysis));
-                    DueDiligenceReport stabilizedReport = AgentReportStabilizer
-                            .attachFrozenLegalEvidence(snapshot, rawAgentReport,
-                                    agentWithTools.tools().traces().stream()
-                                            .filter(trace -> trace.success() && "searchLegal".equals(trace.toolName()))
-                                            .flatMap(trace -> trace.evidenceIds().stream())
-                                            .distinct()
-                                            .toList());
-                    AgentOutputValidator.ValidationResult validation = agentOutputValidator.validate(snapshot, stabilizedReport);
+                    DueDiligenceReport stabilizedReport = AgentReportStabilizer.attachFrozenLegalEvidence(snapshot,
+                            rawAgentReport,
+                            agentWithTools.tools()
+                                .traces()
+                                .stream()
+                                .filter(trace -> trace.success() && "searchLegal".equals(trace.toolName()))
+                                .flatMap(trace -> trace.evidenceIds().stream())
+                                .distinct()
+                                .toList());
+                    AgentOutputValidator.ValidationResult validation = agentOutputValidator.validate(snapshot,
+                            stabilizedReport);
                     if (validation.valid()) {
                         report = stabilizedReport;
-                    } else {
+                    }
+                    else {
                         outputViolations = validation.violations();
-                        record(c, WorkflowStage.REASONING,
-                                "Agent 输出未通过生产契约校验：" + String.join(",", outputViolations));
+                        record(c, WorkflowStage.REASONING, "Agent 输出未通过生产契约校验：" + String.join(",", outputViolations));
                     }
                 }
-            } catch (Exception e) {
+            }
+            catch (Exception e) {
                 // 保留完整堆栈：Agent 故障是运维关键信号，不能只记一句话被静默掩盖
                 log.warn("Agent 调用失败，进入规则降级 caseId={}", caseId, e);
                 agentFailure = e;
                 report = null;
-            } finally {
+            }
+            finally {
                 // Agent 异常/工具轮次耗尽时也保留已执行的部分工具轨迹
                 if (agentWithTools != null) {
                     persistToolTraces(c, snapshot, agentWithTools.tools().traces());
@@ -294,7 +349,8 @@ public class DueDiligenceService {
                 reportSource = "AGENT_INVALID_HOLD";
                 forceSafetyHold = true;
                 metrics.caseLlmFallback();
-            } else if (report == null && ruleFallbackEnabled) {
+            }
+            else if (report == null && ruleFallbackEnabled) {
                 DueDiligenceReport fallback = ruleReporter.generate(snapshot, c.getAlertRule());
                 if (fallback != null) {
                     report = fallback;
@@ -303,8 +359,7 @@ public class DueDiligenceService {
                 }
             }
             if (report == null) {
-                throw new RetryableWorkflowException(
-                        "Agent 调用失败且规则降级未启用", agentFailure);
+                throw new RetryableWorkflowException("Agent 调用失败且规则降级未启用", agentFailure);
             }
 
             // 4. 规则护栏（基于与 Agent 相同的冻结快照，不二次读取数据源）
@@ -312,9 +367,10 @@ public class DueDiligenceService {
             String decisionInputRiskLevel = report.riskLevel();
             String rawAgentRiskLevel = rawAgentReport == null ? decisionInputRiskLevel : rawAgentReport.riskLevel();
             GuardrailEngine.GuardrailResult gr = guardrailEngine.apply(snapshot, report);
-            gr.decision().triggeredRules().forEach(r -> record(c, WorkflowStage.GUARDRAIL,
-                    "触发规则【" + r.ruleCode() + " v" + r.ruleVersion() + "】→ " + r.targetRiskLevel()
-                            + "，动作 " + r.action() + "，证据：" + r.evidence()));
+            gr.decision()
+                .triggeredRules()
+                .forEach(r -> record(c, WorkflowStage.GUARDRAIL, "触发规则【" + r.ruleCode() + " v" + r.ruleVersion() + "】→ "
+                        + r.targetRiskLevel() + "，动作 " + r.action() + "，证据：" + r.evidence()));
             gr.corrections().forEach(corr -> record(c, WorkflowStage.GUARDRAIL, corr));
             if (!gr.corrections().isEmpty()) {
                 metrics.guardrailCorrection();
@@ -324,8 +380,7 @@ public class DueDiligenceService {
             boolean contractManualReviewRequired = c.getInvestigationContractVersion() >= 1;
             if (contractManualReviewRequired) {
                 record(c, WorkflowStage.GUARDRAIL,
-                        "调查契约 v" + c.getInvestigationContractVersion()
-                                + " 要求人工最终处置：自动分析完成后案件保持人工处理状态，最终评级与建议以本报告为准。");
+                        "调查契约 v" + c.getInvestigationContractVersion() + " 要求人工最终处置：自动分析完成后案件保持人工处理状态，最终评级与建议以本报告为准。");
             }
             // 同步最终报告字段（风险评级 / 人工复核标志 / 处置代码）；契约策略与模型违规同样强制人工标志，
             // 保证案件状态、manualReviewRequired、MANUAL_REVIEW 动作码与正文一致。
@@ -336,25 +391,31 @@ public class DueDiligenceService {
                         "最终决策报告未通过生产契约校验：" + String.join(",", finalValidation.violations()));
             }
             if (!gr.finalRiskLevel().equals(decisionInputRiskLevel)) {
-                record(c, WorkflowStage.GUARDRAIL, "评级由【" + decisionInputRiskLevel + "】修正为：【" + gr.finalRiskLevel() + "】");
+                record(c, WorkflowStage.GUARDRAIL,
+                        "评级由【" + decisionInputRiskLevel + "】修正为：【" + gr.finalRiskLevel() + "】");
             }
             c.setRiskLevel(gr.finalRiskLevel());
             c.setRawRiskLevel(rawAgentRiskLevel);
             // 契约策略 HOLD 不改变风险评级：低风险进入人工处理不等于提升为高风险。
-            c.setStatus(forceSafetyHold || gr.mustEscalate() || contractManualReviewRequired
-                    ? CaseStatus.HOLD : CaseStatus.DONE);
+            c.setStatus(forceSafetyHold || gr.mustEscalate() || contractManualReviewRequired ? CaseStatus.HOLD
+                    : CaseStatus.DONE);
             if (c.getStatus() == CaseStatus.HOLD) {
                 metrics.caseHold();
                 if (forceSafetyHold) {
                     record(c, WorkflowStage.GUARDRAIL, "Agent 输出契约不合规，安全策略禁止自动完成。");
-                } else if (!gr.mustEscalate()) {
-                    record(c, WorkflowStage.GUARDRAIL,
-                        "案件进入人工处理队列：待补齐调查后由复核员形成最终处置（确认可疑 / 排除预警）。"
-                                + (contractManualReviewRequired ? "" : "（触发人工处理规则）"));
-                } else {
-                    String escalateRules = gr.decision().triggeredRules().stream()
-                            .filter(r -> "MANUAL_REVIEW".equals(r.action()))
-                            .map(r -> r.ruleCode()).toList().toString();
+                }
+                else if (!gr.mustEscalate()) {
+                    record(c, WorkflowStage.GUARDRAIL, "案件进入人工处理队列：待补齐调查后由复核员形成最终处置（确认可疑 / 排除预警）。"
+                            + (contractManualReviewRequired ? "" : "（触发人工处理规则）"));
+                }
+                else {
+                    String escalateRules = gr.decision()
+                        .triggeredRules()
+                        .stream()
+                        .filter(r -> "MANUAL_REVIEW".equals(r.action()))
+                        .map(r -> r.ruleCode())
+                        .toList()
+                        .toString();
                     record(c, WorkflowStage.GUARDRAIL, "触发转人工（规则 " + escalateRules + "），工单进入人工复核队列。");
                 }
             }
@@ -370,8 +431,8 @@ public class DueDiligenceService {
             c.setModelName(activeModel.getModelName());
             c.setModelFallback(activeModel.typeEnum() == LlmProperties.ProviderType.MOCK || !activeModel.hasApiKey()
                     || !"AGENT".equals(reportSource));
-            record(c, WorkflowStage.REPORTING, "尽调初审报告已生成并归档，来源=" + reportSource
-                    + "，模型=" + c.getModelProvider() + "/" + c.getModelName() + "，最终评级：" + c.getRiskLevel());
+            record(c, WorkflowStage.REPORTING, "尽调初审报告已生成并归档，来源=" + reportSource + "，模型=" + c.getModelProvider() + "/"
+                    + c.getModelName() + "，最终评级：" + c.getRiskLevel());
             record(c, WorkflowStage.DONE, "尽调完成。评级：" + c.getRiskLevel() + "，状态：" + c.getStatus());
 
             // 可选报告流：最终报告落库后，仅按结构化风险/发现/动作确定性渲染，不再调用模型。
@@ -379,29 +440,33 @@ public class DueDiligenceService {
                 // 仅准备输入；必须等终态报告成功落库后再启动，避免摘要先于最终状态到达前端。
                 streamingReport = report;
             }
-        } catch (NonRetryableWorkflowException e) {
+        }
+        catch (NonRetryableWorkflowException e) {
             metrics.caseFailed();
             throw e;
-        } catch (RetryableWorkflowException e) {
+        }
+        catch (RetryableWorkflowException e) {
             metrics.caseFailed();
             throw e;
-        } catch (Exception e) {
+        }
+        catch (Exception e) {
             metrics.caseFailed();
             // 未分类异常必须保留根因堆栈；仅向工单暴露通用错误码，避免敏感内容落库。
             log.error("尽调工作流出现未分类异常 caseId={} executionVersion={}", caseId, executionVersion, e);
             throw new RetryableWorkflowException("未知异常", e);
-        } finally {
+        }
+        finally {
             lastStageAt.remove();
             currentLease.remove();
         }
         // 终态原子落库：绑定 worker+executionVersion，被接管后的陈旧写入不生效（0 行更新被丢弃）
-        int updated = caseRepository.finishCase(c.getId(), worker, executionVersion,
-                c.getStatus(), c.getRiskLevel(), c.getRawRiskLevel(), c.getReportJson(), c.getRawReportJson(), c.getSummary(),
-                c.getReportSource(), c.getSnapshotId(),
-                c.getModelProvider(), c.getModelName(), c.isModelFallback());
+        int updated = caseRepository.finishCase(c.getId(), worker, executionVersion, c.getStatus(), c.getRiskLevel(),
+                c.getRawRiskLevel(), c.getReportJson(), c.getRawReportJson(), c.getSummary(), c.getReportSource(),
+                c.getSnapshotId(), c.getModelProvider(), c.getModelName(), c.isModelFallback());
         if (updated == 0) {
             log.warn("工单 {} 终态落库被丢弃（已被接管，worker/version 不匹配）", caseId);
-        } else {
+        }
+        else {
             // 落库成功且仍持有租约：可选摘要结束后再关闭 SSE；否则立即推终态。
             if (lease == null || lease.isValid()) {
                 if (streamingReport == null
@@ -413,7 +478,12 @@ public class DueDiligenceService {
         return c;
     }
 
-    public org.springframework.data.domain.Page<CaseEntity> listCasesPageable(org.springframework.data.domain.Pageable pageable) {
+    @Override
+    public void processWorkflow(Long caseId, String worker, int executionVersion, ExecutionLease lease) {
+        process(caseId, worker, executionVersion, lease);
+    }
+
+    public Page<CaseEntity> listCasesPageable(Pageable pageable) {
         return caseRepository.findAllByOrderByCreatedAtDesc(pageable);
     }
 
@@ -429,8 +499,8 @@ public class DueDiligenceService {
         return new CaseStats(total, pending, running, hold, reportPending, done, failed);
     }
 
-    public record CaseStats(long total, long pending, long running, long hold,
-                            long reportPending, long done, long failed) {
+    public record CaseStats(long total, long pending, long running, long hold, long reportPending, long done,
+            long failed) {
     }
 
     public List<CaseLogEntity> listLogs(Long caseId) {
@@ -438,26 +508,24 @@ public class DueDiligenceService {
     }
 
     public CaseEntity getCase(Long caseId) {
-        return caseRepository.findById(caseId)
-                .orElseThrow(() -> new IllegalArgumentException("工单不存在：" + caseId));
+        return caseRepository.findById(caseId).orElseThrow(() -> new IllegalArgumentException("工单不存在：" + caseId));
+    }
+
+    @Transactional(readOnly = true)
+    public CaseStatus currentStatus(Long caseId) {
+        return getCase(caseId).getStatus();
     }
 
     private DueDiligenceContext buildContext(InvestigationSnapshot snapshot, CaseEntity c) {
         CustomerProfile customer = snapshot.customer();
         String asOfDate = snapshot.asOfTime().toString();
-        return new DueDiligenceContext(
-                c.getId(), customer.id(), customer.type(), asOfDate, snapshot.legalKeywords(),
-                snapshot.alerts(), c.getAlertRule(),
-                "请基于冻结证据独立判断风险等级、证据充分性和后续处置，不预设风险结论。");
+        return new DueDiligenceContext(c.getId(), customer.id(), customer.type(), asOfDate, snapshot.legalKeywords(),
+                snapshot.alerts(), c.getAlertRule(), "请基于冻结证据独立判断风险等级、证据充分性和后续处置，不预设风险结论。");
     }
 
     private List<String> planTasks(String alertRule) {
-        return List.of(
-                "① 提取客户近 180 天交易画像（金额 / 频次 / 夜间 / 跨境 / 大额）",
-                "② 穿透股权结构与关联人，识别最终受益人（UBO）",
-                "③ 检索涉诉与制裁黑名单（OFAC / 国内名单）",
-                "④ 匹配反洗钱监管合规条文（RAG）"
-        );
+        return List.of("① 提取客户近 180 天交易画像（金额 / 频次 / 夜间 / 跨境 / 大额）", "② 穿透股权结构与关联人，识别最终受益人（UBO）",
+                "③ 检索涉诉与制裁黑名单（OFAC / 国内名单）", "④ 匹配反洗钱监管合规条文（RAG）");
     }
 
     /** 记录阶段日志 + SSE 推送 + 执行检查点（case_execution） */
@@ -467,7 +535,7 @@ public class DueDiligenceService {
             // 租约已丢失：旧 Worker 不再产生日志/SSE/检查点等对用户可见的副作用
             return;
         }
-        LocalDateTime now = LocalDateTime.now();
+        LocalDateTime now = LocalDateTime.now(clock);
         CaseLogEntity l = new CaseLogEntity();
         l.setCaseId(c.getId());
         l.setStage(stage);
@@ -511,14 +579,14 @@ public class DueDiligenceService {
             entity.setArgumentValid(t.argumentValid());
             entity.setDurationMs(t.durationMs());
             entity.setResultDigest(t.resultDigest());
-            entity.setEvidenceIdsJson(t.evidenceIds() == null || t.evidenceIds().isEmpty()
-                    ? null : writeJson(t.evidenceIds()));
+            entity.setEvidenceIdsJson(
+                    t.evidenceIds() == null || t.evidenceIds().isEmpty() ? null : writeJson(t.evidenceIds()));
             entity.setErrorCode(t.errorCode());
             toolTraceRepository.save(entity);
         }
         String summary = traces.stream()
-                .map(t -> t.toolName() + (t.success() ? "✓" : "✗") + "(" + t.durationMs() + "ms)")
-                .collect(java.util.stream.Collectors.joining(", "));
+            .map(t -> t.toolName() + (t.success() ? "✓" : "✗") + "(" + t.durationMs() + "ms)")
+            .collect(Collectors.joining(", "));
         record(c, WorkflowStage.COLLECTING, "工具调用轨迹：" + summary);
     }
 
@@ -532,8 +600,9 @@ public class DueDiligenceService {
     private String writeJson(Object o) {
         try {
             return objectMapper.writeValueAsString(o);
-        } catch (JsonProcessingException e) {
-            throw new RuntimeException("报告序列化失败", e);
+        }
+        catch (JsonProcessingException e) {
+            throw new IllegalStateException("报告序列化失败", e);
         }
     }
 

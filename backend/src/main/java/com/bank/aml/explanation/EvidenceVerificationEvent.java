@@ -6,7 +6,6 @@ import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
-
 import java.time.LocalDateTime;
 
 /** 核验动作记录：追加不可变；技术解析与人工作用判断分开（v2 计划 §5.1/§11.3）。 */
@@ -51,25 +50,88 @@ public class EvidenceVerificationEvent {
     @Column(nullable = false)
     private LocalDateTime eventTime;
 
-    public Long getId() { return id; }
-    public Long getCaseId() { return caseId; }
-    public void setCaseId(Long value) { caseId = value; }
-    public Long getArtifactVersionId() { return artifactVersionId; }
-    public void setArtifactVersionId(Long value) { artifactVersionId = value; }
-    public String getMethod() { return method; }
-    public void setMethod(String value) { method = value; }
-    public String getObservedFacts() { return observedFacts; }
-    public void setObservedFacts(String value) { observedFacts = value; }
-    public String getLimitations() { return limitations; }
-    public void setLimitations(String value) { limitations = value; }
-    public String getResult() { return result; }
-    public void setResult(String value) { result = value; }
-    public String getActor() { return actor; }
-    public void setActor(String value) { actor = value; }
-    public Long getPreviousEventId() { return previousEventId; }
-    public String getSubjectFactKey() { return subjectFactKey; }
-    public void setSubjectFactKey(String value) { subjectFactKey = value; }
-    public void setPreviousEventId(Long value) { previousEventId = value; }
-    public LocalDateTime getEventTime() { return eventTime; }
-    public void setEventTime(LocalDateTime value) { eventTime = value; }
+    public Long getId() {
+        return id;
+    }
+
+    public Long getCaseId() {
+        return caseId;
+    }
+
+    public void setCaseId(Long value) {
+        caseId = value;
+    }
+
+    public Long getArtifactVersionId() {
+        return artifactVersionId;
+    }
+
+    public void setArtifactVersionId(Long value) {
+        artifactVersionId = value;
+    }
+
+    public String getMethod() {
+        return method;
+    }
+
+    public void setMethod(String value) {
+        method = value;
+    }
+
+    public String getObservedFacts() {
+        return observedFacts;
+    }
+
+    public void setObservedFacts(String value) {
+        observedFacts = value;
+    }
+
+    public String getLimitations() {
+        return limitations;
+    }
+
+    public void setLimitations(String value) {
+        limitations = value;
+    }
+
+    public String getResult() {
+        return result;
+    }
+
+    public void setResult(String value) {
+        result = value;
+    }
+
+    public String getActor() {
+        return actor;
+    }
+
+    public void setActor(String value) {
+        actor = value;
+    }
+
+    public Long getPreviousEventId() {
+        return previousEventId;
+    }
+
+    public String getSubjectFactKey() {
+        return subjectFactKey;
+    }
+
+    public void setSubjectFactKey(String value) {
+        subjectFactKey = value;
+    }
+
+    public void setPreviousEventId(Long value) {
+        previousEventId = value;
+    }
+
+    public LocalDateTime getEventTime() {
+        return eventTime;
+    }
+
+    public void setEventTime(LocalDateTime value) {
+        eventTime = value;
+    }
+
 }

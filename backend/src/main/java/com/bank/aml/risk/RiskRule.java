@@ -7,7 +7,7 @@ import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.PrePersist;
 import jakarta.persistence.Table;
-
+import java.time.Clock;
 import java.time.LocalDateTime;
 
 /**
@@ -62,7 +62,7 @@ public class RiskRule {
 
     @PrePersist
     void onCreate() {
-        this.createdAt = LocalDateTime.now();
+        this.createdAt = LocalDateTime.now(Clock.systemUTC());
     }
 
     public Long getId() {
@@ -160,4 +160,5 @@ public class RiskRule {
     public LocalDateTime getCreatedAt() {
         return createdAt;
     }
+
 }

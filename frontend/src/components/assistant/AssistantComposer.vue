@@ -24,6 +24,7 @@ function submit() {
       resize="none"
       :maxlength="maxChars"
       show-word-limit
+      aria-label="AI 小助问题"
       placeholder="仅可询问当前客户及银行金融相关问题"
       :disabled="disabled || loading"
       @update:model-value="emit('update:modelValue', $event)"
@@ -40,6 +41,16 @@ function submit() {
 </template>
 
 <style scoped>
-.composer { display: flex; flex-direction: column; gap: 8px; }
-.actions { display: flex; align-items: center; justify-content: space-between; color: var(--text-faint); font-size: 12px; }
+.composer {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  color: var(--text-faint);
+  font-size: 12px;
+}
 </style>

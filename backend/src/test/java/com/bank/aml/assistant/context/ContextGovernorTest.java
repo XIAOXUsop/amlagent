@@ -1,24 +1,23 @@
 package com.bank.aml.assistant.context;
 
-import org.junit.jupiter.api.Test;
-
 import java.util.List;
 import java.util.Set;
+import org.junit.jupiter.api.Test;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
  * 上下文治理器测试。全离线：不依赖模型、网络、Redis、MySQL。
  *
- * <p>这里验的不是"能不能跑"，而是**信息保全的承诺是否成立**——用户输入与证据
- * 在任何预算下都不会消失，正文压缩后仍能按图索骥取回，实在放不下时显式拒绝而非静默丢弃。
+ * <p>
+ * 这里验的不是"能不能跑"，而是**信息保全的承诺是否成立**——用户输入与证据 在任何预算下都不会消失，正文压缩后仍能按图索骥取回，实在放不下时显式拒绝而非静默丢弃。
  */
 class ContextGovernorTest {
 
     private static final String LEGAL_ID = "LEGAL-AML2024-32-7f3a91c2";
 
-    private final ContextGovernor governor =
-            new ContextGovernor(new DeterministicTokenEstimator(), new ContextCompressor(20, 10));
+    private final ContextGovernor governor = new ContextGovernor(new DeterministicTokenEstimator(),
+            new ContextCompressor(20, 10));
 
     // ---------- 不可驱逐 ----------
 
@@ -35,16 +34,18 @@ class ContextGovernorTest {
     @Test
     void evidenceProvidersSurviveLongerThanUnreferencedAnswers() {
         // 序号 1 很旧，但被序号 3 引用；序号 2 很新，却无人引用
-        var citedEvidence = entry("E1", ContextEntryKind.LEGAL_EVIDENCE, 1, "法规原文 " + "条文".repeat(30), List.of(LEGAL_ID));
+        var citedEvidence = entry("E1", ContextEntryKind.LEGAL_EVIDENCE, 1, "法规原文 " + "条文".repeat(30),
+                List.of(LEGAL_ID));
         var orphanAnswer = entry("A2", ContextEntryKind.ASSISTANT_ANSWER, 2, "孤立回答 " + "内容".repeat(40), List.of());
         var consumer = entry("A3", ContextEntryKind.ASSISTANT_ANSWER, 3, "引用该证据的回答", List.of(LEGAL_ID));
 
-        var result = governor.govern(request(tightBudget(), List.of(citedEvidence, orphanAnswer, consumer), Set.of(LEGAL_ID)));
+        var result = governor
+            .govern(request(tightBudget(), List.of(citedEvidence, orphanAnswer, consumer), Set.of(LEGAL_ID)));
 
         // 依赖感知：先走的是"新但孤立"的 A2，而不是"旧但被引用"的 E1
         assertThat(result.evictions()).extracting(ContextGovernor.Eviction::entryId)
-                .contains("A2")
-                .doesNotContain("E1");
+            .contains("A2")
+            .doesNotContain("E1");
     }
 
     @Test
@@ -80,8 +81,8 @@ class ContextGovernorTest {
     void compressionKeepsEveryEvidenceId() {
         String longAnswer = "结论：" + "推理过程".repeat(80) + " 依据 " + LEGAL_ID + " 以及 尾部结论";
 
-        var result = governor.govern(
-                request(generousBudget(), List.of(entry("A1", ContextEntryKind.ASSISTANT_ANSWER, 1, longAnswer, List.of(LEGAL_ID))), Set.of()));
+        var result = governor.govern(request(generousBudget(),
+                List.of(entry("A1", ContextEntryKind.ASSISTANT_ANSWER, 1, longAnswer, List.of(LEGAL_ID))), Set.of()));
 
         assertThat(result.report().compressedEntryIds()).contains("A1");
         assertThat(result.entries().getFirst().content()).contains(LEGAL_ID);
@@ -91,8 +92,7 @@ class ContextGovernorTest {
 
     @Test
     void sameInputProducesIdenticalResult() {
-        var entries = List.of(
-                entry("U1", ContextEntryKind.USER_TURN, 1, "问题一", List.of()),
+        var entries = List.of(entry("U1", ContextEntryKind.USER_TURN, 1, "问题一", List.of()),
                 entry("A1", ContextEntryKind.ASSISTANT_ANSWER, 2, "回答一".repeat(30), List.of()),
                 entry("E1", ContextEntryKind.LEGAL_EVIDENCE, 3, "证据", List.of(LEGAL_ID)));
 
@@ -101,20 +101,20 @@ class ContextGovernorTest {
 
         assertThat(first.report().contextDigest()).isEqualTo(second.report().contextDigest());
         assertThat(first.entries()).extracting(ContextEntry::entryId)
-                .isEqualTo(second.entries().stream().map(ContextEntry::entryId).toList());
+            .isEqualTo(second.entries().stream().map(ContextEntry::entryId).toList());
     }
 
     // ---------- 辅助 ----------
 
-    private static ContextEntry entry(String id, ContextEntryKind kind, long seq, String content, List<String> evidenceIds) {
+    private static ContextEntry entry(String id, ContextEntryKind kind, long seq, String content,
+            List<String> evidenceIds) {
         int tokens = new DeterministicTokenEstimator().estimateText(content);
         return new ContextEntry(id, kind, "m-" + id, seq, content, tokens, evidenceIds,
                 kind.compressible() ? "HIST-" + id.toLowerCase() : null);
     }
 
-    private static ContextGovernor.GovernanceRequest request(ContextBudget budget,
-                                                             List<ContextEntry> entries,
-                                                             Set<String> liveEvidence) {
+    private static ContextGovernor.GovernanceRequest request(ContextBudget budget, List<ContextEntry> entries,
+            Set<String> liveEvidence) {
         return new ContextGovernor.GovernanceRequest("conv-1", "run-1", entries, liveEvidence, budget);
     }
 
@@ -132,4 +132,5 @@ class ContextGovernorTest {
     private static ContextBudget generousBudget() {
         return new ContextBudget(990, 10, 10, 10, 10, 0);
     }
+
 }

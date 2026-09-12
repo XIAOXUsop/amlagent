@@ -1,5 +1,6 @@
 package com.bank.aml.security;
 
+import com.bank.aml.common.ApiErrorResponseWriter;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.context.annotation.Bean;
@@ -39,49 +40,55 @@ public class SecurityConfig {
     }
 
     /**
-     * 认证用户源已迁移至数据库（{@link DbUserDetailsService} + {@code sys_user} 表）。
-     * 演示账号由 {@link UserSeeder} 在非 prod 启动时写入；生产环境由 {@link ProdAdminSeeder} 从环境变量初始化。
+     * 认证用户源已迁移至数据库（{@link DbUserDetailsService} + {@code sys_user} 表）。 演示账号由
+     * {@link UserSeeder} 在非 prod 启动时写入；生产环境由 {@link ProdAdminSeeder} 从环境变量初始化。
      */
 
     @Bean
-    public SecurityFilterChain filterChain(HttpSecurity http, JwtAuthenticationFilter jwtFilter) throws Exception {
+    public SecurityFilterChain filterChain(HttpSecurity http, JwtAuthenticationFilter jwtFilter,
+            ApiErrorResponseWriter errorWriter) throws Exception {
         http.csrf(csrf -> csrf
-                        // HttpOnly Cookie 认证下，浏览器会自动携带认证 Cookie，必须启用 CSRF 防护。
-                        // 可读的 XSRF-TOKEN Cookie 供前端读取写入 X-XSRF-TOKEN header。
-                        .csrfTokenRepository(statelessCookieCsrfTokenRepository())
-                        // Cookie 存的是原始 token，必须用明文 handler 回读，
-                        // 否则默认 XorCsrfTokenRequestAttributeHandler 会 XOR 编码导致 SPA 头回传被拒绝。
-                        .csrfTokenRequestHandler(new CsrfTokenRequestAttributeHandler())
-                        .ignoringRequestMatchers("/api/auth/login", "/api/auth/csrf", "/actuator/**",
-                                "/swagger-ui/**", "/swagger-ui.html", "/v3/api-docs/**"))
-                .sessionManagement(sm -> sm.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
-                // 安全响应头：CSP（兼容 springdoc 内联资源）+ 禁止嵌入 + HSTS（仅 HTTPS 响应携带）；
-                // nosniff / cache-control 由 Spring Security 默认开启
-                .headers(headers -> headers
-                        .contentSecurityPolicy(csp -> csp.policyDirectives(
-                                "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; "
-                                        + "img-src 'self' data:; frame-ancestors 'none'; object-src 'none'; "
-                                        + "base-uri 'self'; form-action 'self'"))
-                        .frameOptions(frame -> frame.deny())
-                        .httpStrictTransportSecurity(hsts -> hsts.includeSubDomains(true)))
-                .authorizeHttpRequests(auth -> auth
-                        // Actuator 仅 health/info 公开，其余（含 prometheus）限 ADMIN
-                        .requestMatchers("/api/auth/login", "/api/auth/logout", "/api/auth/csrf",
-                                "/actuator/health", "/actuator/info",
-                                "/swagger-ui/**", "/swagger-ui.html", "/v3/api-docs/**").permitAll()
-                        .requestMatchers("/actuator/**").hasRole("ADMIN")
-                        .anyRequest().authenticated())
-                // 未认证返回 401；已认证但权限不足由 @PreAuthorize 抛 AccessDeniedException（全局处理 403）
-                .exceptionHandling(eh -> eh.authenticationEntryPoint(
-                        (req, res, ex) -> res.sendError(HttpServletResponse.SC_UNAUTHORIZED)))
-                .addFilterBefore(jwtFilter, UsernamePasswordAuthenticationFilter.class);
+            // HttpOnly Cookie 认证下，浏览器会自动携带认证 Cookie，必须启用 CSRF 防护。
+            // 可读的 XSRF-TOKEN Cookie 供前端读取写入 X-XSRF-TOKEN header。
+            .csrfTokenRepository(statelessCookieCsrfTokenRepository())
+            // Cookie 存的是原始 token，必须用明文 handler 回读，
+            // 否则默认 XorCsrfTokenRequestAttributeHandler 会 XOR 编码导致 SPA 头回传被拒绝。
+            .csrfTokenRequestHandler(new CsrfTokenRequestAttributeHandler())
+            .ignoringRequestMatchers("/api/auth/login", "/api/auth/csrf", "/actuator/**", "/swagger-ui/**",
+                    "/swagger-ui.html", "/v3/api-docs/**"))
+            .sessionManagement(sm -> sm.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
+            // 安全响应头：CSP（兼容 springdoc 内联资源）+ 禁止嵌入 + HSTS（仅 HTTPS 响应携带）；
+            // nosniff / cache-control 由 Spring Security 默认开启
+            .headers(headers -> headers
+                .contentSecurityPolicy(csp -> csp.policyDirectives(
+                        "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; "
+                                + "img-src 'self' data:; frame-ancestors 'none'; object-src 'none'; "
+                                + "base-uri 'self'; form-action 'self'"))
+                .frameOptions(frame -> frame.deny())
+                .httpStrictTransportSecurity(hsts -> hsts.includeSubDomains(true)))
+            .authorizeHttpRequests(auth -> auth
+                // Actuator 仅 health/info 公开，其余（含 prometheus）限 ADMIN
+                .requestMatchers("/api/auth/login", "/api/auth/logout", "/api/auth/csrf", "/actuator/health",
+                        "/actuator/info", "/swagger-ui/**", "/swagger-ui.html", "/v3/api-docs/**")
+                .permitAll()
+                .requestMatchers("/actuator/**")
+                .hasRole("ADMIN")
+                .anyRequest()
+                .authenticated())
+            // 未认证返回 401；已认证但权限不足由 @PreAuthorize 抛 AccessDeniedException（全局处理 403）
+            .exceptionHandling(eh -> eh
+                .authenticationEntryPoint((req, res, ex) -> errorWriter.write(req, res,
+                        HttpServletResponse.SC_UNAUTHORIZED, "UNAUTHORIZED", "请先登录或重新认证"))
+                .accessDeniedHandler((req, res, ex) -> errorWriter.write(req, res, HttpServletResponse.SC_FORBIDDEN,
+                        "FORBIDDEN", "无权限访问该资源")))
+            .addFilterBefore(jwtFilter, UsernamePasswordAuthenticationFilter.class);
         return http.build();
     }
 
     /**
-     * 无状态 JWT 下，SessionManagementFilter 每次请求都会触发 CsrfAuthenticationStrategy 清除 CSRF Cookie
-     * （`saveToken(null)`），导致前端登录后首个 GET 就把 XSRF-TOKEN 清空。这里包一层，
-     * 忽略对 null token 的落盘，只保留正常签发，从而让 Cookie 中的原始 token 在整个会话内保持稳定。
+     * 无状态 JWT 下，SessionManagementFilter 每次请求都会触发 CsrfAuthenticationStrategy 清除 CSRF
+     * Cookie （`saveToken(null)`），导致前端登录后首个 GET 就把 XSRF-TOKEN 清空。这里包一层， 忽略对 null token
+     * 的落盘，只保留正常签发，从而让 Cookie 中的原始 token 在整个会话内保持稳定。
      */
     private CsrfTokenRepository statelessCookieCsrfTokenRepository() {
         CookieCsrfTokenRepository delegate = CookieCsrfTokenRepository.withHttpOnlyFalse();
@@ -105,4 +112,5 @@ public class SecurityConfig {
             }
         };
     }
+
 }

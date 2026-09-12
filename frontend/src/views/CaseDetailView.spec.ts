@@ -18,7 +18,9 @@ const messageError = vi.fn()
 const promptMock = vi.fn()
 
 ;(globalThis as unknown as Record<string, unknown>).ElMessage = {
-  success: messageSuccess, warning: messageWarning, error: messageError,
+  success: messageSuccess,
+  warning: messageWarning,
+  error: messageError,
 }
 ;(globalThis as unknown as Record<string, unknown>).ElMessageBox = { prompt: promptMock }
 
@@ -31,7 +33,10 @@ vi.mock('../api/client', () => ({
   getCaseOperations: vi.fn().mockResolvedValue(null),
   getSuspiciousTransactionReport: vi.fn().mockResolvedValue(null),
   getTransactionWindows: vi.fn().mockResolvedValue({
-    asOfTime: '', sourceSystem: 'MOCK', sourceVersion: 'v1', windows: [],
+    asOfTime: '',
+    sourceSystem: 'MOCK',
+    sourceVersion: 'v1',
+    windows: [],
   }),
   listCaseReviews: vi.fn().mockResolvedValue([]),
   listEnhancedDueDiligence: vi.fn().mockResolvedValue([]),
@@ -56,47 +61,92 @@ vi.mock('../auth', () => ({
   markAuthReady: () => undefined,
 }))
 
-import {
-  getCase, getCaseInvestigation, updateAlertCoverage, updateInvestigationHypothesis,
-} from '../api/client'
+import { getCase, getCaseInvestigation, updateAlertCoverage, updateInvestigationHypothesis } from '../api/client'
 
 function caseItem(status: string) {
   return {
-    id: 7, customerId: 'C001', customerName: '客户', alertRule: '常规监测', status,
-    riskLevel: '低风险', rawRiskLevel: '低风险', reportJson: null, summary: null,
-    reportSource: 'AGENT', snapshotId: 'case-7-v1', modelProvider: 'mock', modelName: 'mock',
-    modelFallback: false, executionVersion: 1, reviewRevision: 0, investigationContractVersion: 1,
-    reviewDisposition: null, reviewReasonCode: null, reviewedAt: null, retryCount: 0,
+    id: 7,
+    customerId: 'C001',
+    customerName: '客户',
+    alertRule: '常规监测',
+    status,
+    riskLevel: '低风险',
+    rawRiskLevel: '低风险',
+    reportJson: null,
+    summary: null,
+    reportSource: 'AGENT',
+    snapshotId: 'case-7-v1',
+    modelProvider: 'mock',
+    modelName: 'mock',
+    modelFallback: false,
+    executionVersion: 1,
+    reviewRevision: 0,
+    investigationContractVersion: 1,
+    reviewDisposition: null,
+    reviewReasonCode: null,
+    reviewedAt: null,
+    retryCount: 0,
     failureCode: status === 'FAILED' ? 'NON_RETRYABLE' : null,
     failureMessage: status === 'FAILED' ? '容量上限' : null,
-    createdAt: '', updatedAt: '',
+    createdAt: '',
+    updatedAt: '',
   } as never
 }
 
 function hypothesis(id: number, revision: number, status: string, rationale = '当前判断依据') {
   return {
-    id, caseId: 7, scenarioCode: 'STRUCTURING', hypothesisCode: `H-${id}`, title: '拆分假设',
-    investigationQuestion: '是否成立？', requiredEvidenceTypes: [], status,
-    rationale, revision, createdBy: 'analyst', updatedBy: 'analyst',
-    createdAt: '', updatedAt: '', evidence: [],
+    id,
+    caseId: 7,
+    scenarioCode: 'STRUCTURING',
+    hypothesisCode: `H-${id}`,
+    title: '拆分假设',
+    investigationQuestion: '是否成立？',
+    requiredEvidenceTypes: [],
+    status,
+    rationale,
+    revision,
+    createdBy: 'analyst',
+    updatedBy: 'analyst',
+    createdAt: '',
+    updatedAt: '',
+    evidence: [],
   }
 }
 
 function coverage(overrides: Record<string, unknown> = {}) {
   return {
-    id: 1, alertId: 11, caseId: 7, hypothesisId: 31, hypothesisRevision: null,
-    conclusion: 'PENDING', analysisSummary: null, revision: 1,
-    updatedBy: 'analyst', updatedAt: '', ...overrides,
+    id: 1,
+    alertId: 11,
+    caseId: 7,
+    hypothesisId: 31,
+    hypothesisRevision: null,
+    conclusion: 'PENDING',
+    analysisSummary: null,
+    revision: 1,
+    updatedBy: 'analyst',
+    updatedAt: '',
+    ...overrides,
   }
 }
 
-function investigationView(cov: Record<string, unknown>, hyp = hypothesis(31, 3, 'CONFIRMED'),
-  extraAlerts = 0) {
-  const alerts = [{
-    id: 11, externalAlertId: 'ALERT-A', customerId: 'C001', ruleCode: 'RULE-001',
-    scenarioCode: 'STRUCTURING', hitReason: '拆分现金交易', occurredAt: '', status: 'LINKED',
-    caseId: 7, revision: 0, resolutionReason: '', createdAt: '', updatedAt: '',
-  }]
+function investigationView(cov: Record<string, unknown>, hyp = hypothesis(31, 3, 'CONFIRMED'), extraAlerts = 0) {
+  const alerts = [
+    {
+      id: 11,
+      externalAlertId: 'ALERT-A',
+      customerId: 'C001',
+      ruleCode: 'RULE-001',
+      scenarioCode: 'STRUCTURING',
+      hitReason: '拆分现金交易',
+      occurredAt: '',
+      status: 'LINKED',
+      caseId: 7,
+      revision: 0,
+      resolutionReason: '',
+      createdAt: '',
+      updatedAt: '',
+    },
+  ]
   for (let i = 0; i < extraAlerts; i++) {
     alerts.push({ ...alerts[0], id: 20 + i, externalAlertId: `ALERT-X${i}` })
   }
@@ -114,8 +164,10 @@ function investigationView(cov: Record<string, unknown>, hyp = hypothesis(31, 3,
 
 /** 冲突后乙真实改判的事实：假设 3→4，覆盖重置 PENDING 且 revision 1→2。 */
 function redecidedInvestigationView() {
-  return investigationView(coverage({ conclusion: 'PENDING', revision: 2, analysisSummary: null }),
-    hypothesis(31, 4, 'CONFIRMED'))
+  return investigationView(
+    coverage({ conclusion: 'PENDING', revision: 2, analysisSummary: null }),
+    hypothesis(31, 4, 'CONFIRMED'),
+  )
 }
 
 function conflictError(type: 'HYPOTHESIS' | 'COVERAGE', currentVersion: number) {
@@ -136,11 +188,18 @@ function conflictError(type: 'HYPOTHESIS' | 'COVERAGE', currentVersion: number) 
 const ElTableStub = defineComponent({
   props: { data: { type: Array, default: () => [] } },
   setup(props, { slots }) {
-    return () => h('div', { class: 'stub-table' }, (props.data as unknown[]).map((row) =>
-      h('div', { class: 'stub-row' },
-        ((slots.default?.() ?? []) as ReturnType<typeof h>[]).map((column) =>
-          cloneVNode(column, { row } as never)),
-      )))
+    return () =>
+      h(
+        'div',
+        { class: 'stub-table' },
+        props.data.map((row) =>
+          h(
+            'div',
+            { class: 'stub-row' },
+            (slots.default?.() ?? []).map((column) => cloneVNode(column, { row })),
+          ),
+        ),
+      )
   },
 })
 
@@ -151,8 +210,12 @@ const ElTableColumnStub = defineComponent({
   },
 })
 
-async function mountDetail(status: string, cov: Record<string, unknown>,
-  hyp = hypothesis(31, 3, 'CONFIRMED'), extraAlerts = 0) {
+async function mountDetail(
+  status: string,
+  cov: Record<string, unknown>,
+  hyp = hypothesis(31, 3, 'CONFIRMED'),
+  extraAlerts = 0,
+) {
   vi.mocked(getCase).mockResolvedValue(caseItem(status))
   vi.mocked(getCaseInvestigation).mockResolvedValue(investigationView(cov, hyp, extraAlerts))
   const wrapper = mount(CaseDetailView, {
@@ -184,7 +247,8 @@ async function clickButton(wrapper: ReturnType<typeof mount>, text: string) {
 }
 
 const legacyDecidedCoverage = coverage({
-  conclusion: 'SUSPICIOUS', analysisSummary: '原覆盖分析',
+  conclusion: 'SUSPICIOUS',
+  analysisSummary: '原覆盖分析',
 })
 
 const pendingCoverage = coverage({})
@@ -232,6 +296,27 @@ describe('CaseDetailView 存量覆盖重新确认入口（A1，保留）', () =>
 })
 
 describe('W1 覆盖编辑冲突恢复状态机', () => {
+  it('弹窗等待期间切换案件时不向新案件提交旧假设', async () => {
+    const wrapper = await mountDetail('HOLD', pendingCoverage, hypothesis(31, 1, 'OPEN'))
+    let resolvePrompt: ((value: { value: string }) => void) | undefined
+    promptMock.mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolvePrompt = resolve
+      }),
+    )
+
+    const target = wrapper.findAll('el-button').find((button) => button.text().trim() === '确认假设')
+    expect(target).toBeTruthy()
+    await target!.trigger('click')
+    await flushPromises()
+    await wrapper.setProps({ caseId: 8 })
+    resolvePrompt?.({ value: '旧案件中输入的判断依据，不得提交给新案件' })
+    await settle()
+
+    expect(updateInvestigationHypothesis).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
+
   /** V2-04：形成结论后发生改判冲突 → 刷新、草稿逐字保留、用户确认后以新版本提交。 */
   it('形成结论遇到改判冲突时保留草稿并以刷新后的版本重新提交', async () => {
     const wrapper = await mountDetail('HOLD', pendingCoverage)
@@ -249,12 +334,21 @@ describe('W1 覆盖编辑冲突恢复状态机', () => {
     expect(promptMock.mock.calls[1][2].inputValue).toBe('甲基于旧页面输入的第一版分析')
     // 第一次提交基于旧版本；第二次提交使用刷新后的事实（覆盖 rev 2、假设 rev 4）
     expect(updateAlertCoverage).toHaveBeenCalledTimes(2)
-    expect(updateAlertCoverage).toHaveBeenNthCalledWith(1, 7, 11, expect.objectContaining({
-      expectedRevision: 1, expectedHypothesisRevision: 3,
-    }))
+    expect(updateAlertCoverage).toHaveBeenNthCalledWith(
+      1,
+      7,
+      11,
+      expect.objectContaining({
+        expectedRevision: 1,
+        expectedHypothesisRevision: 3,
+      }),
+    )
     expect(updateAlertCoverage).toHaveBeenNthCalledWith(2, 7, 11, {
-      expectedRevision: 2, hypothesisId: 31, expectedHypothesisRevision: 4,
-      conclusion: 'SUSPICIOUS', analysisSummary: '甲基于最新依据重新编辑的分析',
+      expectedRevision: 2,
+      hypothesisId: 31,
+      expectedHypothesisRevision: 4,
+      conclusion: 'SUSPICIOUS',
+      analysisSummary: '甲基于最新依据重新编辑的分析',
     })
     expect(messageSuccess).toHaveBeenCalled()
     wrapper.unmount()
@@ -276,10 +370,16 @@ describe('W1 覆盖编辑冲突恢复状态机', () => {
     // 首轮预填数据库旧分析；冲突后第二轮保留用户刚编辑的内容
     expect(promptMock.mock.calls[0][2].inputValue).toBe('原覆盖分析')
     expect(promptMock.mock.calls[1][2].inputValue).toBe('甲重新编辑后的覆盖分析内容')
-    expect(updateAlertCoverage).toHaveBeenNthCalledWith(2, 7, 11, expect.objectContaining({
-      expectedRevision: 2, expectedHypothesisRevision: 4,
-      analysisSummary: '甲重新编辑后的覆盖分析内容',
-    }))
+    expect(updateAlertCoverage).toHaveBeenNthCalledWith(
+      2,
+      7,
+      11,
+      expect.objectContaining({
+        expectedRevision: 2,
+        expectedHypothesisRevision: 4,
+        analysisSummary: '甲重新编辑后的覆盖分析内容',
+      }),
+    )
     wrapper.unmount()
   })
 
@@ -293,17 +393,23 @@ describe('W1 覆盖编辑冲突恢复状态机', () => {
     vi.mocked(getCaseInvestigation)
       .mockResolvedValueOnce(redecidedInvestigationView())
       .mockResolvedValueOnce(
-        investigationView(coverage({ conclusion: 'PENDING', revision: 3 }),
-          hypothesis(31, 5, 'CONFIRMED')))
+        investigationView(coverage({ conclusion: 'PENDING', revision: 3 }), hypothesis(31, 5, 'CONFIRMED')),
+      )
     promptMock.mockResolvedValue({ value: '连续冲突场景下的分析草稿内容' })
 
     await clickButton(wrapper, '形成结论')
 
     expect(promptMock).toHaveBeenCalledTimes(3)
     expect(updateAlertCoverage).toHaveBeenCalledTimes(3)
-    expect(updateAlertCoverage).toHaveBeenNthCalledWith(3, 7, 11, expect.objectContaining({
-      expectedRevision: 3, expectedHypothesisRevision: 5,
-    }))
+    expect(updateAlertCoverage).toHaveBeenNthCalledWith(
+      3,
+      7,
+      11,
+      expect.objectContaining({
+        expectedRevision: 3,
+        expectedHypothesisRevision: 5,
+      }),
+    )
     expect(messageError).not.toHaveBeenCalled()
     wrapper.unmount()
   })
@@ -331,8 +437,8 @@ describe('W1 覆盖编辑冲突恢复状态机', () => {
     const wrapper = await mountDetail('HOLD', pendingCoverage)
     vi.mocked(updateAlertCoverage).mockRejectedValueOnce(conflictError('HYPOTHESIS', 4))
     vi.mocked(getCaseInvestigation).mockResolvedValueOnce(
-      investigationView(coverage({ conclusion: 'PENDING', revision: 2 }),
-        hypothesis(31, 4, 'OPEN')))
+      investigationView(coverage({ conclusion: 'PENDING', revision: 2 }), hypothesis(31, 4, 'OPEN')),
+    )
     promptMock.mockResolvedValueOnce({ value: '假设被重置前的分析草稿内容' })
 
     await clickButton(wrapper, '形成结论')
@@ -345,9 +451,11 @@ describe('W1 覆盖编辑冲突恢复状态机', () => {
 
   /** V2-07：存量 EXPLAINED（REJECTED 假设）重新确认 → 结论由当前假设推导。 */
   it('EXPLAINED 存量覆盖重新确认时提交合理解释结论并绑定当前版本', async () => {
-    const wrapper = await mountDetail('HOLD',
+    const wrapper = await mountDetail(
+      'HOLD',
       coverage({ conclusion: 'EXPLAINED', analysisSummary: '存量解释分析' }),
-      hypothesis(31, 2, 'REJECTED'))
+      hypothesis(31, 2, 'REJECTED'),
+    )
     vi.mocked(updateAlertCoverage).mockResolvedValueOnce({} as never)
     promptMock.mockResolvedValueOnce({ value: '存量解释覆盖的重新确认分析' })
 
@@ -355,8 +463,11 @@ describe('W1 覆盖编辑冲突恢复状态机', () => {
 
     expect(updateAlertCoverage).toHaveBeenCalledTimes(1)
     expect(updateAlertCoverage).toHaveBeenCalledWith(7, 11, {
-      expectedRevision: 1, hypothesisId: 31, expectedHypothesisRevision: 2,
-      conclusion: 'EXPLAINED', analysisSummary: '存量解释覆盖的重新确认分析',
+      expectedRevision: 1,
+      hypothesisId: 31,
+      expectedHypothesisRevision: 2,
+      conclusion: 'EXPLAINED',
+      analysisSummary: '存量解释覆盖的重新确认分析',
     })
     expect(messageSuccess).toHaveBeenCalled()
     wrapper.unmount()
@@ -374,8 +485,7 @@ describe('W1/A3-02 假设判断草稿恢复', () => {
     // 第一次刷新失败（网络错误），第二次刷新成功（乙已改判/确认至 rev 2）
     vi.mocked(getCaseInvestigation)
       .mockRejectedValueOnce(new Error('network down'))
-      .mockResolvedValueOnce(
-        investigationView(coverage({}), hypothesis(31, 2, 'CONFIRMED')))
+      .mockResolvedValueOnce(investigationView(coverage({}), hypothesis(31, 2, 'CONFIRMED')))
     promptMock.mockResolvedValue({ value: '甲输入的新判断依据内容' })
 
     await clickButton(wrapper, '确认假设')
@@ -393,7 +503,9 @@ describe('W1/A3-02 假设判断草稿恢复', () => {
     await settle()
     expect(updateInvestigationHypothesis).toHaveBeenCalledTimes(3)
     expect(updateInvestigationHypothesis).toHaveBeenLastCalledWith(7, 31, {
-      expectedRevision: 2, status: 'CONFIRMED', rationale: '甲输入的新判断依据内容',
+      expectedRevision: 2,
+      status: 'CONFIRMED',
+      rationale: '甲输入的新判断依据内容',
     })
     expect(messageSuccess).toHaveBeenCalledTimes(1)
     wrapper.unmount()
@@ -401,9 +513,11 @@ describe('W1/A3-02 假设判断草稿恢复', () => {
 
   /** A4-01：写入成功 + 刷新失败 → 提示“已保存”并限制编辑；不重复提交；重载后解除。 */
   it('假设保存成功但刷新失败时如实提示已保存，并阻断基于旧事实的重复提交', async () => {
-    const wrapper = await mountDetail('HOLD',
+    const wrapper = await mountDetail(
+      'HOLD',
       coverage({ conclusion: 'SUSPICIOUS', hypothesisRevision: 2, revision: 1, analysisSummary: '已确认分析' }),
-      hypothesis(31, 2, 'CONFIRMED'))
+      hypothesis(31, 2, 'CONFIRMED'),
+    )
     // 写入成功（重申后版本 2→3），随后刷新网络失败
     vi.mocked(updateInvestigationHypothesis).mockResolvedValueOnce({ revision: 3 } as never)
     vi.mocked(getCaseInvestigation).mockRejectedValueOnce(new Error('network down'))
@@ -414,7 +528,9 @@ describe('W1/A3-02 假设判断草稿恢复', () => {
     // 写入只发生一次；提示为“已保存”，没有“更新失败”类错误提示
     expect(updateInvestigationHypothesis).toHaveBeenCalledTimes(1)
     expect(updateInvestigationHypothesis).toHaveBeenCalledWith(7, 31, {
-      expectedRevision: 2, status: 'CONFIRMED', rationale: '甲重申后输入的新依据内容',
+      expectedRevision: 2,
+      status: 'CONFIRMED',
+      rationale: '甲重申后输入的新依据内容',
     })
     expect(messageSuccess).toHaveBeenCalled()
     expect(messageWarning).toHaveBeenCalledWith(expect.stringContaining('已保存'))
@@ -427,8 +543,11 @@ describe('W1/A3-02 假设判断草稿恢复', () => {
 
     // 显式重新加载成功后解除限制（横幅消失）
     vi.mocked(getCaseInvestigation).mockResolvedValue(
-      investigationView(coverage({ conclusion: 'SUSPICIOUS', hypothesisRevision: 3, revision: 1 }),
-        hypothesis(31, 3, 'CONFIRMED')))
+      investigationView(
+        coverage({ conclusion: 'SUSPICIOUS', hypothesisRevision: 3, revision: 1 }),
+        hypothesis(31, 3, 'CONFIRMED'),
+      ),
+    )
     await clickButton(wrapper, '重新加载调查事实')
     await settle()
     expect(wrapper.html()).not.toContain('重新加载调查事实')
@@ -455,8 +574,11 @@ describe('W1/A3-02 假设判断草稿恢复', () => {
     expect(promptMock).toHaveBeenCalledTimes(1)
 
     vi.mocked(getCaseInvestigation).mockResolvedValue(
-      investigationView(coverage({ conclusion: 'SUSPICIOUS', hypothesisRevision: 2, revision: 2 }),
-        hypothesis(31, 2, 'CONFIRMED')))
+      investigationView(
+        coverage({ conclusion: 'SUSPICIOUS', hypothesisRevision: 2, revision: 2 }),
+        hypothesis(31, 2, 'CONFIRMED'),
+      ),
+    )
     await clickButton(wrapper, '重新加载调查事实')
     await settle()
     expect(wrapper.html()).not.toContain('重新加载调查事实')
@@ -469,8 +591,11 @@ describe('W1/A3-02 假设判断草稿恢复', () => {
     vi.mocked(updateInvestigationHypothesis).mockResolvedValueOnce({ revision: 2 } as never)
     // 保存成功后假设又被他人更新（刷新视图 rationale 为乙的最新依据）
     vi.mocked(getCaseInvestigation).mockResolvedValueOnce(
-      investigationView(coverage({ conclusion: 'SUSPICIOUS', hypothesisRevision: 2, revision: 1 }),
-        hypothesis(31, 2, 'CONFIRMED', '乙更新后的最新判断依据')))
+      investigationView(
+        coverage({ conclusion: 'SUSPICIOUS', hypothesisRevision: 2, revision: 1 }),
+        hypothesis(31, 2, 'CONFIRMED', '乙更新后的最新判断依据'),
+      ),
+    )
     promptMock.mockResolvedValueOnce({ value: '本次已成功保存的判断依据内容' })
 
     await clickButton(wrapper, '确认假设')

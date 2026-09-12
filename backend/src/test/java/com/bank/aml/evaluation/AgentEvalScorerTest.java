@@ -1,9 +1,8 @@
 package com.bank.aml.evaluation;
 
 import com.bank.aml.evaluation.AgentEvalReport.CaseResult;
-import org.junit.jupiter.api.Test;
-
 import java.util.List;
+import org.junit.jupiter.api.Test;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -81,26 +80,22 @@ class AgentEvalScorerTest {
         assertThat(aggregate.strictPassCount()).isZero();
     }
 
-    private CaseResult result(String status, String expected, String actual,
-                              boolean expectedEscalation, boolean actualEscalation) {
+    private CaseResult result(String status, String expected, String actual, boolean expectedEscalation,
+            boolean actualEscalation) {
         return result(status, expected, actual, expectedEscalation, actualEscalation, false, false);
     }
 
-    private CaseResult result(String status, String expected, String actual,
-                              boolean expectedEscalation, boolean actualEscalation,
-                              boolean endToEndTaskPass, boolean strictPass) {
-        return new CaseResult(
-                "case-" + status, "scenario", status, null,
-                "SCORED".equals(status) ? List.of() : List.of(status),
-                expected, actual, expected.equals(actual), actual, expected.equals(actual),
-                expectedEscalation, "SCORED".equals(status) ? actualEscalation : null,
-                actualEscalation, List.of(),
-                List.of("SANCTION_LEVEL_1_MATCH"), "SCORED".equals(status) ? List.of() : List.of("SANCTION_LEVEL_1_MATCH"),
-                List.of(), List.of("MANUAL_REVIEW"), "SCORED".equals(status) ? List.of() : List.of("MANUAL_REVIEW"),
-                List.of(), List.of(), List.of(), List.of(),
-                List.of("transactionProfile", "corporateProfile", "checkSanctions", "searchLegal"),
-                List.of(), List.of(),
-                0, 0, List.of(), endToEndTaskPass, strictPass, 10, null, null
-        );
+    private CaseResult result(String status, String expected, String actual, boolean expectedEscalation,
+            boolean actualEscalation, boolean endToEndTaskPass, boolean strictPass) {
+        return new CaseResult("case-" + status, "scenario", status, null,
+                "SCORED".equals(status) ? List.of() : List.of(status), expected, actual, expected.equals(actual),
+                actual, expected.equals(actual), expectedEscalation, "SCORED".equals(status) ? actualEscalation : null,
+                actualEscalation, List.of(), List.of("SANCTION_LEVEL_1_MATCH"),
+                "SCORED".equals(status) ? List.of() : List.of("SANCTION_LEVEL_1_MATCH"), List.of(),
+                List.of("MANUAL_REVIEW"), "SCORED".equals(status) ? List.of() : List.of("MANUAL_REVIEW"), List.of(),
+                List.of(), List.of(), List.of(),
+                List.of("transactionProfile", "corporateProfile", "checkSanctions", "searchLegal"), List.of(),
+                List.of(), 0, 0, List.of(), endToEndTaskPass, strictPass, 10, null, null);
     }
+
 }

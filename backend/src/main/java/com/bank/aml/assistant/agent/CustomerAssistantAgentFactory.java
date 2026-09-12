@@ -12,12 +12,14 @@ import org.springframework.stereotype.Component;
 
 @Component
 public class CustomerAssistantAgentFactory {
+
     private final StreamingChatModel model;
+
     private final ObjectMapper objectMapper;
+
     private final AssistantProperties properties;
 
-    public CustomerAssistantAgentFactory(
-            @Qualifier("assistantStreamingChatModel") StreamingChatModel model,
+    public CustomerAssistantAgentFactory(@Qualifier("assistantStreamingChatModel") StreamingChatModel model,
             ObjectMapper objectMapper, AssistantProperties properties) {
         this.model = model;
         this.objectMapper = objectMapper;
@@ -25,22 +27,24 @@ public class CustomerAssistantAgentFactory {
     }
 
     public AgentWithTools create(CustomerAssistantSnapshot snapshot, ChatMemory memory) {
-        CustomerAssistantToolSuite tools = new CustomerAssistantToolSuite(snapshot, objectMapper);
+        CustomerAssistantToolSuite tools = new CustomerAssistantToolSuite(snapshot, objectMapper,
+                properties.getFrozenKnowledgeResultLimit());
         CustomerAssistantAgent agent = AiServices.builder(CustomerAssistantAgent.class)
-                .streamingChatModel(model)
-                .chatMemoryProvider(memoryId -> {
-                    if (!snapshot.conversationId().equals(String.valueOf(memoryId))) {
-                        throw new IllegalArgumentException("会话 memoryId 与快照不匹配");
-                    }
-                    return memory;
-                })
-                .tools(tools)
-                .toolExecutionErrorHandler((error, context) ->
-                        ToolErrorHandlerResult.text(tools.recoverableError(error)))
-                .maxToolCallingRoundTrips(properties.getMaxToolRoundTrips())
-                .build();
+            .streamingChatModel(model)
+            .chatMemoryProvider(memoryId -> {
+                if (!snapshot.conversationId().equals(String.valueOf(memoryId))) {
+                    throw new IllegalArgumentException("会话 memoryId 与快照不匹配");
+                }
+                return memory;
+            })
+            .tools(tools)
+            .toolExecutionErrorHandler((error, context) -> ToolErrorHandlerResult.text(tools.recoverableError(error)))
+            .maxToolCallingRoundTrips(properties.getMaxToolRoundTrips())
+            .build();
         return new AgentWithTools(agent, tools);
     }
 
-    public record AgentWithTools(CustomerAssistantAgent agent, CustomerAssistantToolSuite tools) {}
+    public record AgentWithTools(CustomerAssistantAgent agent, CustomerAssistantToolSuite tools) {
+    }
+
 }

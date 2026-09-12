@@ -9,53 +9,60 @@ import LoginView from './views/LoginView.vue'
 const route = useRoute()
 const router = useRouter()
 const authReady = ref(false)
+let active = true
 
 const loggedIn = computed(() => currentUser.value !== null)
 const role = computed(() => currentUser.value?.role ?? '')
 
 onMounted(async () => {
+  // 监听器必须在首次 await 前注册，避免组件在鉴权请求期间卸载后又注册永久监听器。
+  window.addEventListener('auth:expired', handleAuthExpired)
   try {
-    currentUser.value = await checkAuth()
+    const authenticatedUser = await checkAuth()
+    if (!active) return
+    currentUser.value = authenticatedUser
   } catch {
+    if (!active) return
     currentUser.value = null
   } finally {
-    authReady.value = true
-    markAuthReady()
+    if (active) {
+      authReady.value = true
+      markAuthReady()
+    }
   }
-  // 会话过期（任意接口返回 401）时平滑回到登录界面，避免整页跳转丢失上下文
-  window.addEventListener('auth:expired', handleAuthExpired)
 })
 
 onBeforeUnmount(() => {
+  active = false
   window.removeEventListener('auth:expired', handleAuthExpired)
 })
 
 function handleAuthExpired() {
   currentUser.value = null
-  router.replace('/cases')
+  void router.replace('/cases')
 }
 
 function handleLoggedIn(user: AuthenticatedUser) {
   currentUser.value = user
-  router.replace('/cases')
+  void router.replace('/cases')
 }
 
 function openCase(id: number) {
-  router.push(`/cases/${id}`)
+  void router.push(`/cases/${id}`)
 }
 
 function goCases() {
-  router.push('/cases')
+  void router.push('/cases')
 }
 
 async function logout() {
   try {
     await apiLogout()
   } catch {
-    /* 忽略登出接口异常，本地直接清态 */
+    ElMessage.warning('服务端会话注销失败，本地登录状态已清除')
   }
   currentUser.value = null
-  router.push('/cases')
+  await router.push('/cases')
 }
 
 const isCases = () => route.path.startsWith('/cases')
@@ -199,8 +206,16 @@ const roleLabel = computed(() => {
   .sys-status {
     display: none;
   }
-  .nav { overflow-x: auto; scrollbar-width: none; }
-  .nav::-webkit-scrollbar { display: none; }
-  .nav .el-button { flex: 0 0 auto; padding: 7px 9px; }
+  .nav {
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+  .nav::-webkit-scrollbar {
+    display: none;
+  }
+  .nav .el-button {
+    flex: 0 0 auto;
+    padding: 7px 9px;
+  }
 }
 </style>

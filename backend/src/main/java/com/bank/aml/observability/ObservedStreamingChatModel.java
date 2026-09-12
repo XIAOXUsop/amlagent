@@ -8,19 +8,19 @@ import dev.langchain4j.model.chat.request.ChatRequest;
 import dev.langchain4j.model.chat.request.ChatRequestParameters;
 import dev.langchain4j.model.chat.response.ChatResponse;
 import dev.langchain4j.model.chat.response.StreamingChatResponseHandler;
-
 import java.util.List;
 import java.util.Set;
 
 /**
- * 可观测流式 ChatModel 包装器：显式携带固定 purpose 标签，
- * 在流式完成/出错回调中记录请求、Token 与错误数，替代依赖 ThreadLocal 的方案
+ * 可观测流式 ChatModel 包装器：显式携带固定 purpose 标签， 在流式完成/出错回调中记录请求、Token 与错误数，替代依赖 ThreadLocal 的方案
  * （异步回调线程不传播 ThreadLocal，导致 purpose=unknown）。
  */
 public final class ObservedStreamingChatModel implements StreamingChatModel {
 
     private final StreamingChatModel delegate;
+
     private final MetricsRecorder metrics;
+
     private final ModelInvocationTags tags;
 
     public ObservedStreamingChatModel(StreamingChatModel delegate, MetricsRecorder metrics, ModelInvocationTags tags) {
@@ -84,4 +84,5 @@ public final class ObservedStreamingChatModel implements StreamingChatModel {
     public ModelProvider provider() {
         return delegate.provider();
     }
+
 }

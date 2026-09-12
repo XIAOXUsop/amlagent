@@ -17,4 +17,5 @@ class ExecutionLeaseTest {
         lease.markLost();
         assertThat(lease.isValid()).isFalse();
     }
+
 }

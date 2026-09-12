@@ -3,15 +3,18 @@ package com.bank.aml.workflow;
 import com.bank.aml.common.enums.CaseStatus;
 import com.bank.aml.datasource.entity.CaseEntity;
 import com.bank.aml.datasource.repository.CaseRepository;
+import com.bank.aml.messaging.OutboxEvent;
 import com.bank.aml.messaging.OutboxRepository;
 import com.bank.aml.messaging.OutboxService;
-import com.bank.aml.messaging.OutboxEvent;
 import com.bank.aml.messaging.PendingClaimer;
 import com.bank.aml.messaging.QueueProperties;
 import com.bank.aml.messaging.RetryScheduler;
 import com.bank.aml.messaging.WorkflowCommandService;
 import com.bank.aml.messaging.WorkflowEventType;
 import com.bank.aml.service.DueDiligenceService;
+import com.bank.aml.testinfra.IntegrationTestDatabase;
+import java.time.LocalDateTime;
+import java.util.UUID;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -21,17 +24,16 @@ import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 
-import java.time.LocalDateTime;
-import java.util.UUID;
-
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
  * 可靠工作流集成测试（确定性，直接驱动组件，不依赖后台异步 Worker，避免 Redis 消费时序抖动）。
- * <p>覆盖任务书的可靠性闭环：Outbox 幂等、退避重投、超时接管（Redis 恢复）、死信兜底、原子租约。
- * 复用本机 Docker 的 MySQL/Redis/PGVector。运行：./mvnw -Pintegration-test test
- * <p>使用独立 Redis Stream 名称，避免与其他集成测试（WorkflowE2ETest）共享消费者组产生消息投递抖动；
- * 本类运行前强制销毁先前缓存的 Spring 上下文，防止其他上下文的后台 Outbox 发布器与本类共享 outbox 表时互相抢占投递。
+ * <p>
+ * 覆盖任务书的可靠性闭环：Outbox 幂等、退避重投、超时接管（Redis 恢复）、死信兜底、原子租约。 复用本机 Docker 的
+ * MySQL/Redis/PGVector。运行：./mvnw -Pintegration-test test
+ * <p>
+ * 使用独立 Redis Stream 名称，避免与其他集成测试（WorkflowE2ETest）共享消费者组产生消息投递抖动； 本类运行前强制销毁先前缓存的 Spring
+ * 上下文，防止其他上下文的后台 Outbox 发布器与本类共享 outbox 表时互相抢占投递。
  */
 @SpringBootTest
 @ActiveProfiles("test")
@@ -41,7 +43,7 @@ class ReliabilityWorkflowTest {
 
     @DynamicPropertySource
     static void isolatedRedisStream(DynamicPropertyRegistry registry) {
-        com.bank.aml.testinfra.IntegrationTestDatabase.configure(registry, "aml_reliability_test");
+        IntegrationTestDatabase.configure(registry, "aml_reliability_test");
         String suffix = UUID.randomUUID().toString().substring(0, 8);
         registry.add("aml.queue.stream", () -> "aml:workflow:cases-test-" + suffix);
         registry.add("aml.queue.dead-stream", () -> "aml:workflow:dead-test-" + suffix);
@@ -50,18 +52,25 @@ class ReliabilityWorkflowTest {
 
     @Autowired
     private DueDiligenceService service;
+
     @Autowired
     private CaseRepository caseRepository;
+
     @Autowired
     private OutboxService outboxService;
+
     @Autowired
     private OutboxRepository outboxRepository;
+
     @Autowired
     private RetryScheduler retryScheduler;
+
     @Autowired
     private WorkflowCommandService workflowCommandService;
+
     @Autowired
     private PendingClaimer pendingClaimer;
+
     @Autowired
     private QueueProperties props;
 
@@ -77,16 +86,19 @@ class ReliabilityWorkflowTest {
         LocalDateTime firstClaimAt = LocalDateTime.now().minusMinutes(2);
 
         assertThat(outboxRepository.claimPublishing(event.getId(), OutboxEvent.OutboxStatus.PUBLISHING,
-                OutboxEvent.OutboxStatus.PENDING, "publisher-a", firstClaimAt,
-                firstClaimAt.minusSeconds(30))).isEqualTo(1);
+                OutboxEvent.OutboxStatus.PENDING, "publisher-a", firstClaimAt, firstClaimAt.minusSeconds(30)))
+            .isEqualTo(1);
         assertThat(outboxRepository.claimPublishing(event.getId(), OutboxEvent.OutboxStatus.PUBLISHING,
                 OutboxEvent.OutboxStatus.PENDING, "publisher-b", LocalDateTime.now(),
-                LocalDateTime.now().minusSeconds(30))).isEqualTo(1);
+                LocalDateTime.now().minusSeconds(30)))
+            .isEqualTo(1);
 
         assertThat(outboxRepository.markPublished(event.getId(), OutboxEvent.OutboxStatus.PUBLISHED,
-                OutboxEvent.OutboxStatus.PUBLISHING, "publisher-a", 1L, LocalDateTime.now())).isZero();
+                OutboxEvent.OutboxStatus.PUBLISHING, "publisher-a", 1L, LocalDateTime.now()))
+            .isZero();
         assertThat(outboxRepository.markPublished(event.getId(), OutboxEvent.OutboxStatus.PUBLISHED,
-                OutboxEvent.OutboxStatus.PUBLISHING, "publisher-b", 2L, LocalDateTime.now())).isEqualTo(1);
+                OutboxEvent.OutboxStatus.PUBLISHING, "publisher-b", 2L, LocalDateTime.now()))
+            .isEqualTo(1);
     }
 
     /** 幂等：同一 caseId:eventType:executionVersion 只落一条 Outbox 事件 */
@@ -97,9 +109,7 @@ class ReliabilityWorkflowTest {
         outboxService.record(caseId, WorkflowEventType.CASE_RETRY_DUE.name(), 7);
 
         String key = OutboxService.idempotencyKey(caseId, WorkflowEventType.CASE_RETRY_DUE.name(), 7);
-        long count = outboxRepository.findAll().stream()
-                .filter(e -> key.equals(e.getIdempotencyKey()))
-                .count();
+        long count = outboxRepository.findAll().stream().filter(e -> key.equals(e.getIdempotencyKey())).count();
         assertThat(count).isEqualTo(1);
     }
 
@@ -171,8 +181,8 @@ class ReliabilityWorkflowTest {
         c.setExecutionVersion(5);
         caseRepository.save(c);
 
-        int stale = caseRepository.failCase(c.getId(), CaseStatus.FAILED, 3,
-                "RETRY_EXHAUSTED", "旧 Worker 陈旧写入", "worker-old", 4);
+        int stale = caseRepository.failCase(c.getId(), CaseStatus.FAILED, 3, "RETRY_EXHAUSTED", "旧 Worker 陈旧写入",
+                "worker-old", 4);
         assertThat(stale).isEqualTo(0);
         assertThat(service.getCase(c.getId()).getStatus()).isEqualTo(CaseStatus.RUNNING);
     }
@@ -188,8 +198,8 @@ class ReliabilityWorkflowTest {
         caseRepository.save(c);
 
         // 走 markDeadLetter：FAILED 与死信 Outbox 同事务（不再直接写 Redis）
-        boolean marked = workflowCommandService.markDeadLetter(c.getId(), "worker-x", 2,
-                props.getMaxRetry(), "重试超限进死信");
+        boolean marked = workflowCommandService.markDeadLetter(c.getId(), "worker-x", 2, props.getMaxRetry(),
+                "重试超限进死信");
         assertThat(marked).isTrue();
 
         CaseEntity failed = service.getCase(c.getId());
@@ -200,4 +210,5 @@ class ReliabilityWorkflowTest {
         String key = OutboxService.idempotencyKey(c.getId(), WorkflowEventType.CASE_DEAD_LETTER.name(), 2);
         assertThat(outboxRepository.existsByIdempotencyKey(key)).isTrue();
     }
+
 }

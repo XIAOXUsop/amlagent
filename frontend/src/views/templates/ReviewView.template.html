@@ -1,0 +1,249 @@
+<div class="review">
+  <header class="page-intro">
+    <h2>人工复核</h2>
+    <p>处理 Agent 升级工单，并记录可审计的最终决定。</p>
+  </header>
+  <!-- 决策闭环统计 -->
+  <div class="stats">
+    <div class="stat-main">
+      <span class="stat-label">Agent 与人工一致率</span>
+      <b class="mono-num">{{ stats.agreementRate }}%</b>
+      <div class="agree-bar">
+        <i :style="{ width: stats.agreementRate + '%' }"></i>
+      </div>
+    </div>
+    <div class="stat-cells">
+      <div class="stat-cell">
+        <span>处置记录</span>
+        <b class="mono-num">{{ stats.reviewedCount }}</b>
+      </div>
+      <div class="stat-cell">
+        <span>确认可疑</span>
+        <b class="mono-num" style="color: var(--risk-high)">{{ stats.confirmedSuspiciousCount }}</b>
+      </div>
+      <div class="stat-cell">
+        <span>排除预警</span>
+        <b class="mono-num" style="color: var(--risk-low)">{{ stats.falsePositiveCount }}</b>
+      </div>
+      <div class="stat-cell">
+        <span>补充尽调</span>
+        <b class="mono-num" style="color: var(--risk-mid)">{{ stats.eddRequestedCount }}</b>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h3 class="card-title">可疑交易报告待办</h3>
+    <el-empty v-if="!pendingReports.length" description="暂无待报送或待补正报告" :image-size="52" />
+    <el-table v-else :data="pendingReports" stripe>
+      <el-table-column label="案件" width="90">
+        <template #default="{ row }"><span class="mono-num">#{{ row.caseId }}</span></template>
+      </el-table-column>
+      <el-table-column label="状态" width="130">
+        <template #default="{ row }">{{ row.status === 'RETURNED_FOR_CORRECTION' ? '退回补正' : '待报送' }} </template>
+      </el-table-column>
+      <el-table-column label="优先级" width="92">
+        <template #default="{ row }">
+          <el-tag :type="priorityType(operationsFor(row.caseId)?.priority)" effect="dark">
+            {{ priorityLabels[operationsFor(row.caseId)?.priority ?? 'NORMAL'] }}
+          </el-tag>
+        </template>
+      </el-table-column>
+      <el-table-column label="SLA 截止" min-width="185">
+        <template #default="{ row }">
+          <span :class="{ 'deadline-overdue': operationsFor(row.caseId)?.overdue }"
+            >{{ deadlineText(row.caseId) }}</span
+          >
+        </template>
+      </el-table-column>
+      <el-table-column prop="reportReason" label="报告理由" min-width="300" show-overflow-tooltip />
+      <el-table-column prop="returnReason" label="退回原因" min-width="180" show-overflow-tooltip />
+      <el-table-column label="操作" width="190">
+        <template #default="{ row }">
+          <el-button size="small" @click="emit('open-case', row.caseId)">查看案件</el-button>
+          <el-button
+            size="small"
+            type="primary"
+            :loading="submittingReportId === row.id"
+            @click="markReportSubmitted(row)"
+            >登记报送</el-button
+          >
+        </template>
+      </el-table-column>
+    </el-table>
+  </div>
+
+  <!-- 待复核队列 -->
+  <div class="card">
+    <h3 class="card-title">待复核队列（HOLD）</h3>
+    <el-table v-loading="loading" :data="pending" stripe>
+      <el-table-column label="工单号" width="88">
+        <template #default="{ row }"><span class="mono-num case-id">#{{ row.id }}</span></template>
+      </el-table-column>
+      <el-table-column label="客户" width="140">
+        <template #default="{ row }">{{ row.customerName }}<span class="cid">{{ row.customerId }}</span></template>
+      </el-table-column>
+      <el-table-column prop="alertRule" label="预警规则" min-width="180" show-overflow-tooltip />
+      <el-table-column label="业务优先级" width="110">
+        <template #default="{ row }">
+          <el-tag :type="priorityType(operationsFor(row.id)?.priority)" effect="dark">
+            {{ priorityLabels[operationsFor(row.id)?.priority ?? 'NORMAL'] }}
+          </el-tag>
+        </template>
+      </el-table-column>
+      <el-table-column label="复核 SLA" min-width="185">
+        <template #default="{ row }">
+          <span :class="{ 'deadline-overdue': operationsFor(row.id)?.overdue }">{{ deadlineText(row.id) }}</span>
+        </template>
+      </el-table-column>
+      <el-table-column label="评级" width="96">
+        <template #default="{ row }">
+          <span v-if="row.riskLevel" class="rk" :class="riskMeta[row.riskLevel]?.cls">{{ row.riskLevel }}</span>
+          <span v-else class="rk-none">-</span>
+        </template>
+      </el-table-column>
+      <el-table-column label="状态" width="96">
+        <template #default>
+          <span class="st-hold">转人工</span>
+        </template>
+      </el-table-column>
+      <el-table-column label="操作" width="200" fixed="right">
+        <template #default="{ row }">
+          <div class="row-actions">
+            <el-button size="small" @click="emit('open-case', row.id)">
+              <el-icon><search /></el-icon>
+              <span>查看详情</span>
+            </el-button>
+            <el-button size="small" type="primary" @click="openReview(row)">
+              <el-icon><Stamp /></el-icon>
+              <span>复核</span>
+            </el-button>
+          </div>
+        </template>
+      </el-table-column>
+    </el-table>
+    <el-empty v-if="pending.length === 0" description="暂无待复核工单">
+      <template #image><div class="empty-mark">✓</div></template>
+    </el-empty>
+  </div>
+
+  <el-dialog v-model="dialogOpen" title="提交复核决定" width="540px">
+    <div v-if="reviewing">
+      <div class="rv-head">
+        <div>
+          <span class="rv-id mono-num">#{{ reviewing.id }}</span>
+          <span class="rv-name">{{ reviewing.customerName }}</span>
+        </div>
+        <span class="rv-agent">Agent 评级 · {{ reviewing.riskLevel }}</span>
+      </div>
+      <el-alert v-if="activeEdd?.status === 'OPEN'" type="warning" :closable="false" show-icon :title="activeEddTitle">
+        <template #default>
+          <el-button size="small" type="danger" plain :loading="cancellingEdd" @click="cancelActiveEdd"
+            >撤销任务</el-button
+          >
+        </template>
+      </el-alert>
+      <el-alert
+        v-else-if="activeEdd?.status === 'SUBMITTED'"
+        type="success"
+        :closable="false"
+        show-icon
+        :title="`第 ${activeEdd.roundNo} 轮材料已提交，可重新作出处置`"
+      >
+        <template #default>
+          <p class="edd-summary">{{ activeEdd.responseSummary }}</p>
+          <span class="mono-num">证据编号：{{ activeEdd.evidenceReferences.join('、') }}</span>
+        </template>
+      </el-alert>
+      <el-alert
+        v-if="decision !== 'REQUEST_ENHANCED_DUE_DILIGENCE'"
+        :type="currentInvestigationBlockers.length ? 'warning' : 'success'"
+        :closable="false"
+        show-icon
+        :title="currentInvestigationBlockers.length ? '调查链路尚未满足最终处置条件' : '调查链路已满足当前处置条件'"
+      >
+        <template #default>
+          <p v-if="currentInvestigationBlockers.length" class="investigation-blockers">
+            {{ currentInvestigationBlockers.join('；') }}
+          </p>
+          <el-button size="small" plain @click="emit('open-case', reviewing.id)">打开案件调查链</el-button>
+        </template>
+      </el-alert>
+      <el-form label-width="90px">
+        <el-form-item label="复核评级">
+          <el-radio-group v-model="reviewerRiskLevel">
+            <el-radio value="高风险">高风险</el-radio>
+            <el-radio value="中风险">中风险</el-radio>
+            <el-radio value="低风险">低风险</el-radio>
+          </el-radio-group>
+        </el-form-item>
+        <el-form-item label="复核决定">
+          <el-radio-group v-model="decision" :disabled="activeEdd?.status === 'OPEN'">
+            <el-radio value="CONFIRM_SUSPICIOUS">确认可疑</el-radio>
+            <el-radio value="EXCLUDE_FALSE_POSITIVE">排除预警</el-radio>
+            <el-radio value="REQUEST_ENHANCED_DUE_DILIGENCE">补充尽调</el-radio>
+          </el-radio-group>
+        </el-form-item>
+        <el-form-item label="处置原因">
+          <el-select v-model="reasonCode" style="width: 100%" placeholder="选择结构化原因">
+            <el-option
+              v-for="reason in currentReasons"
+              :key="reason.value"
+              :label="reason.label"
+              :value="reason.value"
+            />
+          </el-select>
+        </el-form-item>
+        <template v-if="decision === 'REQUEST_ENHANCED_DUE_DILIGENCE'">
+          <el-form-item label="补充材料">
+            <el-select v-model="requiredItems" multiple collapse-tags style="width: 100%" placeholder="选择 1 ~ 5 项">
+              <el-option
+                v-for="item in requiredItemOptions"
+                :key="item.value"
+                :label="item.label"
+                :value="item.value"
+              />
+            </el-select>
+          </el-form-item>
+          <el-form-item label="截止时间">
+            <el-date-picker
+              v-model="dueAt"
+              type="datetime"
+              value-format="YYYY-MM-DDTHH:mm:ss"
+              placeholder="选择补充材料截止时间"
+              style="width: 100%"
+            />
+          </el-form-item>
+          <el-form-item label="承办人">
+            <el-select v-model="assignedTo" style="width: 100%" placeholder="选择分析员">
+              <el-option v-for="user in assignees" :key="user.username" :label="user.username" :value="user.username" />
+            </el-select>
+          </el-form-item>
+          <el-form-item label="承办部门">
+            <el-input v-model="assignedUnit" maxlength="64" placeholder="例如：反洗钱分析组" />
+          </el-form-item>
+        </template>
+        <el-form-item label="分析记录">
+          <el-input
+            v-model="comment"
+            type="textarea"
+            :rows="4"
+            maxlength="500"
+            show-word-limit
+            placeholder="记录核验的客户信息、交易特征、证据与判断理由（至少 10 个字符）"
+          />
+        </el-form-item>
+      </el-form>
+    </div>
+    <template #footer>
+      <el-button @click="dialogOpen = false">取消</el-button>
+      <el-button
+        type="primary"
+        :loading="submitting || eddLoading"
+        :disabled="activeEdd?.status === 'OPEN' || currentInvestigationBlockers.length > 0"
+        @click="doSubmit"
+        >提交</el-button
+      >
+    </template>
+  </el-dialog>
+</div>

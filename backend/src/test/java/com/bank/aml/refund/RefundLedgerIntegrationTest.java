@@ -1,16 +1,10 @@
 package com.bank.aml.refund;
 
 import com.bank.aml.common.enums.CaseStatus;
+import com.bank.aml.common.exception.InvestigationRevisionConflictException;
 import com.bank.aml.datasource.entity.CaseEntity;
 import com.bank.aml.datasource.repository.CaseRepository;
-import org.junit.jupiter.api.Tag;
-import org.junit.jupiter.api.Test;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.test.context.DynamicPropertyRegistry;
-import org.springframework.test.context.DynamicPropertySource;
-
+import com.bank.aml.testinfra.TestSqlIdentifier;
 import java.math.BigDecimal;
 import java.sql.Connection;
 import java.sql.DriverManager;
@@ -18,38 +12,52 @@ import java.sql.Statement;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
+import org.junit.jupiter.api.Tag;
+import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.test.context.DynamicPropertyRegistry;
+import org.springframework.test.context.DynamicPropertySource;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
- * G4 全链验收（RF-06/RF-11/RF-13/RF-22/RF-24/RF-30）：
- * 退款金额账在真实 MySQL 上的行级验证——并发占用、超额拒绝、失败回滚无半成品、
- * 存量语义（旧数据不被伪造）。
- * 运行：./mvnw -Pintegration-test test -Dtest=RefundLedgerIntegrationTest
+ * G4 全链验收（RF-06/RF-11/RF-13/RF-22/RF-24/RF-30）： 退款金额账在真实 MySQL
+ * 上的行级验证——并发占用、超额拒绝、失败回滚无半成品、 存量语义（旧数据不被伪造）。 运行：./mvnw -Pintegration-test test
+ * -Dtest=RefundLedgerIntegrationTest
  */
 @Tag("integration")
 @SpringBootTest
+@SuppressWarnings("deprecation") // 集成测试仍需验证旧版金额账重载在真实数据库上的兼容行为。
 class RefundLedgerIntegrationTest {
 
     private static final String SCHEMA = "aml_refund_ledger_test";
+
     private static final String HOST = env("MYSQL_TEST_HOST", "localhost:3307");
+
     private static final String ROOT_USER = env("MYSQL_ROOT_USER", "root");
+
     private static final String ROOT_PASSWORD = env("MYSQL_ROOT_PASSWORD", "root123456");
+
+    private static final String JDBC_OPTIONS = "?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai"
+            + "&useSSL=false&allowPublicKeyRetrieval=true";
 
     @DynamicPropertySource
     static void isolatedSchema(DynamicPropertyRegistry registry) {
-        String serverUrl = "jdbc:mysql://" + HOST
-                + "/?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true";
+        String serverUrl = "jdbc:mysql://" + HOST + "/" + JDBC_OPTIONS;
+        String quotedSchema = TestSqlIdentifier.mysqlSchema(SCHEMA);
         try (Connection conn = DriverManager.getConnection(serverUrl, ROOT_USER, ROOT_PASSWORD);
-             Statement st = conn.createStatement()) {
-            st.execute("DROP DATABASE IF EXISTS " + SCHEMA);
-            st.execute("CREATE DATABASE " + SCHEMA + " CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci");
-        } catch (Exception e) {
+                Statement st = conn.createStatement()) {
+            st.execute("DROP DATABASE IF EXISTS " + quotedSchema);
+            st.execute("CREATE DATABASE " + quotedSchema + " CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci");
+        }
+        catch (Exception e) {
             throw new IllegalStateException("无法创建隔离 schema " + SCHEMA, e);
         }
-        registry.add("spring.datasource.url", () -> "jdbc:mysql://" + HOST + "/" + SCHEMA
-                + "?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true");
+        registry.add("spring.datasource.url", () -> "jdbc:mysql://" + HOST + "/" + SCHEMA + JDBC_OPTIONS);
         registry.add("spring.datasource.username", () -> ROOT_USER);
         registry.add("spring.datasource.password", () -> ROOT_PASSWORD);
         registry.add("spring.jpa.hibernate.ddl-auto", () -> "validate");
@@ -64,12 +72,16 @@ class RefundLedgerIntegrationTest {
 
     @Autowired
     private RefundLedgerService ledgerService;
+
     @Autowired
     private RefundEventRepository eventRepository;
+
     @Autowired
     private RefundAllocationRepository allocationRepository;
+
     @Autowired
     private CaseRepository caseRepository;
+
     @Autowired
     private JdbcTemplate jdbcTemplate;
 
@@ -88,26 +100,67 @@ class RefundLedgerIntegrationTest {
     @Test
     void refundLedgerBalancesInRealDatabase() {
         Long caseId = createCase("RF06");
-        var result = ledgerService.register(caseId, new RefundLedgerService.RefundRegistration(
-                "CORE_BANKING", "RF06-E1", "POSTED", "甲贸易公司", "丙集团公司", "ACCT-P",
-                new BigDecimal("120000.00"), "CNY", LocalDateTime.now(),
-                List.of(new RefundLedgerService.AllocationInput("T-1001", "SO-01",
-                        new BigDecimal("120000.00"), null))), "analyst");
+        var result = ledgerService.register(caseId, new RefundLedgerService.RefundRegistration("CORE_BANKING",
+                "RF06-E1", "POSTED", "甲贸易公司", "丙集团公司", "ACCT-P", new BigDecimal("120000.00"), "CNY",
+                LocalDateTime.now(),
+                List.of(new RefundLedgerService.AllocationInput("T-1001", "SO-01", new BigDecimal("120000.00"), null))),
+                "analyst");
         assertThat(result.idempotentReplay()).isFalse();
 
-        var ledger = ledgerService.ledger(caseId, List.of(
-                new RefundLedgerService.OriginalAllocation("T-1001", "SO-01", new BigDecimal("440000.00"))));
+        var ledger = ledgerService.ledger(caseId,
+                List.of(new RefundLedgerService.OriginalAllocation("T-1001", "SO-01", new BigDecimal("440000.00"))));
         assertThat((BigDecimal) ledger.get("totalRefunded")).isEqualByComparingTo("120000.00");
         assertThat((BigDecimal) ledger.get("totalRetained")).isEqualByComparingTo("320000.00");
 
         // 行级：退款事件与分配真实落库
-        Integer eventRows = jdbcTemplate.queryForObject(
-                "SELECT COUNT(*) FROM refund_event WHERE case_id = ?", Integer.class, caseId);
+        Integer eventRows = jdbcTemplate.queryForObject("SELECT COUNT(*) FROM refund_event WHERE case_id = ?",
+                Integer.class, caseId);
         assertThat(eventRows).isEqualTo(1);
         Integer allocationRows = jdbcTemplate.queryForObject(
                 "SELECT COUNT(*) FROM refund_allocation WHERE case_id = ? AND original_transaction_id = 'T-1001'",
                 Integer.class, caseId);
         assertThat(allocationRows).isEqualTo(1);
+    }
+
+    /** 数据库本身拒绝跨案件、跨币种和非正数分配，不能只依赖应用层校验。 */
+    @Test
+    void databaseEnforcesRefundAllocationIdentityAndAmount() {
+        Long eventCaseId = createCase("DB-INTEGRITY-EVENT");
+        Long anotherCaseId = createCase("DB-INTEGRITY-OTHER");
+        long eventId = ledgerService
+            .register(eventCaseId, registration(eventCaseId, "DB-INTEGRITY-E1", "100.00"), "analyst")
+            .eventId();
+
+        assertThatThrownBy(() -> jdbcTemplate.update(
+                "INSERT INTO refund_allocation "
+                        + "(case_id, refund_event_id, original_transaction_id, original_allocation_key, "
+                        + "allocated_amount, currency, created_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, NOW(6))",
+                anotherCaseId, eventId, "T-CROSS-CASE", "A-CROSS-CASE", new BigDecimal("1.00"), "CNY", "test"))
+            .isInstanceOf(DataIntegrityViolationException.class);
+
+        assertThatThrownBy(() -> jdbcTemplate.update(
+                "INSERT INTO refund_allocation "
+                        + "(case_id, refund_event_id, original_transaction_id, original_allocation_key, "
+                        + "allocated_amount, currency, created_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, NOW(6))",
+                eventCaseId, eventId, "T-CROSS-CURRENCY", "A-CROSS-CURRENCY", new BigDecimal("1.00"), "USD", "test"))
+            .isInstanceOf(DataIntegrityViolationException.class);
+
+        assertThatThrownBy(() -> jdbcTemplate.update(
+                "INSERT INTO refund_allocation "
+                        + "(case_id, refund_event_id, original_transaction_id, original_allocation_key, "
+                        + "allocated_amount, currency, created_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, NOW(6))",
+                eventCaseId, eventId, "T-ZERO", "A-ZERO", BigDecimal.ZERO, "CNY", "test"))
+            .isInstanceOf(DataIntegrityViolationException.class);
+
+        long otherEventId = ledgerService
+            .register(anotherCaseId, registration(anotherCaseId, "DB-INTEGRITY-E2", "20.00"), "analyst")
+            .eventId();
+        assertThatThrownBy(() -> jdbcTemplate.update("UPDATE refund_event SET reversed_event_id = ? WHERE id = ?",
+                otherEventId, eventId))
+            .isInstanceOf(DataIntegrityViolationException.class);
+        assertThatThrownBy(() -> jdbcTemplate.update("UPDATE refund_event SET reversed_event_id = ? WHERE id = ?",
+                Long.MAX_VALUE, eventId))
+            .isInstanceOf(DataIntegrityViolationException.class);
     }
 
     /** RF-21：同键同内容幂等（数据库唯一键兜底）；同键不同内容 409。 */
@@ -119,10 +172,11 @@ class RefundLedgerIntegrationTest {
         assertThat(replay.idempotentReplay()).isTrue();
         assertThat(replay.eventId()).isEqualTo(first.eventId());
 
-        assertThatThrownBy(() -> ledgerService.register(caseId, registration(caseId, "RF21-E1", "130000.00"), "analyst"))
-                .isInstanceOf(com.bank.aml.common.exception.InvestigationRevisionConflictException.class);
-        Integer eventRows = jdbcTemplate.queryForObject(
-                "SELECT COUNT(*) FROM refund_event WHERE case_id = ?", Integer.class, caseId);
+        assertThatThrownBy(
+                () -> ledgerService.register(caseId, registration(caseId, "RF21-E1", "130000.00"), "analyst"))
+            .isInstanceOf(InvestigationRevisionConflictException.class);
+        Integer eventRows = jdbcTemplate.queryForObject("SELECT COUNT(*) FROM refund_event WHERE case_id = ?",
+                Integer.class, caseId);
         assertThat(eventRows).isEqualTo(1); // 无第二条事件
     }
 
@@ -130,18 +184,19 @@ class RefundLedgerIntegrationTest {
     @Test
     void overAllocationRejectedWithNoPartialRows() {
         Long caseId = createCase("RF13");
-        assertThatThrownBy(() -> ledgerService.register(caseId, new RefundLedgerService.RefundRegistration(
-                "CORE_BANKING", "RF13-E1", "POSTED", "甲", "丙", null,
-                new BigDecimal("100000.00"), "CNY", LocalDateTime.now(),
-                List.of(new RefundLedgerService.AllocationInput("T-1001", "SO-01",
-                        new BigDecimal("100000.01"), null))), "analyst"))
-                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> ledgerService.register(caseId,
+                new RefundLedgerService.RefundRegistration(
+                        "CORE_BANKING", "RF13-E1", "POSTED", "甲", "丙", null, new BigDecimal("100000.00"), "CNY",
+                        LocalDateTime.now(), List.of(new RefundLedgerService.AllocationInput("T-1001", "SO-01",
+                                new BigDecimal("100000.01"), null))),
+                "analyst"))
+            .isInstanceOf(IllegalArgumentException.class);
         // 事务回滚：事件与分配均不落库（RF-24 失败注入语义在同一事务边界验证）
-        Integer eventRows = jdbcTemplate.queryForObject(
-                "SELECT COUNT(*) FROM refund_event WHERE case_id = ?", Integer.class, caseId);
+        Integer eventRows = jdbcTemplate.queryForObject("SELECT COUNT(*) FROM refund_event WHERE case_id = ?",
+                Integer.class, caseId);
         assertThat(eventRows).isZero();
-        Integer allocationRows = jdbcTemplate.queryForObject(
-                "SELECT COUNT(*) FROM refund_allocation WHERE case_id = ?", Integer.class, caseId);
+        Integer allocationRows = jdbcTemplate.queryForObject("SELECT COUNT(*) FROM refund_allocation WHERE case_id = ?",
+                Integer.class, caseId);
         assertThat(allocationRows).isZero();
     }
 
@@ -151,11 +206,11 @@ class RefundLedgerIntegrationTest {
         Long caseId = createCase("RF11");
         ledgerService.register(caseId, registration(caseId, "RF11-E1", "80000.00"), "analyst");
         ledgerService.register(caseId, registration(caseId, "RF11-E2", "40000.00"), "analyst");
-        var ledger = ledgerService.ledger(caseId, List.of(
-                new RefundLedgerService.OriginalAllocation("T-1001", "SO-01", new BigDecimal("440000.00"))));
+        var ledger = ledgerService.ledger(caseId,
+                List.of(new RefundLedgerService.OriginalAllocation("T-1001", "SO-01", new BigDecimal("440000.00"))));
         assertThat((BigDecimal) ledger.get("totalRefunded")).isEqualByComparingTo("120000.00");
-        Integer eventRows = jdbcTemplate.queryForObject(
-                "SELECT COUNT(*) FROM refund_event WHERE case_id = ?", Integer.class, caseId);
+        Integer eventRows = jdbcTemplate.queryForObject("SELECT COUNT(*) FROM refund_event WHERE case_id = ?",
+                Integer.class, caseId);
         assertThat(eventRows).isEqualTo(2);
     }
 
@@ -165,13 +220,13 @@ class RefundLedgerIntegrationTest {
         Long caseId = createCase("RF17");
         ledgerService.register(caseId, registration(caseId, "RF17-E1", "120000.00"), "analyst");
         ledgerService.reverse(caseId, "CORE_BANKING", "RF17-E1", "RF17-R1", "analyst");
-        var ledger = ledgerService.ledger(caseId, List.of(
-                new RefundLedgerService.OriginalAllocation("T-1001", "SO-01", new BigDecimal("440000.00"))));
+        var ledger = ledgerService.ledger(caseId,
+                List.of(new RefundLedgerService.OriginalAllocation("T-1001", "SO-01", new BigDecimal("440000.00"))));
         assertThat((BigDecimal) ledger.get("totalRefunded")).isEqualByComparingTo("0");
         assertThat((BigDecimal) ledger.get("totalRetained")).isEqualByComparingTo("440000.00");
         // 原事件与冲正事件都保留（不删除业务事实）
-        Integer rows = jdbcTemplate.queryForObject(
-                "SELECT COUNT(*) FROM refund_event WHERE case_id = ?", Integer.class, caseId);
+        Integer rows = jdbcTemplate.queryForObject("SELECT COUNT(*) FROM refund_event WHERE case_id = ?", Integer.class,
+                caseId);
         assertThat(rows).isEqualTo(2);
         String originalStatus = jdbcTemplate.queryForObject(
                 "SELECT event_status FROM refund_event WHERE case_id = ? AND external_event_id = 'RF17-E1'",
@@ -183,8 +238,8 @@ class RefundLedgerIntegrationTest {
     @Test
     void legacyCaseLedgerIsEmptyNotFaked() {
         Long caseId = createCase("RF30");
-        var ledger = ledgerService.ledger(caseId, List.of(
-                new RefundLedgerService.OriginalAllocation("T-OLD", "SO-OLD", new BigDecimal("440000.00"))));
+        var ledger = ledgerService.ledger(caseId,
+                List.of(new RefundLedgerService.OriginalAllocation("T-OLD", "SO-OLD", new BigDecimal("440000.00"))));
         assertThat((BigDecimal) ledger.get("totalRefunded")).isEqualByComparingTo("0");
         assertThat((Map<?, ?>) ledger.get("overAllocations")).isEmpty();
         assertThat((BigDecimal) ledger.get("totalRetained")).isEqualByComparingTo("440000.00");
@@ -204,24 +259,22 @@ class RefundLedgerIntegrationTest {
         t2.start();
         t1.join(30000);
         t2.join(30000);
-        Integer eventRows = jdbcTemplate.queryForObject(
-                "SELECT COUNT(*) FROM refund_event WHERE case_id = ?", Integer.class, caseId);
+        Integer eventRows = jdbcTemplate.queryForObject("SELECT COUNT(*) FROM refund_event WHERE case_id = ?",
+                Integer.class, caseId);
         assertThat(eventRows).isEqualTo(2); // 行锁串行化：两笔都落库，无丢失更新
-        var ledger = ledgerService.ledger(caseId, List.of(
-                new RefundLedgerService.OriginalAllocation("T-1001", "SO-01", new BigDecimal("120000.00"))));
+        var ledger = ledgerService.ledger(caseId,
+                List.of(new RefundLedgerService.OriginalAllocation("T-1001", "SO-01", new BigDecimal("120000.00"))));
         // 超额显式可见（RF-13/RF-22）：不静默、不丢失
         @SuppressWarnings("unchecked")
-        java.util.Map<String, String> overAllocations =
-                (java.util.Map<String, String>) ledger.get("overAllocations");
+        Map<String, String> overAllocations = (Map<String, String>) ledger.get("overAllocations");
         assertThat(overAllocations).containsKey("T-1001");
     }
 
     private RefundLedgerService.RefundRegistration registration(Long caseId, String externalId, String amount) {
         // effectiveAt 是业务时间：同键重放必须携带相同业务时间（payloadDigest 含 effectiveAt）
-        return new RefundLedgerService.RefundRegistration("CORE_BANKING", externalId, "POSTED",
-                "甲贸易公司", "丙集团公司", "ACCT-P", new BigDecimal(amount), "CNY",
-                LocalDateTime.parse("2026-09-05T10:00:00"),
-                List.of(new RefundLedgerService.AllocationInput("T-1001", "SO-01",
-                        new BigDecimal(amount), null)));
+        return new RefundLedgerService.RefundRegistration("CORE_BANKING", externalId, "POSTED", "甲贸易公司", "丙集团公司",
+                "ACCT-P", new BigDecimal(amount), "CNY", LocalDateTime.parse("2026-09-05T10:00:00"),
+                List.of(new RefundLedgerService.AllocationInput("T-1001", "SO-01", new BigDecimal(amount), null)));
     }
+
 }

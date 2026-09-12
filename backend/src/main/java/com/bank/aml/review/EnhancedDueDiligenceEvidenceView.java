@@ -1,15 +1,7 @@
 package com.bank.aml.review;
 
-import java.time.LocalDateTime;
+import java.time.Instant;
 
-public record EnhancedDueDiligenceEvidenceView(
-        Long id,
-        String evidenceId,
-        String requiredItemCode,
-        String sourceSystem,
-        String sourceReference,
-        String contentSha256,
-        String capturedBy,
-        LocalDateTime capturedAt
-) {
+public record EnhancedDueDiligenceEvidenceView(Long id, String evidenceId, String requiredItemCode, String sourceSystem,
+        String sourceReference, String contentSha256, String capturedBy, Instant capturedAt) {
 }

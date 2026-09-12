@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { onBeforeUnmount, onMounted, ref } from 'vue'
 import {
   getAgentEvalStatus,
   getAgentEvalDatasetSummary,
@@ -16,30 +16,48 @@ const dataset = ref<AgentEvalDatasetSummary | null>(null)
 const loading = ref(false)
 const dataLoading = ref(true)
 const result = ref<AgentEvalResult | null>(null)
+let active = true
+let loadVersion = 0
+let runVersion = 0
 
 onMounted(async () => {
+  const version = ++loadVersion
   try {
-    status.value = await getAgentEvalStatus()
-    dataset.value = await getAgentEvalDatasetSummary()
+    const [nextStatus, nextDataset] = await Promise.all([getAgentEvalStatus(), getAgentEvalDatasetSummary()])
+    if (!active || version !== loadVersion) return
+    status.value = nextStatus
+    dataset.value = nextDataset
   } catch {
+    if (!active || version !== loadVersion) return
     ElMessage.error('加载评测状态失败')
   } finally {
-    dataLoading.value = false
+    if (active && version === loadVersion) dataLoading.value = false
   }
 })
 
 async function runDev() {
+  if (loading.value) return
+  const version = ++runVersion
   loading.value = true
   result.value = null
   try {
-    result.value = await runAgentDevEval()
+    const nextResult = await runAgentDevEval()
+    if (!active || version !== runVersion) return
+    result.value = nextResult
     ElMessage.success('DEV 评测已提交')
   } catch {
+    if (!active || version !== runVersion) return
     ElMessage.error('DEV 评测失败（可能未配置真实模型 Key）')
   } finally {
-    loading.value = false
+    if (active && version === runVersion) loading.value = false
   }
 }
+
+onBeforeUnmount(() => {
+  active = false
+  loadVersion += 1
+  runVersion += 1
+})
 
 const rate = (v: EvalRate | null | undefined): string => formatEvalRate(v)
 
@@ -68,20 +86,39 @@ const baseline = [
       :closable="false"
       class="ready-alert"
     >
-      <template #icon><el-icon><Warning /></el-icon></template>
+      <template #icon
+        ><el-icon><Warning /></el-icon
+      ></template>
     </el-alert>
 
     <div class="grid">
-      <div class="card" v-loading="dataLoading">
+      <div v-loading="dataLoading" class="card">
         <h3 class="card-title">Agent 评测数据集</h3>
         <template v-if="dataset">
-          <div class="kv"><span>数据集</span><b class="mono-num">{{ dataset.datasetId }} <em>v{{ dataset.version }}</em></b></div>
-          <div class="kv"><span>来源 / 标注</span><b>{{ dataset.sourceType }} · {{ dataset.annotationMethod }}</b></div>
-          <div class="kv"><span>复核状态</span><el-tag size="small" type="warning" effect="dark">{{ dataset.reviewStatus }}</el-tag></div>
-          <div class="kv"><span>案例总数</span><b class="mono-num">{{ dataset.totalCases }}</b></div>
-          <div class="kv"><span>分片分布</span><b class="mono-num">{{ JSON.stringify(dataset.splitCounts) }}</b></div>
-          <div class="kv"><span>风险等级分布</span><b class="mono-num">{{ JSON.stringify(dataset.riskLevelCounts) }}</b></div>
-          <div class="kv hash"><span>数据集哈希（冻结审计）</span><code>{{ dataset.datasetHash }}</code></div>
+          <div class="kv">
+            <span>数据集</span
+            ><b class="mono-num"
+              >{{ dataset.datasetId }} <em>v{{ dataset.version }}</em></b
+            >
+          </div>
+          <div class="kv">
+            <span>来源 / 标注</span><b>{{ dataset.sourceType }} · {{ dataset.annotationMethod }}</b>
+          </div>
+          <div class="kv">
+            <span>复核状态</span><el-tag size="small" type="warning" effect="dark">{{ dataset.reviewStatus }}</el-tag>
+          </div>
+          <div class="kv">
+            <span>案例总数</span><b class="mono-num">{{ dataset.totalCases }}</b>
+          </div>
+          <div class="kv">
+            <span>分片分布</span><b class="mono-num">{{ JSON.stringify(dataset.splitCounts) }}</b>
+          </div>
+          <div class="kv">
+            <span>风险等级分布</span><b class="mono-num">{{ JSON.stringify(dataset.riskLevelCounts) }}</b>
+          </div>
+          <div class="kv hash">
+            <span>数据集哈希（冻结审计）</span><code>{{ dataset.datasetHash }}</code>
+          </div>
         </template>
         <p v-else class="load-txt">加载中…</p>
       </div>
@@ -108,26 +145,60 @@ const baseline = [
           <span>运行 DEV 分片</span>
         </el-button>
       </div>
-      <p class="hint">需配置真实模型 Key（如 DEEPSEEK_API_KEY）；Mock/fallback 会被拒绝并返回 INVALID_MODEL_FALLBACK。隐藏 TEST 分片仅通过 CLI/集成测试一次性运行（RUN_HIDDEN_AGENT_EVAL=true），不在页面暴露。</p>
+      <p class="hint">
+        需配置真实模型 Key（如 DEEPSEEK_API_KEY）；Mock/fallback 会被拒绝并返回 INVALID_MODEL_FALLBACK。隐藏 TEST
+        分片仅通过 CLI/集成测试一次性运行（RUN_HIDDEN_AGENT_EVAL=true），不在页面暴露。
+      </p>
     </div>
 
     <div v-if="result" class="card">
-      <h3 class="card-title">
-        评测结果（{{ result.split }} · {{ result.runStatus }}）
-      </h3>
+      <h3 class="card-title">评测结果（{{ result.split }} · {{ result.runStatus }}）</h3>
       <div class="metrics">
-        <div class="metric"><span>严格通过率</span><b class="mono-num">{{ rate(result.strictPassRate) }}</b></div>
-        <div class="metric"><span>任务通过率</span><b class="mono-num">{{ rate(result.taskPassRate) }}</b></div>
-        <div class="metric"><span>原始风险准确率</span><b class="mono-num">{{ rate(result.rawRisk?.exactAccuracy) }}</b></div>
-        <div class="metric"><span>最终风险准确率</span><b class="mono-num">{{ rate(result.finalRisk?.exactAccuracy) }}</b></div>
-        <div class="metric"><span>必需工具召回</span><b class="mono-num">{{ rate(result.tools?.requiredToolRecall) }}</b></div>
-        <div class="metric"><span>evidenceId 召回</span><b class="mono-num">{{ rate(result.citations?.evidenceIdRecall) }}</b></div>
-        <div class="metric"><span>Token（输入/输出）</span><b class="mono-num">{{ result.tokens?.inputTokens }} / {{ result.tokens?.outputTokens }}</b></div>
-        <div class="metric"><span>延迟 P50/P95</span><b class="mono-num">{{ result.latency?.p50Ms }}ms / {{ result.latency?.p95Ms }}ms</b></div>
-        <div class="metric"><span>平均 Token 预算</span><b :class="{ pass: result.efficiency?.tokenPass === true, fail: result.efficiency?.tokenPass === false }">{{ result.efficiency?.observedAverageTokensPerCase ?? '-' }} / {{ result.efficiency?.averageTokensPerCaseBudget ?? '-' }}</b></div>
-        <div class="metric"><span>P95 延迟预算</span><b :class="{ pass: result.efficiency?.latencyPass === true, fail: result.efficiency?.latencyPass === false }">{{ result.efficiency?.observedP95LatencyMs ?? '-' }} / {{ result.efficiency?.p95LatencyBudgetMs ?? '-' }} ms</b></div>
+        <div class="metric">
+          <span>严格通过率</span><b class="mono-num">{{ rate(result.strictPassRate) }}</b>
+        </div>
+        <div class="metric">
+          <span>任务通过率</span><b class="mono-num">{{ rate(result.taskPassRate) }}</b>
+        </div>
+        <div class="metric">
+          <span>原始风险准确率</span><b class="mono-num">{{ rate(result.rawRisk?.exactAccuracy) }}</b>
+        </div>
+        <div class="metric">
+          <span>最终风险准确率</span><b class="mono-num">{{ rate(result.finalRisk?.exactAccuracy) }}</b>
+        </div>
+        <div class="metric">
+          <span>必需工具召回</span><b class="mono-num">{{ rate(result.tools?.requiredToolRecall) }}</b>
+        </div>
+        <div class="metric">
+          <span>evidenceId 召回</span><b class="mono-num">{{ rate(result.citations?.evidenceIdRecall) }}</b>
+        </div>
+        <div class="metric">
+          <span>Token（输入/输出）</span
+          ><b class="mono-num">{{ result.tokens?.inputTokens }} / {{ result.tokens?.outputTokens }}</b>
+        </div>
+        <div class="metric">
+          <span>延迟 P50/P95</span><b class="mono-num">{{ result.latency?.p50Ms }}ms / {{ result.latency?.p95Ms }}ms</b>
+        </div>
+        <div class="metric">
+          <span>平均 Token 预算</span
+          ><b :class="{ pass: result.efficiency?.tokenPass === true, fail: result.efficiency?.tokenPass === false }"
+            >{{ result.efficiency?.observedAverageTokensPerCase ?? '-' }} /
+            {{ result.efficiency?.averageTokensPerCaseBudget ?? '-' }}</b
+          >
+        </div>
+        <div class="metric">
+          <span>P95 延迟预算</span
+          ><b :class="{ pass: result.efficiency?.latencyPass === true, fail: result.efficiency?.latencyPass === false }"
+            >{{ result.efficiency?.observedP95LatencyMs ?? '-' }} /
+            {{ result.efficiency?.p95LatencyBudgetMs ?? '-' }} ms</b
+          >
+        </div>
       </div>
-      <p class="hint">promptVersion: <code>{{ result.promptVersion }}</code> · 模型: <code>{{ result.runtime?.configuredModel }}</code> · 评分: <code>{{ result.scored }}/{{ result.attempted }}</code></p>
+      <p class="hint">
+        promptVersion: <code>{{ result.promptVersion }}</code> · 模型:
+        <code>{{ result.runtime?.configuredModel }}</code> · 评分:
+        <code>{{ result.scored }}/{{ result.attempted }}</code>
+      </p>
     </div>
   </div>
 </template>
@@ -158,10 +229,22 @@ const baseline = [
   border-bottom: 1px solid var(--line-faint);
   font-size: 13px;
 }
-.kv span { color: var(--text-dim); }
-.kv b { color: var(--text); font-weight: 550; }
-.kv b em { font-style: normal; color: var(--gold); }
-.kv.hash { flex-direction: column; align-items: flex-start; gap: 4px; }
+.kv span {
+  color: var(--text-dim);
+}
+.kv b {
+  color: var(--text);
+  font-weight: 550;
+}
+.kv b em {
+  font-style: normal;
+  color: var(--gold);
+}
+.kv.hash {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+}
 .kv.hash code {
   font-family: var(--font-mono);
   font-size: 11px;
@@ -173,7 +256,10 @@ const baseline = [
   border-radius: 6px;
 }
 
-.load-txt { color: var(--text-faint); font-size: 13px; }
+.load-txt {
+  color: var(--text-faint);
+  font-size: 13px;
+}
 
 .baseline-list {
   display: flex;
@@ -187,12 +273,28 @@ const baseline = [
   border-bottom: 1px solid var(--line-faint);
   font-size: 13px;
 }
-.bl-metric { flex: 1; color: var(--text-dim); }
-.bl-v2 { color: var(--text-faint); min-width: 52px; text-align: right; }
-.bl-arrow { color: var(--gold); font-size: 14px; }
-.bl-v5 { color: var(--risk-low); min-width: 52px; font-weight: 600; }
+.bl-metric {
+  flex: 1;
+  color: var(--text-dim);
+}
+.bl-v2 {
+  color: var(--text-faint);
+  min-width: 52px;
+  text-align: right;
+}
+.bl-arrow {
+  color: var(--gold);
+  font-size: 14px;
+}
+.bl-v5 {
+  color: var(--risk-low);
+  min-width: 52px;
+  font-weight: 600;
+}
 
-.run-bar { display: flex; }
+.run-bar {
+  display: flex;
+}
 
 .metrics {
   display: grid;
@@ -221,10 +323,17 @@ const baseline = [
   color: var(--text);
   font-weight: 650;
 }
-.metric b.pass { color: var(--risk-low); }
-.metric b.fail { color: var(--risk-high); }
+.metric b.pass {
+  color: var(--risk-low);
+}
+.metric b.fail {
+  color: var(--risk-high);
+}
 
-.grid .card { border-top: 0; padding-top: 0; }
+.grid .card {
+  border-top: 0;
+  padding-top: 0;
+}
 
 .eval .hint code {
   font-family: var(--font-mono);
@@ -236,7 +345,11 @@ const baseline = [
 }
 
 @media (max-width: 900px) {
-  .grid { grid-template-columns: 1fr; }
-  .metrics { grid-template-columns: repeat(2, 1fr); }
+  .grid {
+    grid-template-columns: 1fr;
+  }
+  .metrics {
+    grid-template-columns: repeat(2, 1fr);
+  }
 }
 </style>

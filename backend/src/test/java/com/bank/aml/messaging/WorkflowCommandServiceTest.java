@@ -4,12 +4,11 @@ import com.bank.aml.common.enums.CaseStatus;
 import com.bank.aml.common.exception.WorkflowStateConflictException;
 import com.bank.aml.datasource.entity.CaseEntity;
 import com.bank.aml.datasource.repository.CaseRepository;
-import org.junit.jupiter.api.Test;
-import org.mockito.ArgumentCaptor;
-
 import java.time.LocalDateTime;
 import java.util.Collection;
 import java.util.Optional;
+import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -33,8 +32,9 @@ class WorkflowCommandServiceTest {
         WorkflowCommandService svc = new WorkflowCommandService(repo, outbox);
 
         // 条件 UPDATE 返回 0：心跳在扫描后刷新，或已被其他 Claimer 接管
-        when(repo.reclaimStuckCase(eq(1L), eq(CaseStatus.PENDING), eq(CaseStatus.RUNNING),
-                eq(3), eq("worker-a"), any(LocalDateTime.class))).thenReturn(0);
+        when(repo.reclaimStuckCase(eq(1L), eq(CaseStatus.PENDING), eq(CaseStatus.RUNNING), eq(3), eq("worker-a"),
+                any(LocalDateTime.class)))
+            .thenReturn(0);
 
         boolean reclaimed = svc.reclaimExpiredCase(1L, 3, "worker-a", LocalDateTime.now());
 
@@ -49,8 +49,9 @@ class WorkflowCommandServiceTest {
         OutboxService outbox = mock(OutboxService.class);
         WorkflowCommandService svc = new WorkflowCommandService(repo, outbox);
 
-        when(repo.reclaimStuckCase(eq(1L), eq(CaseStatus.PENDING), eq(CaseStatus.RUNNING),
-                eq(3), eq("worker-a"), any(LocalDateTime.class))).thenReturn(1);
+        when(repo.reclaimStuckCase(eq(1L), eq(CaseStatus.PENDING), eq(CaseStatus.RUNNING), eq(3), eq("worker-a"),
+                any(LocalDateTime.class)))
+            .thenReturn(1);
 
         boolean reclaimed = svc.reclaimExpiredCase(1L, 3, "worker-a", LocalDateTime.now());
 
@@ -64,8 +65,9 @@ class WorkflowCommandServiceTest {
         OutboxService outbox = mock(OutboxService.class);
         WorkflowCommandService svc = new WorkflowCommandService(repo, outbox);
 
-        when(repo.failCase(eq(1L), eq(CaseStatus.FAILED), eq(3), eq("RETRY_EXHAUSTED"),
-                anyString(), eq("worker-a"), eq(2))).thenReturn(1);
+        when(repo.failCase(eq(1L), eq(CaseStatus.FAILED), eq(3), eq("RETRY_EXHAUSTED"), anyString(), eq("worker-a"),
+                eq(2)))
+            .thenReturn(1);
 
         boolean marked = svc.markDeadLetter(1L, "worker-a", 2, 3, "重试超限");
 
@@ -80,8 +82,9 @@ class WorkflowCommandServiceTest {
         WorkflowCommandService svc = new WorkflowCommandService(repo, outbox);
 
         // 已失去租约（worker/version 不匹配），failCase 返回 0
-        when(repo.failCase(eq(1L), eq(CaseStatus.FAILED), eq(3), eq("RETRY_EXHAUSTED"),
-                anyString(), eq("worker-a"), eq(2))).thenReturn(0);
+        when(repo.failCase(eq(1L), eq(CaseStatus.FAILED), eq(3), eq("RETRY_EXHAUSTED"), anyString(), eq("worker-a"),
+                eq(2)))
+            .thenReturn(0);
 
         boolean marked = svc.markDeadLetter(1L, "worker-a", 2, 3, "重试超限");
 
@@ -100,8 +103,7 @@ class WorkflowCommandServiceTest {
         done.setStatus(CaseStatus.DONE);
         when(repo.findById(1L)).thenReturn(Optional.of(done));
 
-        assertThatThrownBy(() -> svc.retryManual(1L))
-                .isInstanceOf(WorkflowStateConflictException.class);
+        assertThatThrownBy(() -> svc.retryManual(1L)).isInstanceOf(WorkflowStateConflictException.class);
         verify(outbox, never()).record(anyLong(), anyString(), anyInt());
     }
 
@@ -111,13 +113,13 @@ class WorkflowCommandServiceTest {
         OutboxService outbox = mock(OutboxService.class);
         WorkflowCommandService svc = new WorkflowCommandService(repo, outbox);
 
-        when(repo.replayDeadLetter(eq(1L), eq(CaseStatus.PENDING), eq(CaseStatus.FAILED), anyCollection())).thenReturn(0);
+        when(repo.replayDeadLetter(eq(1L), eq(CaseStatus.PENDING), eq(CaseStatus.FAILED), anyCollection()))
+            .thenReturn(0);
         CaseEntity done = new CaseEntity();
         done.setStatus(CaseStatus.DONE);
         when(repo.findById(1L)).thenReturn(Optional.of(done));
 
-        assertThatThrownBy(() -> svc.replayDead(1L))
-                .isInstanceOf(WorkflowStateConflictException.class);
+        assertThatThrownBy(() -> svc.replayDead(1L)).isInstanceOf(WorkflowStateConflictException.class);
         verify(outbox, never()).record(anyLong(), anyString(), anyInt());
     }
 
@@ -147,7 +149,7 @@ class WorkflowCommandServiceTest {
         WorkflowCommandService svc = new WorkflowCommandService(repo, outbox);
 
         when(repo.replayDeadLetter(eq(1L), eq(CaseStatus.PENDING), eq(CaseStatus.FAILED), anyCollection()))
-                .thenReturn(1);
+            .thenReturn(1);
         CaseEntity dead = new CaseEntity();
         dead.setStatus(CaseStatus.FAILED);
         dead.setFailureCode("RETRY_EXHAUSTED");
@@ -157,9 +159,11 @@ class WorkflowCommandServiceTest {
         svc.replayDead(1L);
 
         // 验证死信重放只允许 RETRY_EXHAUSTED / CLAIM_EXHAUSTED 两种 failureCode
+        @SuppressWarnings("unchecked") // 泛型实参在运行时擦除，Mockito 只能接收原始 Collection.class。
         ArgumentCaptor<Collection<String>> captor = ArgumentCaptor.forClass(Collection.class);
         verify(repo).replayDeadLetter(eq(1L), eq(CaseStatus.PENDING), eq(CaseStatus.FAILED), captor.capture());
         assertThat(captor.getValue()).containsExactlyInAnyOrder("RETRY_EXHAUSTED", "CLAIM_EXHAUSTED");
         verify(outbox).record(1L, WorkflowEventType.CASE_DEAD_REPLAYED.name(), 3);
     }
+
 }

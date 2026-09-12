@@ -1,14 +1,14 @@
 package com.bank.aml.assistant.application;
 
-import org.junit.jupiter.api.Test;
-
 import java.util.List;
+import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ValidatedAnswerChunkerTest {
+
     @Test
     void reconstructsAnswerExactlyAcrossMultipleChunks() {
         String answer = "## 风险结论\n近180天交易需要关注。[证据: TXN-001]";
@@ -34,4 +34,5 @@ class ValidatedAnswerChunkerTest {
         assertEquals(List.of(), ValidatedAnswerChunker.split(null, 8));
         assertThrows(IllegalArgumentException.class, () -> ValidatedAnswerChunker.split("answer", 0));
     }
+
 }

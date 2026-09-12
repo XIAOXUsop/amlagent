@@ -8,12 +8,12 @@ import org.springframework.context.annotation.Configuration;
 /**
  * 上下文治理器的装配。
  *
- * <p>整块由 {@code aml.assistant.context.enabled} 控制（默认 true）；置 false 时
- * 不注册治理器 Bean，调用方回退到旧的窗口行为——这是一键回滚开关。
+ * <p>
+ * 整块由 {@code aml.assistant.context.enabled} 控制（默认 true）；置 false 时 不注册治理器
+ * Bean，调用方回退到旧的窗口行为——这是一键回滚开关。
  */
 @Configuration
-@ConditionalOnProperty(prefix = "aml.assistant.context", name = "enabled",
-        havingValue = "true", matchIfMissing = true)
+@ConditionalOnProperty(prefix = "aml.assistant.context", name = "enabled", havingValue = "true", matchIfMissing = true)
 public class AssistantContextConfiguration {
 
     @Bean
@@ -32,4 +32,5 @@ public class AssistantContextConfiguration {
     public ContextGovernor contextGovernor(ContextTokenEstimator estimator, ContextCompressor compressor) {
         return new ContextGovernor(estimator, compressor);
     }
+
 }

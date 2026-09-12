@@ -2,7 +2,7 @@ spring:
   application:
     name: aml-agent-backend
   datasource:
-    url: jdbc:mysql://localhost:3307/aml_agent?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true
+    url: jdbc:mysql://localhost:3307/aml_agent?useUnicode=true&characterEncoding=utf8&serverTimezone=UTC&useSSL=false&allowPublicKeyRetrieval=true
     username: ${MYSQL_USER:aml}
     password: ${MYSQL_PASSWORD:aml123456}
     hikari:
@@ -29,8 +29,8 @@ spring:
     locations: classpath:db/migration
   servlet:
     multipart:
-      max-file-size: 5MB
-      max-request-size: 6MB
+      max-file-size: ${AML_CUSTOMER_IMPORT_MAX_BYTES:5242880}
+      max-request-size: ${AML_CUSTOMER_IMPORT_MAX_REQUEST_BYTES:6291456}
   data:
     redis:
       repositories:
@@ -67,13 +67,12 @@ management:
     tags:
       application: aml-agent
   tracing:
-    # 默认全量采样：本系统是合规审计场景，"这次调用为什么这么判"比"少存几条 span"更重要。
+    # 默认全量采样：本系统是合规审计场景，需要保留单次调用的判定链路。
     # 高并发部署可通过 MANAGEMENT_TRACING_SAMPLING_PROBABILITY 环境变量下调。
     sampling:
       probability: 1.0
-  # 注意：这里刻意不设 management.otlp.tracing.endpoint。
-  # 不设 = 不导出，span 只在本地记录，应用行为与网络依赖都不变；
-  # 接入 Jaeger / Tempo / Langfuse 等后端时，设该属性指向 OTLP 端点即可开始导出。
+  # 默认不设置 management.otlp.tracing.endpoint，因此不会向外部追踪后端导出。
+  # 接入 Jaeger、Tempo 或 Langfuse 时，配置 OTLP 端点即可启用导出。
 
 logging:
   level:
@@ -88,40 +87,137 @@ aml:
   agent:
     # 单次尽调可冻结的最大关联预警数；超出必须明确拒绝（归并/拆分），禁止截断尾部预警当作完整调查
     max-linked-alerts: ${AML_AGENT_MAX_LINKED_ALERTS:8}
+    max-tool-round-trips: ${AML_AGENT_MAX_TOOL_ROUND_TRIPS:3}
+  agent-output:
+    max-text-characters: ${AML_AGENT_OUTPUT_MAX_TEXT_CHARACTERS:8000}
+    max-list-items: ${AML_AGENT_OUTPUT_MAX_LIST_ITEMS:50}
+  data:
+    customer-import-max-bytes: ${AML_CUSTOMER_IMPORT_MAX_BYTES:5242880}
+    customer-import-max-request-bytes: ${AML_CUSTOMER_IMPORT_MAX_REQUEST_BYTES:6291456}
+    customer-import-max-rows: ${AML_CUSTOMER_IMPORT_MAX_ROWS:1000}
+    sanction-recall-limit: ${AML_SANCTION_RECALL_LIMIT:50}
+  workflow:
+    event-heartbeat-seconds: ${AML_WORKFLOW_EVENT_HEARTBEAT_SECONDS:15}
+    event-heartbeat-threads: ${AML_WORKFLOW_EVENT_HEARTBEAT_THREADS:2}
+  audit:
+    outbox-poll-ms: ${AML_AUDIT_OUTBOX_POLL_MS:2000}
+    outbox-batch-size: ${AML_AUDIT_OUTBOX_BATCH_SIZE:200}
   assistant:
     # 默认关闭；开发或生产必须显式开启。关闭时不得创建会话或触发模型调用。
     enabled: ${AML_ASSISTANT_ENABLED:false}
     max-message-chars: ${AML_ASSISTANT_MAX_MESSAGE_CHARS:2000}
     retention-days: ${AML_ASSISTANT_RETENTION_DAYS:7}
+    retention-scan-ms: ${AML_ASSISTANT_RETENTION_SCAN_MS:3600000}
     rate-limit-per-minute: ${AML_ASSISTANT_RATE_LIMIT_PER_MINUTE:10}
     run-timeout-seconds: ${AML_ASSISTANT_RUN_TIMEOUT_SECONDS:120}
     event-stream-ttl-minutes: ${AML_ASSISTANT_EVENT_STREAM_TTL_MINUTES:10}
+    event-read-block-seconds: ${AML_ASSISTANT_EVENT_READ_BLOCK_SECONDS:2}
+    event-read-batch-size: ${AML_ASSISTANT_EVENT_READ_BATCH_SIZE:50}
+    event-heartbeat-seconds: ${AML_ASSISTANT_EVENT_HEARTBEAT_SECONDS:15}
+    recovery-grace-seconds: ${AML_ASSISTANT_RECOVERY_GRACE_SECONDS:30}
     lease-ttl-seconds: ${AML_ASSISTANT_LEASE_TTL_SECONDS:120}
     lease-renew-seconds: ${AML_ASSISTANT_LEASE_RENEW_SECONDS:30}
     history-max-messages: ${AML_ASSISTANT_HISTORY_MAX_MESSAGES:12}
     max-tool-round-trips: ${AML_ASSISTANT_MAX_TOOL_ROUND_TRIPS:5}
+    frozen-knowledge-result-limit: ${AML_ASSISTANT_FROZEN_KNOWLEDGE_RESULT_LIMIT:3}
+    task-core-pool-size: ${AML_ASSISTANT_TASK_CORE_POOL_SIZE:2}
+    task-max-pool-size: ${AML_ASSISTANT_TASK_MAX_POOL_SIZE:4}
+    task-queue-capacity: ${AML_ASSISTANT_TASK_QUEUE_CAPACITY:50}
+    lease-scheduler-threads: ${AML_ASSISTANT_LEASE_SCHEDULER_THREADS:1}
+    sse-core-pool-size: ${AML_ASSISTANT_SSE_CORE_POOL_SIZE:4}
+    sse-max-pool-size: ${AML_ASSISTANT_SSE_MAX_POOL_SIZE:12}
+    sse-queue-capacity: ${AML_ASSISTANT_SSE_QUEUE_CAPACITY:50}
     # 模型完整输出通过证据/安全护栏后，再按小块推送；绝不向前端透传未校验 token。
     validated-stream-chunk-chars: ${AML_ASSISTANT_VALIDATED_STREAM_CHUNK_CHARS:48}
     validated-stream-chunk-delay-ms: ${AML_ASSISTANT_VALIDATED_STREAM_CHUNK_DELAY_MS:12}
-    # 上下文治理：类型化保留 + 依赖感知驱逐 + 确定性压缩（不调用模型）。
-    # enabled=false 一键回退到 history-max-messages 的窗口行为，用于灰度与回滚。
+    # 上下文治理：类型化保留、依赖感知驱逐和确定性压缩；不调用模型。
+    # enabled=false 可回退到 history-max-messages 窗口行为。
     context:
       enabled: ${AML_ASSISTANT_CONTEXT_ENABLED:true}
       provider-context-window-tokens: ${AML_ASSISTANT_CONTEXT_WINDOW_TOKENS:32768}
       output-reserve-tokens: ${AML_ASSISTANT_CONTEXT_OUTPUT_RESERVE:1024}
       tool-round-reserve-tokens: ${AML_ASSISTANT_CONTEXT_TOOL_RESERVE:2048}
-      # 估算偏保守只会略早压缩；偏激进则可能超出真实窗口，故默认留 15% 缓冲
       safety-margin-percent: ${AML_ASSISTANT_CONTEXT_SAFETY_MARGIN:15}
       answer-head-chars: ${AML_ASSISTANT_CONTEXT_ANSWER_HEAD:240}
       answer-tail-chars: ${AML_ASSISTANT_CONTEXT_ANSWER_TAIL:160}
       max-recall-calls-per-run: ${AML_ASSISTANT_CONTEXT_MAX_RECALL:3}
   eval:
+    p95-latency-budget-ms: ${AML_EVAL_P95_LATENCY_BUDGET_MS:10000}
+    average-tokens-per-case-budget: ${AML_EVAL_AVERAGE_TOKENS_PER_CASE_BUDGET:6000}
     # 正式 TEST 金标不进入仓库；仅从受控外部路径加载，且数据集/每条案例均须 DOMAIN_EXPERT_APPROVED。
     hidden-test:
       path: ${AML_HIDDEN_TEST_PATH:}
   demo:
     # 仅用于本地演示。生产 profile 会强制关闭，客户主数据应由真实上游系统提供。
     seed-customers: ${AML_DEMO_SEED_CUSTOMERS:true}
+  investigation:
+    # 接收外部预警时允许的轻微时钟漂移；超过该窗口视为非法未来时间。
+    future-timestamp-tolerance-minutes: ${AML_INVESTIGATION_FUTURE_TIMESTAMP_TOLERANCE_MINUTES:5}
+  review:
+    # 分析员提出补充尽调建议时的默认完成期限。
+    edd-default-due-days: ${AML_REVIEW_EDD_DEFAULT_DUE_DAYS:14}
+    edd-maximum-due-days: ${AML_REVIEW_EDD_MAXIMUM_DUE_DAYS:90}
+  explanation:
+    due-soon-days: 5
+    repeated-evidence-request-count: 2
+  risk:
+    rule-cache-ttl-seconds: ${AML_RISK_RULE_CACHE_TTL_SECONDS:60}
+    transaction:
+      large-amount: 1000000
+      highlighted-amount: 500000
+      repeated-amount-count: 5
+      night-start-hour: 22
+      night-end-hour: 6
+      elevated-cross-border-ratio: 20
+      elevated-night-ratio: 30
+      short-window-days: 30
+      medium-window-days: 90
+      long-window-days: 180
+      top-counterparty-limit: 5
+    sanction:
+      identity-exact-score: 100
+      identity-conflict-with-name-score: 30
+      identity-conflict-score: 10
+      subject-type-conflict-score: 35
+      exact-name-score: 88
+      high-name-similarity: 0.88
+      high-name-similarity-score: 72
+      contained-name-score: 55
+  operations:
+    policy-version: P1_V1
+    base-score: 20
+    scenario-weights:
+      SANCTIONS_WATCHLIST: 80
+      STRUCTURING: 50
+      RAPID_MOVEMENT: 45
+      CROSS_BORDER_ANOMALY: 45
+      COMPLEX_OWNERSHIP: 35
+      PROFILE_MISMATCH: 15
+    additional-alert-weight: 10
+    additional-alert-max-bonus: 20
+    high-risk-minimum: 60
+    high-risk-bonus: 30
+    medium-risk-bonus: 15
+    report-pending-minimum: 85
+    report-pending-bonus: 20
+    failed-case-bonus: 15
+    maximum-score: 100
+    critical-threshold: 85
+    high-threshold: 60
+    medium-threshold: 35
+    sla:
+      investigation-critical-hours: 4
+      investigation-high-hours: 12
+      investigation-medium-hours: 24
+      investigation-normal-hours: 72
+      review-critical-hours: 2
+      review-high-hours: 4
+      review-medium-hours: 8
+      review-normal-hours: 24
+      report-critical-hours: 4
+      report-high-hours: 8
+      report-medium-hours: 24
+      report-normal-hours: 48
   security:
     # 开发默认密钥仅用于本地演示；prod 必须通过 AML_FIELD_ENCRYPTION_KEY 提供独立 64 位十六进制密钥。
     field-encryption-key: ${AML_FIELD_ENCRYPTION_KEY:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef}
@@ -145,10 +241,18 @@ aml:
     claim-idle-seconds: 60
     heartbeat-seconds: 30
     outbox-poll-seconds: 5
+    consumer-poll-timeout-ms: ${AML_QUEUE_CONSUMER_POLL_TIMEOUT_MS:300}
+    outbox-claim-stale-seconds: ${AML_QUEUE_OUTBOX_CLAIM_STALE_SECONDS:30}
+    outbox-publish-batch-size: ${AML_QUEUE_OUTBOX_PUBLISH_BATCH_SIZE:200}
     retry-backoff-seconds: 5   # 指数退避基数（5s、15s、45s）
+    retry-backoff-exponent-cap: ${AML_QUEUE_RETRY_BACKOFF_EXPONENT_CAP:6}
     retry-poll-seconds: 5
     # 消费者连接恢复与健康监控（Docker 重启等中断后自动重建消费者容器）
-    health-probe-seconds: 10    # 健康探测间隔（秒）
+    health-probe-seconds: ${AML_QUEUE_HEALTH_PROBE_SECONDS:15}  # 健康探测间隔（秒）
+    health-initial-delay-seconds: ${AML_QUEUE_HEALTH_INITIAL_DELAY_SECONDS:5}
+    minimum-lag-recovery-cycles: ${AML_QUEUE_MINIMUM_LAG_RECOVERY_CYCLES:2}
+    heartbeat-executor-threads: ${AML_QUEUE_HEARTBEAT_EXECUTOR_THREADS:2}
+    summary-executor-threads: ${AML_QUEUE_SUMMARY_EXECUTOR_THREADS:2}
     lag-alert-threshold: 20     # 积压告警阈值（0 禁用）
     lag-recover-threshold: 50   # 积压强制重建阈值（应 > lag-alert-threshold）
     consecutive-error-alert-threshold: 3  # 连续异常告警抑制阈值
@@ -192,6 +296,16 @@ aml:
       recall-multiplier: 4
       max-per-document: 3
       max-context-characters: 8000
+      max-recalled-candidates: 20
+      query-embedding-cache-capacity: 512
+      minimum-meaningful-support: 0.20
+      context-similarity-threshold: 0.88
+      investigation-top-k: 3
+      investigation-min-relevance: 0.04
+      assistant-top-k: 4
+      assistant-min-relevance: 0.08
+      assistant-evidence-summary-max-characters: 800
+      assistant-evidence-identifier-max-characters: 160
     fusion:
       rrf-k: 60
       vector-weight: 1.0
@@ -220,17 +334,23 @@ aml:
     ingestion:
       max-document-bytes: 5242880
       lease-heartbeat-seconds: 60
+      build-lease-minutes: ${AML_RAG_BUILD_LEASE_MINUTES:15}
     rerank:
       enabled: true         # 召回后精排（bge-reranker 本地 cross-encoder）
       recall-size: 20       # 召回候选数
       model-dir: ${user.home}/.cache/aml-reranker/bge-reranker-base
+      artifact-base-url: ${AML_RAG_RERANK_ARTIFACT_BASE_URL:https://hf-mirror.com/Xenova/bge-reranker-base/resolve/main}
       download-enabled: ${AML_RAG_RERANK_DOWNLOAD:false}  # 生产用固定制品仓库，禁止运行时下载
       max-concurrency: 2    # 推理并发信号量上限
       queue-capacity: 8     # 推理队列容量
       inference-timeout-ms: 10000
       quota-timeout-ms: 2000
+      connect-timeout-ms: 30000
+      download-timeout-ms: 300000
       cooldown-ms: 60000    # 熔断冷却时间
       failure-threshold: 10 # 连续失败熔断阈值
+      micro-batch-size: 4
+      inference-executor-threads: 1
       model-sha256: ""      # 制品发布后固定 model.onnx SHA-256
       tokenizer-sha256: ""
     pg:

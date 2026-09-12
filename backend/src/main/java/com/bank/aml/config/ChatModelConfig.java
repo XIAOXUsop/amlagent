@@ -5,26 +5,28 @@ import com.bank.aml.observability.ModelInvocationTags;
 import com.bank.aml.observability.ObservedChatModel;
 import com.bank.aml.observability.ObservedStreamingChatModel;
 import com.bank.aml.observability.genai.GenAiTracingChatModel;
-import io.micrometer.tracing.Tracer;
 import dev.langchain4j.model.anthropic.AnthropicChatModel;
 import dev.langchain4j.model.chat.ChatModel;
 import dev.langchain4j.model.chat.DisabledStreamingChatModel;
 import dev.langchain4j.model.chat.StreamingChatModel;
 import dev.langchain4j.model.openai.OpenAiChatModel;
 import dev.langchain4j.model.openai.OpenAiStreamingChatModel;
+import io.micrometer.tracing.Tracer;
+import java.util.Map;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-
-import java.util.Map;
+import org.springframework.core.env.Environment;
+import org.springframework.core.env.Profiles;
 
 /**
  * 根据 {@link LlmProperties} 构建当前激活的 {@link ChatModel}。
- * <p>提供商类型支持：OpenAI 兼容（DeepSeek/Qwen/OpenAI 走同一路径）、Anthropic、Mock。
- * 未配置 API Key 时自动降级到 {@link MockChatModel}，保证离线可演示。
+ * <p>
+ * 提供商类型支持：OpenAI 兼容（DeepSeek/Qwen/OpenAI 走同一路径）、Anthropic、Mock。 未配置 API Key 时自动降级到
+ * {@link MockChatModel}，保证离线可演示。
  */
 @Configuration
 @EnableConfigurationProperties(LlmProperties.class)
@@ -33,13 +35,26 @@ public class ChatModelConfig {
     private static final Logger log = LoggerFactory.getLogger(ChatModelConfig.class);
 
     @Bean
-    public ChatModel chatModel(LlmProperties props) {
+    public ChatModel chatModel(LlmProperties props, Environment environment) {
+        return createChatModel(props, environment.acceptsProfiles(Profiles.of("prod")));
+    }
+
+    ChatModel chatModel(LlmProperties props) {
+        return createChatModel(props, false);
+    }
+
+    private ChatModel createChatModel(LlmProperties props, boolean production) {
         LlmProviderProperties active = props.active();
         String providerName = props.getActiveProvider();
 
+        if (production && (active.typeEnum() == LlmProperties.ProviderType.MOCK || !active.hasApiKey())) {
+            throw new IllegalStateException("生产环境禁止使用 Mock LLM 或缺失 API Key 的模型配置");
+        }
+
         // 非 Mock 提供商若未配置 API Key，降级到 Mock 以保持可演示
         if (active.typeEnum() != LlmProperties.ProviderType.MOCK && !active.hasApiKey()) {
-            log.warn("LLM 提供商 [{}] 未配置 API Key，降级到 Mock 模型。请设置 aml.llm.providers.{}.api-key", providerName, providerName);
+            log.warn("LLM 提供商 [{}] 未配置 API Key，降级到 Mock 模型。请设置 aml.llm.providers.{}.api-key", providerName,
+                    providerName);
             return new MockChatModel("mock-" + providerName);
         }
 
@@ -47,10 +62,10 @@ public class ChatModelConfig {
             case ANTHROPIC -> {
                 log.info("初始化 Anthropic 模型: provider={}, model={}", providerName, active.getModelName());
                 var b = AnthropicChatModel.builder()
-                        .apiKey(active.getApiKey())
-                        .modelName(active.getModelName())
-                        .temperature(active.getTemperature())
-                        .timeout(active.timeout());
+                    .apiKey(active.getApiKey())
+                    .modelName(active.getModelName())
+                    .temperature(active.getTemperature())
+                    .timeout(active.timeout());
                 if (active.getBaseUrl() != null && !active.getBaseUrl().isBlank()) {
                     b.baseUrl(active.getBaseUrl());
                 }
@@ -61,16 +76,17 @@ public class ChatModelConfig {
                 return new MockChatModel(active.getModelName() != null ? active.getModelName() : "mock");
             }
             default -> { // OPENAI_COMPATIBLE
-                log.info("初始化 OpenAI 兼容模型: provider={}, model={} @ {}", providerName, active.getModelName(), active.getBaseUrl());
+                log.info("初始化 OpenAI 兼容模型: provider={}, model={} @ {}", providerName, active.getModelName(),
+                        active.getBaseUrl());
                 var b = OpenAiChatModel.builder()
-                        .apiKey(active.getApiKey())
-                        .modelName(active.getModelName())
-                        .temperature(active.getTemperature())
-                        // 防止 LLM API 挂起无限阻塞 Worker：超时 + 瞬时错误自动重试
-                        .timeout(active.timeout())
-                        .maxRetries(active.getMaxRetries())
-                        // DeepSeek 等支持并行工具调用
-                        .parallelToolCalls(true);
+                    .apiKey(active.getApiKey())
+                    .modelName(active.getModelName())
+                    .temperature(active.getTemperature())
+                    // 防止 LLM API 挂起无限阻塞 Worker：超时 + 瞬时错误自动重试
+                    .timeout(active.timeout())
+                    .maxRetries(active.getMaxRetries())
+                    // DeepSeek 等支持并行工具调用
+                    .parallelToolCalls(true);
                 if (active.getBaseUrl() != null && !active.getBaseUrl().isBlank()) {
                     b.baseUrl(active.getBaseUrl());
                 }
@@ -90,15 +106,15 @@ public class ChatModelConfig {
     }
 
     /**
-     * 主尽调 Agent 使用的同步模型：显式包装 purpose=main_agent，
-     * 避免依赖 ThreadLocal（异步回调线程不传播导致 purpose=unknown）。
+     * 主尽调 Agent 使用的同步模型：显式包装 purpose=main_agent， 避免依赖 ThreadLocal（异步回调线程不传播导致
+     * purpose=unknown）。
      */
     @Bean
     public ChatModel mainAgentChatModel(ChatModel chatModel, MetricsRecorder metrics, LlmProperties props,
-                                        ObjectProvider<Tracer> tracerProvider) {
+            ObjectProvider<Tracer> tracerProvider) {
         LlmProviderProperties active = props.active();
-        ModelInvocationTags tags =
-                new ModelInvocationTags(props.getActiveProvider(), active.getModelName(), "main_agent");
+        ModelInvocationTags tags = new ModelInvocationTags(props.getActiveProvider(), active.getModelName(),
+                "main_agent");
         // 有 Tracer 时叠加 OTel GenAI span；无追踪后端时保持原样，不影响功能
         Tracer tracer = tracerProvider.getIfAvailable();
         ChatModel traced = tracer == null ? chatModel : new GenAiTracingChatModel(chatModel, tracer, tags);
@@ -107,18 +123,22 @@ public class ChatModelConfig {
 
     /** 流式模型：用于报告分析过程的 token 级流式输出；无 API Key 时返回禁用实现（优雅降级） */
     @Bean
-    public StreamingChatModel streamingChatModel(LlmProperties props) {
+    public StreamingChatModel streamingChatModel(LlmProperties props, Environment environment) {
         LlmProviderProperties active = props.active();
+        if (environment.acceptsProfiles(Profiles.of("prod"))
+                && (active.typeEnum() == LlmProperties.ProviderType.MOCK || !active.hasApiKey())) {
+            throw new IllegalStateException("生产环境禁止将流式模型降级为 Mock/禁用实现");
+        }
         if (active.typeEnum() == LlmProperties.ProviderType.MOCK || !active.hasApiKey()) {
             log.warn("流式模型不可用（Mock 或无 API Key），流式输出降级为跳过");
             return new DisabledStreamingChatModel();
         }
         var b = OpenAiStreamingChatModel.builder()
-                .apiKey(active.getApiKey())
-                .modelName(active.getModelName())
-                .temperature(active.getTemperature())
-                // 流式模型设置超时防止挂起（当前 LangChain4j 流式 builder 不支持 maxRetries）
-                .timeout(active.timeout());
+            .apiKey(active.getApiKey())
+            .modelName(active.getModelName())
+            .temperature(active.getTemperature())
+            // 流式模型设置超时防止挂起（当前 LangChain4j 流式 builder 不支持 maxRetries）
+            .timeout(active.timeout());
         if (active.getBaseUrl() != null && !active.getBaseUrl().isBlank()) {
             b.baseUrl(active.getBaseUrl());
         }
@@ -134,8 +154,8 @@ public class ChatModelConfig {
 
     /** 摘要用的流式模型：显式包装 purpose=summary，异步回调中记录 Token/错误不依赖 ThreadLocal */
     @Bean
-    public StreamingChatModel summaryStreamingChatModel(StreamingChatModel streamingChatModel,
-                                                        MetricsRecorder metrics, LlmProperties props) {
+    public StreamingChatModel summaryStreamingChatModel(StreamingChatModel streamingChatModel, MetricsRecorder metrics,
+            LlmProperties props) {
         LlmProviderProperties active = props.active();
         return new ObservedStreamingChatModel(streamingChatModel, metrics,
                 new ModelInvocationTags(props.getActiveProvider(), active.getModelName(), "summary"));
@@ -144,9 +164,10 @@ public class ChatModelConfig {
     /** AI 小助独立观测目的，避免与工单摘要的 Token/延迟指标混合。 */
     @Bean
     public StreamingChatModel assistantStreamingChatModel(StreamingChatModel streamingChatModel,
-                                                          MetricsRecorder metrics, LlmProperties props) {
+            MetricsRecorder metrics, LlmProperties props) {
         LlmProviderProperties active = props.active();
         return new ObservedStreamingChatModel(streamingChatModel, metrics,
                 new ModelInvocationTags(props.getActiveProvider(), active.getModelName(), "customer_assistant"));
     }
+
 }

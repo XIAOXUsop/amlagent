@@ -3,7 +3,7 @@ import { ref } from 'vue'
 import { login, type AuthenticatedUser } from '../api/client'
 import { Lock, Odometer, User } from '@element-plus/icons-vue'
 
-const emit = defineEmits<{ (e: 'logged-in', user: AuthenticatedUser): void }>()
+const emit = defineEmits<(e: 'logged-in', user: AuthenticatedUser) => void>()
 
 const username = ref('')
 const password = ref('')
@@ -42,6 +42,7 @@ async function doLogin() {
         <el-form-item>
           <el-input
             v-model="username"
+            aria-label="用户名"
             placeholder="用户名"
             size="large"
             :prefix-icon="User"
@@ -51,6 +52,7 @@ async function doLogin() {
         <el-form-item>
           <el-input
             v-model="password"
+            aria-label="密码"
             type="password"
             placeholder="密码"
             size="large"
@@ -60,13 +62,7 @@ async function doLogin() {
             @keyup.enter="doLogin"
           />
         </el-form-item>
-        <el-button
-          type="primary"
-          size="large"
-          style="width: 100%"
-          :loading="loading"
-          @click="doLogin"
-        >
+        <el-button type="primary" size="large" style="width: 100%" :loading="loading" @click="doLogin">
           登 录
         </el-button>
       </el-form>

@@ -1,52 +1,68 @@
 package com.bank.aml.evaluation;
 
+import com.bank.aml.agent.AgentReportVocabulary;
+import com.bank.aml.config.AmlProperties;
 import com.bank.aml.evaluation.AgentEvalDataset.AgentEvalCase;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.annotation.PostConstruct;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.beans.factory.annotation.Value;
-import org.springframework.core.io.ClassPathResource;
-import org.springframework.stereotype.Component;
-
 import java.io.IOException;
 import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
 import java.util.HashSet;
+import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.TreeMap;
 import java.util.function.Function;
 import java.util.stream.Collectors;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.core.io.ClassPathResource;
+import org.springframework.stereotype.Component;
 
 /** 加载并校验版本化的独立 Agent 评测案例集。 */
 @Component
 public class AgentEvalDatasetLoader {
 
     static final String DATASET_RESOURCE = "evaluation/agent-cases-v1.json";
+
     private static final Set<String> EMBEDDED_SPLITS = Set.of("DEV", "DEMO_TEST");
+
     private static final Set<String> HIDDEN_SPLITS = Set.of("TEST");
+
     private static final Set<String> ALLOWED_DIFFICULTIES = Set.of("EASY", "MEDIUM", "HARD");
+
     private static final Set<String> ALLOWED_RISK_LEVELS = Set.of("低风险", "中风险", "高风险");
-    private static final Set<String> ALLOWED_REVIEW_STATUS =
-            Set.of("PENDING_DOMAIN_REVIEW", "DOMAIN_REVIEWED", "DOMAIN_EXPERT_APPROVED");
-    private static final Set<String> KNOWN_TOOLS =
-            Set.of("transactionProfile", "corporateProfile", "checkSanctions", "searchLegal");
+
+    private static final Set<String> ALLOWED_REVIEW_STATUS = Set.of("PENDING_DOMAIN_REVIEW", "DOMAIN_REVIEWED",
+            "DOMAIN_EXPERT_APPROVED");
+
+    private static final Set<String> KNOWN_TOOLS = Set.of("transactionProfile", "corporateProfile", "checkSanctions",
+            "searchLegal");
 
     private final ObjectMapper objectMapper;
+
     private final String hiddenTestPath;
+
     private volatile AgentEvalDataset cached;
+
     private volatile String datasetHash;
+
     private volatile String hiddenTestDatasetHash;
+
     private volatile boolean approvedHiddenTest;
 
     @Autowired
-    public AgentEvalDatasetLoader(
-            ObjectMapper objectMapper,
-            @Value("${aml.eval.hidden-test.path:}") String hiddenTestPath
-    ) {
+    public AgentEvalDatasetLoader(ObjectMapper objectMapper, AmlProperties properties) {
+        this(objectMapper, properties.eval().hiddenTest().path());
+    }
+
+    AgentEvalDatasetLoader(ObjectMapper objectMapper, String hiddenTestPath) {
         this.objectMapper = objectMapper;
         this.hiddenTestPath = hiddenTestPath == null ? "" : hiddenTestPath.trim();
     }
@@ -76,20 +92,11 @@ public class AgentEvalDatasetLoader {
 
     public AgentEvalDatasetSummary summary() {
         AgentEvalDataset dataset = load();
-        return new AgentEvalDatasetSummary(
-                dataset.datasetId(),
-                dataset.version(),
-                dataset.sourceType(),
-                dataset.annotationMethod(),
-                dataset.reviewStatus(),
-                dataset.cases().size(),
-                counts(dataset.cases(), AgentEvalCase::split),
-                counts(dataset.cases(), AgentEvalCase::scenario),
-                counts(dataset.cases(), c -> c.expected().riskLevel()),
-                datasetHash,
-                approvedHiddenTest,
-                hiddenTestDatasetHash
-        );
+        return new AgentEvalDatasetSummary(dataset.datasetId(), dataset.version(), dataset.sourceType(),
+                dataset.annotationMethod(), dataset.reviewStatus(), dataset.cases().size(),
+                counts(dataset.cases(), AgentEvalCase::split), counts(dataset.cases(), AgentEvalCase::scenario),
+                counts(dataset.cases(), c -> c.expected().riskLevel()), datasetHash, approvedHiddenTest,
+                hiddenTestDatasetHash);
     }
 
     private AgentEvalDataset readDataset() {
@@ -97,27 +104,27 @@ public class AgentEvalDatasetLoader {
         try (InputStream input = resource.getInputStream()) {
             byte[] bytes = input.readAllBytes();
             this.datasetHash = sha256(bytes);
-            AgentEvalDataset dataset = objectMapper.readValue(bytes, AgentEvalDataset.class);
+            AgentEvalDataset dataset = objectMapper.readerFor(AgentEvalDataset.class).readValue(bytes);
             validate(dataset);
             if (hiddenTestPath.isBlank()) {
                 return dataset;
             }
 
             byte[] hiddenBytes = Files.readAllBytes(Path.of(hiddenTestPath).toAbsolutePath().normalize());
-            AgentEvalDataset hidden = objectMapper.readValue(hiddenBytes, AgentEvalDataset.class);
+            AgentEvalDataset hidden = objectMapper.readerFor(AgentEvalDataset.class).readValue(hiddenBytes);
             validateHiddenDataset(hidden);
             ensureNoDuplicateIds(dataset.cases(), hidden.cases());
 
             this.hiddenTestDatasetHash = sha256(hiddenBytes);
-            this.datasetHash = sha256((this.datasetHash + ":" + this.hiddenTestDatasetHash)
-                    .getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            this.datasetHash = sha256(
+                    (this.datasetHash + ":" + this.hiddenTestDatasetHash).getBytes(StandardCharsets.UTF_8));
             this.approvedHiddenTest = true;
             List<AgentEvalCase> merged = new ArrayList<>(dataset.cases());
             merged.addAll(hidden.cases());
-            return new AgentEvalDataset(
-                    dataset.datasetId(), dataset.version(), dataset.description(), dataset.sourceType(),
-                    dataset.annotationMethod(), dataset.reviewStatus(), List.copyOf(merged));
-        } catch (IOException e) {
+            return new AgentEvalDataset(dataset.datasetId(), dataset.version(), dataset.description(),
+                    dataset.sourceType(), dataset.annotationMethod(), dataset.reviewStatus(), List.copyOf(merged));
+        }
+        catch (IOException e) {
             String source = hiddenTestPath.isBlank() ? DATASET_RESOURCE : hiddenTestPath;
             throw new IllegalStateException("无法加载 Agent 评测数据集：" + source, e);
         }
@@ -131,9 +138,10 @@ public class AgentEvalDatasetLoader {
 
     private String sha256(byte[] bytes) {
         try {
-            java.security.MessageDigest digest = java.security.MessageDigest.getInstance("SHA-256");
-            return java.util.HexFormat.of().formatHex(digest.digest(bytes));
-        } catch (java.security.NoSuchAlgorithmException e) {
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            return HexFormat.of().formatHex(digest.digest(bytes));
+        }
+        catch (NoSuchAlgorithmException e) {
             throw new IllegalStateException("SHA-256 不可用", e);
         }
     }
@@ -149,15 +157,13 @@ public class AgentEvalDatasetLoader {
 
     private void validateHiddenDataset(AgentEvalDataset dataset) {
         validateDataset(dataset, HIDDEN_SPLITS, 1, false);
-        require("DOMAIN_EXPERT_APPROVED".equals(dataset.reviewStatus()),
-                "外部隐藏 TEST 数据集必须完成领域专家审批");
-        require(dataset.cases().stream().allMatch(c ->
-                        "DOMAIN_EXPERT_APPROVED".equals(c.annotation().reviewStatus())),
+        require("DOMAIN_EXPERT_APPROVED".equals(dataset.reviewStatus()), "外部隐藏 TEST 数据集必须完成领域专家审批");
+        require(dataset.cases().stream().allMatch(c -> "DOMAIN_EXPERT_APPROVED".equals(c.annotation().reviewStatus())),
                 "外部隐藏 TEST 每条案例都必须完成领域专家审批");
     }
 
-    private void validateDataset(AgentEvalDataset dataset, Set<String> allowedSplits,
-                                 int minimumCases, boolean requireEverySplit) {
+    private void validateDataset(AgentEvalDataset dataset, Set<String> allowedSplits, int minimumCases,
+            boolean requireEverySplit) {
         require(dataset != null, "数据集不能为空");
         requireText(dataset.datasetId(), "datasetId");
         requireText(dataset.version(), "version");
@@ -187,7 +193,8 @@ public class AgentEvalDatasetLoader {
         }
         if (requireEverySplit) {
             require(splits.containsAll(allowedSplits), "内置数据集必须同时包含 DEV 和 DEMO_TEST 分片");
-        } else {
+        }
+        else {
             require(splits.equals(allowedSplits), "外部隐藏数据集只能包含 TEST 分片");
         }
     }
@@ -218,57 +225,49 @@ public class AgentEvalDatasetLoader {
         requireText(evalCase.toolFixture().legalQuery(), "toolFixture.legalQuery");
         requireList(evalCase.toolFixture().legalQueryTerms(), "toolFixture.legalQueryTerms", evalCase.id());
         requireText(evalCase.toolFixture().legalResult(), "toolFixture.legalResult");
-        require(evalCase.toolFixture().riskFacts() != null,
-                "toolFixture.riskFacts 不能为空：" + evalCase.id());
+        require(evalCase.toolFixture().riskFacts() != null, "toolFixture.riskFacts 不能为空：" + evalCase.id());
         require(evalCase.toolFixture().riskFacts().crossBorderRatio() >= 0
-                        && evalCase.toolFixture().riskFacts().crossBorderRatio() <= 100,
-                "跨境比例必须处于 0-100：" + evalCase.id());
+                && evalCase.toolFixture().riskFacts().crossBorderRatio() <= 100, "跨境比例必须处于 0-100：" + evalCase.id());
         require(evalCase.toolFixture().riskFacts().nightTransactionRatio() >= 0
-                        && evalCase.toolFixture().riskFacts().nightTransactionRatio() <= 100,
+                && evalCase.toolFixture().riskFacts().nightTransactionRatio() <= 100,
                 "夜间比例必须处于 0-100：" + evalCase.id());
-        require(evalCase.toolFixture().riskFacts().largeTransactionCount() >= 0,
-                "大额交易笔数不能为负：" + evalCase.id());
+        require(evalCase.toolFixture().riskFacts().largeTransactionCount() >= 0, "大额交易笔数不能为负：" + evalCase.id());
         require(evalCase.toolFixture().riskFacts().transactionPatternSeverity() >= 0
-                        && evalCase.toolFixture().riskFacts().transactionPatternSeverity() <= 2,
+                && evalCase.toolFixture().riskFacts().transactionPatternSeverity() <= 2,
                 "交易模式风险等级必须处于 0-2：" + evalCase.id());
         require(evalCase.toolFixture().riskFacts().uboRiskSeverity() >= 0
-                        && evalCase.toolFixture().riskFacts().uboRiskSeverity() <= 2,
-                "UBO 风险等级必须处于 0-2：" + evalCase.id());
+                && evalCase.toolFixture().riskFacts().uboRiskSeverity() <= 2, "UBO 风险等级必须处于 0-2：" + evalCase.id());
         require(!evalCase.toolFixture().riskFacts().transactionRiskExplained()
-                        || evalCase.toolFixture().riskFacts().transactionDataComplete(),
-                "交易数据不完整时不能标记风险已解释：" + evalCase.id());
+                || evalCase.toolFixture().riskFacts().transactionDataComplete(), "交易数据不完整时不能标记风险已解释：" + evalCase.id());
         require(!evalCase.toolFixture().riskFacts().transactionRiskExplained()
-                        || evalCase.toolFixture().riskFacts().transactionPatternSeverity() < 2,
+                || evalCase.toolFixture().riskFacts().transactionPatternSeverity() < 2,
                 "高风险交易模式不能同时标记为风险已解释：" + evalCase.id());
-        require(evalCase.toolFixture().riskFacts().maxSanctionSeverity() >= 0,
-                "名单等级不能为负：" + evalCase.id());
+        require(evalCase.toolFixture().riskFacts().maxSanctionSeverity() >= 0, "名单等级不能为负：" + evalCase.id());
         require(evalCase.toolFixture().riskFacts().sanctionHit()
-                        || evalCase.toolFixture().riskFacts().maxSanctionSeverity() == 0,
+                || evalCase.toolFixture().riskFacts().maxSanctionSeverity() == 0,
                 "未命中名单时 maxSanctionSeverity 必须为 0：" + evalCase.id());
     }
 
     private void validateExpected(AgentEvalCase evalCase) {
         require(evalCase.expected() != null, "案例 expected 不能为空：" + evalCase.id());
-        require(ALLOWED_RISK_LEVELS.contains(evalCase.expected().riskLevel()),
-                "案例风险等级非法：" + evalCase.id());
+        require(ALLOWED_RISK_LEVELS.contains(evalCase.expected().riskLevel()), "案例风险等级非法：" + evalCase.id());
         requireList(evalCase.expected().requiredTools(), "expected.requiredTools", evalCase.id());
         require(new HashSet<>(evalCase.expected().requiredTools()).equals(KNOWN_TOOLS),
                 "案例必须声明四个标准工具且不能重复：" + evalCase.id());
         requireList(evalCase.expected().requiredRiskSignals(), "expected.requiredRiskSignals", evalCase.id());
-        requireCodes(evalCase.expected().requiredFindingCodes(), "expected.requiredFindingCodes",
-                evalCase.id(), AgentEvalVocabulary.FINDING_CODES);
-        requireCodes(evalCase.expected().allowedFindingCodes(), "expected.allowedFindingCodes",
-                evalCase.id(), AgentEvalVocabulary.FINDING_CODES);
+        requireCodes(evalCase.expected().requiredFindingCodes(), "expected.requiredFindingCodes", evalCase.id(),
+                AgentReportVocabulary.FINDING_CODES);
+        requireCodes(evalCase.expected().allowedFindingCodes(), "expected.allowedFindingCodes", evalCase.id(),
+                AgentReportVocabulary.FINDING_CODES);
         require(new HashSet<>(evalCase.expected().allowedFindingCodes())
-                        .containsAll(evalCase.expected().requiredFindingCodes()),
+            .containsAll(evalCase.expected().requiredFindingCodes()),
                 "requiredFindingCodes 必须是 allowedFindingCodes 的子集：" + evalCase.id());
         requireList(evalCase.expected().requiredActions(), "expected.requiredActions", evalCase.id());
-        requireCodes(evalCase.expected().requiredActions(), "expected.requiredActions",
-                evalCase.id(), AgentEvalVocabulary.ACTION_CODES);
-        requireCodes(evalCase.expected().allowedActions(), "expected.allowedActions",
-                evalCase.id(), AgentEvalVocabulary.ACTION_CODES);
-        require(new HashSet<>(evalCase.expected().allowedActions())
-                        .containsAll(evalCase.expected().requiredActions()),
+        requireCodes(evalCase.expected().requiredActions(), "expected.requiredActions", evalCase.id(),
+                AgentReportVocabulary.ACTION_CODES);
+        requireCodes(evalCase.expected().allowedActions(), "expected.allowedActions", evalCase.id(),
+                AgentReportVocabulary.ACTION_CODES);
+        require(new HashSet<>(evalCase.expected().allowedActions()).containsAll(evalCase.expected().requiredActions()),
                 "requiredActions 必须是 allowedActions 的子集：" + evalCase.id());
         requireList(evalCase.expected().acceptableLegalTopics(), "expected.acceptableLegalTopics", evalCase.id());
         requireList(evalCase.expected().forbiddenClaimCodes(), "expected.forbiddenClaimCodes", evalCase.id());
@@ -312,19 +311,10 @@ public class AgentEvalDatasetLoader {
         return cases.stream().collect(Collectors.groupingBy(classifier, TreeMap::new, Collectors.counting()));
     }
 
-    public record AgentEvalDatasetSummary(
-            String datasetId,
-            String version,
-            String sourceType,
-            String annotationMethod,
-            String reviewStatus,
-            int totalCases,
-            Map<String, Long> splitCounts,
-            Map<String, Long> scenarioCounts,
-            Map<String, Long> riskLevelCounts,
-            String datasetHash,
-            boolean hiddenTestReady,
-            String hiddenTestDatasetHash
-    ) {
+    public record AgentEvalDatasetSummary(String datasetId, String version, String sourceType, String annotationMethod,
+            String reviewStatus, int totalCases, Map<String, Long> splitCounts, Map<String, Long> scenarioCounts,
+            Map<String, Long> riskLevelCounts, String datasetHash, boolean hiddenTestReady,
+            String hiddenTestDatasetHash) {
     }
+
 }

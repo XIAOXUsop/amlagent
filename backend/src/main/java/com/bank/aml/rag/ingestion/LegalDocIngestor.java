@@ -3,26 +3,23 @@ package com.bank.aml.rag.ingestion;
 import com.bank.aml.config.RagProperties;
 import com.bank.aml.datasource.entity.RagDocumentQuarantineEntity;
 import com.bank.aml.datasource.repository.RagDocumentQuarantineRepository;
-import com.bank.aml.rag.LegalIndexVersionService;
-import com.bank.aml.rag.RagIndexManifest;
-import com.bank.aml.rag.RagBuildLeaseHeartbeat;
 import com.bank.aml.observability.MetricsRecorder;
+import com.bank.aml.rag.LegalIndexVersionService;
+import com.bank.aml.rag.RagBuildLeaseHeartbeat;
+import com.bank.aml.rag.RagIndexManifest;
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.langchain4j.data.embedding.Embedding;
 import dev.langchain4j.data.segment.TextSegment;
 import dev.langchain4j.model.embedding.EmbeddingModel;
 import dev.langchain4j.store.embedding.EmbeddingStore;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import org.springframework.boot.ApplicationArguments;
-import org.springframework.boot.ApplicationRunner;
-import org.springframework.stereotype.Component;
-
 import java.io.IOException;
+import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.io.InputStream;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.time.Clock;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -32,51 +29,81 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.UUID;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.ApplicationArguments;
+import org.springframework.boot.ApplicationRunner;
+import org.springframework.stereotype.Component;
 
 /**
  * 法规文档导入器：应用启动时将 data/legal 下的法规文档按「条-款-项」切分、附加证据元数据并向量化写入 PGVector。
- * <p>{@code P0 可信语料}：每个文档必须提供同级 {@code <base>.manifest.yaml} 可信元数据，缺失/非法默认拒绝
- * （记入隔离审计并跳过），没有合法 manifest 文档时构建失败并保留旧 active 索引。</p>
- * <p>发布链路：BUILDING → SCANNING → EVALUATING →（门禁通过）CANDIDATE → ACTIVE；
- * 门禁不通过 → REJECTED 并保留旧 active。</p>
+ * <p>
+ * {@code P0 可信语料}：每个文档必须提供同级 {@code <base>.manifest.yaml} 可信元数据，缺失/非法默认拒绝
+ * （记入隔离审计并跳过），没有合法 manifest 文档时构建失败并保留旧 active 索引。
+ * </p>
+ * <p>
+ * 发布链路：BUILDING → SCANNING → EVALUATING →（门禁通过）CANDIDATE → ACTIVE； 门禁不通过 → REJECTED 并保留旧
+ * active。
+ * </p>
  */
 @Component
 public class LegalDocIngestor implements ApplicationRunner {
 
     private static final Logger log = LoggerFactory.getLogger(LegalDocIngestor.class);
+
     private final EmbeddingModel embeddingModel;
+
     private final EmbeddingStore<TextSegment> embeddingStore;
+
     private final RagProperties props;
+
     private final LegalIndexVersionService indexVersions;
+
     private final boolean failFastOnEmptyIndex;
+
     private final LegalDocumentChunker chunker;
+
     private final LegalCorpusSecurityGate securityGate;
+
     private final RagBuildLeaseHeartbeat leaseHeartbeat;
+
     private final MetricsRecorder metrics;
+
     private final LegalCandidateIndexStore candidateIndexStore;
+
     private final LegalManifestLoader manifestLoader;
+
     private final RagDocumentQuarantineRepository quarantine;
-    private final LegalIndexPublicationGate publicationGate;
+
+    private final RagPublicationEvaluator publicationGate;
+
+    private final Clock clock;
 
     /** 便捷构造（测试/降级使用）：不注入安全门与 manifest 校验，跳过 manifest 强制与发布门禁。 */
     public LegalDocIngestor(EmbeddingModel embeddingModel, EmbeddingStore<TextSegment> embeddingStore,
-                            RagProperties props, LegalIndexVersionService indexVersions,
-                            @Value("${aml.rag.fail-fast-on-empty-index:false}") boolean failFastOnEmptyIndex) {
-        this(embeddingModel, embeddingStore, props, indexVersions, failFastOnEmptyIndex,
-                new LegalDocumentChunker(), null, null, null, null, null, null, null);
+            RagProperties props, LegalIndexVersionService indexVersions, boolean failFastOnEmptyIndex, Clock clock) {
+        this(embeddingModel, embeddingStore, props, indexVersions, failFastOnEmptyIndex, new LegalDocumentChunker(),
+                null, null, null, null, null, null, null, clock);
     }
 
     @Autowired
     public LegalDocIngestor(EmbeddingModel embeddingModel, EmbeddingStore<TextSegment> embeddingStore,
-                            RagProperties props, LegalIndexVersionService indexVersions,
-                            @Value("${aml.rag.fail-fast-on-empty-index:false}") boolean failFastOnEmptyIndex,
-                            LegalDocumentChunker chunker,
-                            LegalCorpusSecurityGate securityGate, RagBuildLeaseHeartbeat leaseHeartbeat,
-                            MetricsRecorder metrics, LegalCandidateIndexStore candidateIndexStore,
-                            LegalManifestLoader manifestLoader, RagDocumentQuarantineRepository quarantine,
-                            LegalIndexPublicationGate publicationGate) {
+            RagProperties props, LegalIndexVersionService indexVersions, LegalDocumentChunker chunker,
+            LegalCorpusSecurityGate securityGate, RagBuildLeaseHeartbeat leaseHeartbeat, MetricsRecorder metrics,
+            LegalCandidateIndexStore candidateIndexStore, LegalManifestLoader manifestLoader,
+            RagDocumentQuarantineRepository quarantine, RagPublicationEvaluator publicationGate, Clock clock) {
+        this(embeddingModel, embeddingStore, props, indexVersions, props.isFailFastOnEmptyIndex(), chunker,
+                securityGate, leaseHeartbeat, metrics, candidateIndexStore, manifestLoader, quarantine, publicationGate,
+                clock);
+    }
+
+    public LegalDocIngestor(EmbeddingModel embeddingModel, EmbeddingStore<TextSegment> embeddingStore,
+            RagProperties props, LegalIndexVersionService indexVersions, boolean failFastOnEmptyIndex,
+            LegalDocumentChunker chunker, LegalCorpusSecurityGate securityGate, RagBuildLeaseHeartbeat leaseHeartbeat,
+            MetricsRecorder metrics, LegalCandidateIndexStore candidateIndexStore, LegalManifestLoader manifestLoader,
+            RagDocumentQuarantineRepository quarantine, RagPublicationEvaluator publicationGate, Clock clock) {
         this.embeddingModel = embeddingModel;
         this.embeddingStore = embeddingStore;
         this.props = props;
@@ -90,6 +117,7 @@ public class LegalDocIngestor implements ApplicationRunner {
         this.manifestLoader = manifestLoader;
         this.quarantine = quarantine;
         this.publicationGate = publicationGate;
+        this.clock = clock;
     }
 
     @Override
@@ -105,7 +133,8 @@ public class LegalDocIngestor implements ApplicationRunner {
                 return;
             }
             List<Path> files = valid.stream().map(DocFile::file).toList();
-            if (securityGate != null) securityGate.validate(files);
+            if (securityGate != null)
+                securityGate.validate(files);
             // manifest 强约束：原文哈希一致 + 文号唯一，否则构建失败，不触碰当前 active 指针
             validateManifestConsistency(valid);
             // 内容哈希幂等：法规未变化时跳过重建，避免每次启动 removeAll 清空索引（旧快照读到空/新索引）
@@ -117,13 +146,14 @@ public class LegalDocIngestor implements ApplicationRunner {
                 return;
             }
             indexVersions.register(manifest);
-            String owner = "rag-builder-" + java.util.UUID.randomUUID().toString().substring(0, 12);
+            String owner = "rag-builder-" + UUID.randomUUID().toString().substring(0, 12);
             if (!indexVersions.claimBuild(indexVersion, owner)) {
                 log.info("RAG 索引 {} 正由其他实例构建，本实例保持使用当前 active version", indexVersion.substring(0, 8));
                 return;
             }
             buildAndPublish(valid, indexVersion, owner);
-        } catch (Exception e) {
+        }
+        catch (Exception e) {
             log.error("RAG 文档导入失败，继续保留旧 active index", e);
             if (failFastOnEmptyIndex && indexVersions.activeVersion().isBlank()) {
                 throw new IllegalStateException("生产环境没有可用的法规索引", e);
@@ -154,7 +184,8 @@ public class LegalDocIngestor implements ApplicationRunner {
             }
             assertLease(contentHash, owner, lease);
             // 同版本上次崩溃留下的候选片段必须先清除，否则 Top-K 会被重复 evidenceId 占满。
-            if (candidateIndexStore != null) candidateIndexStore.clearCandidate(contentHash);
+            if (candidateIndexStore != null)
+                candidateIndexStore.clearCandidate(contentHash);
             embeddingStore.addAll(embeddings, segments);
             assertIndexIntegrity(contentHash, segments.size());
             assertLease(contentHash, owner, lease);
@@ -162,32 +193,37 @@ public class LegalDocIngestor implements ApplicationRunner {
             if (indexVersions.markStatus(contentHash, owner, "EVALUATING", null)) {
                 log.info("RAG 候选索引进入 EVALUATING：{}（{} 片段）", contentHash.substring(0, 8), segments.size());
             }
-            LegalIndexPublicationGate.GateResult gate = publicationGate == null
-                    ? LegalIndexPublicationGate.GateResult.PASSED_WITHOUT_REPORT
+            RagPublicationEvaluator.GateResult gate = publicationGate == null
+                    ? RagPublicationEvaluator.GateResult.PASSED_WITHOUT_REPORT
                     : publicationGate.evaluate(contentHash, segments.size());
             if (!gate.passed()) {
                 indexVersions.markStatus(contentHash, owner, "REJECTED", gate.qualityJson());
                 indexVersions.releaseLease(contentHash, owner);
-                if (metrics != null) metrics.ragIndexBuild("REJECTED", elapsedMs(started), segments.size());
-                log.warn("RAG 候选索引未通过发布门禁，保留旧 active（{}）: {}",
-                        gate.failures(), contentHash.substring(0, 8));
+                if (metrics != null)
+                    metrics.ragIndexBuild("REJECTED", elapsedMs(started), segments.size());
+                log.warn("RAG 候选索引未通过发布门禁，保留旧 active（{}）: {}", gate.failures(), contentHash.substring(0, 8));
                 return;
             }
             indexVersions.markStatus(contentHash, owner, "CANDIDATE", gate.qualityJson());
             if (!indexVersions.activate(contentHash, owner, segments.size(), gate.qualityJson())) {
                 throw new IllegalStateException("法规索引构建租约已失效，拒绝发布");
             }
-            if (metrics != null) metrics.ragIndexBuild("SUCCEEDED", elapsedMs(started), segments.size());
+            if (metrics != null)
+                metrics.ragIndexBuild("SUCCEEDED", elapsedMs(started), segments.size());
             log.info("RAG 导入完成：{} 个文档片段向量化入库并通过发布门禁（表 {}，hash={}），评估指标 recallAt5={} ndcg={} coldP95={}ms",
                     segments.size(), props.getPg().getTable(), contentHash.substring(0, 8),
                     firstNumber(gate.qualityJson(), "recallAt5"), firstNumber(gate.qualityJson(), "ndcgAt5"),
                     firstNumber(gate.qualityJson(), "coldP95Ms"));
-        } catch (Exception e) {
+        }
+        catch (Exception e) {
             indexVersions.release(contentHash, owner);
-            if (metrics != null) metrics.ragIndexBuild("FAILED", elapsedMs(started), 0);
+            if (metrics != null)
+                metrics.ragIndexBuild("FAILED", elapsedMs(started), 0);
             throw e instanceof RuntimeException runtime ? runtime : new IllegalStateException(e);
-        } finally {
-            if (lease != null) lease.close();
+        }
+        finally {
+            if (lease != null)
+                lease.close();
         }
     }
 
@@ -211,7 +247,8 @@ public class LegalDocIngestor implements ApplicationRunner {
 
     /** 完整性门禁：落库条数必须与构建片段数一致，确保候选索引 100% 可检索。 */
     private void assertIndexIntegrity(String contentHash, int expectedSegments) {
-        if (candidateIndexStore == null) return;
+        if (candidateIndexStore == null)
+            return;
         int stored = candidateIndexStore.candidateCount(contentHash);
         if (stored != expectedSegments) {
             throw new IllegalStateException("索引完整性门禁未通过：落库 " + stored + " != 构建 " + expectedSegments);
@@ -221,21 +258,21 @@ public class LegalDocIngestor implements ApplicationRunner {
     private void validateManifestConsistency(List<DocFile> valid) {
         Map<String, String> documentNumbers = new HashMap<>();
         for (DocFile doc : valid) {
-            if (doc.manifest() == null) continue;
+            if (doc.manifest() == null)
+                continue;
             if (!doc.manifest().expectedSourceSha256().isBlank()) {
                 String actual = sha256File(doc.file());
                 if (!doc.manifest().expectedSourceSha256().equalsIgnoreCase(actual)) {
-                    throw new IllegalStateException("manifest sourceSha256 与文档原文不一致（拒绝构建）: "
-                            + doc.file().getFileName() + " expect=" + doc.manifest().expectedSourceSha256()
-                            + " actual=" + actual);
+                    throw new IllegalStateException("manifest sourceSha256 与文档原文不一致（拒绝构建）: " + doc.file().getFileName()
+                            + " expect=" + doc.manifest().expectedSourceSha256() + " actual=" + actual);
                 }
             }
             String docNumber = doc.manifest().documentNumber();
             if (docNumber != null && !docNumber.isBlank()) {
                 String previous = documentNumbers.putIfAbsent(docNumber, doc.file().getFileName().toString());
                 if (previous != null) {
-                    throw new IllegalStateException("同一 documentNumber 出现于多份文档且内容不同（拒绝构建）: "
-                            + docNumber + " → " + previous + " / " + doc.file().getFileName());
+                    throw new IllegalStateException("同一 documentNumber 出现于多份文档且内容不同（拒绝构建）: " + docNumber + " → "
+                            + previous + " / " + doc.file().getFileName());
                 }
             }
         }
@@ -244,7 +281,8 @@ public class LegalDocIngestor implements ApplicationRunner {
     private void assertLease(String version, String owner, RagBuildLeaseHeartbeat.Lease lease) {
         if (lease != null) {
             lease.assertAndRenew();
-        } else if (!indexVersions.renewBuildLease(version, owner)) {
+        }
+        else if (!indexVersions.renewBuildLease(version, owner)) {
             throw new IllegalStateException("法规索引构建租约已失效，拒绝继续构建");
         }
     }
@@ -270,8 +308,9 @@ public class LegalDocIngestor implements ApplicationRunner {
             MessageDigest digest = sha256Digest();
             hashFile(digest, file);
             return HexFormat.of().formatHex(digest.digest());
-        } catch (IOException e) {
-            throw new IllegalStateException("法规文档哈希失败: " + file, e);
+        }
+        catch (IOException e) {
+            throw new IllegalStateException("法规文档哈希失败", e);
         }
     }
 
@@ -280,7 +319,8 @@ public class LegalDocIngestor implements ApplicationRunner {
             byte[] buffer = new byte[8192];
             int read;
             while ((read = input.read(buffer)) >= 0) {
-                if (read > 0) digest.update(buffer, 0, read);
+                if (read > 0)
+                    digest.update(buffer, 0, read);
             }
         }
     }
@@ -288,7 +328,8 @@ public class LegalDocIngestor implements ApplicationRunner {
     private MessageDigest sha256Digest() {
         try {
             return MessageDigest.getInstance("SHA-256");
-        } catch (NoSuchAlgorithmException e) {
+        }
+        catch (NoSuchAlgorithmException e) {
             throw new IllegalStateException("SHA-256 不可用", e);
         }
     }
@@ -301,7 +342,8 @@ public class LegalDocIngestor implements ApplicationRunner {
         List<DocFile> result = new ArrayList<>();
         try (var stream = Files.list(dir)) {
             List<Path> files = stream.filter(p -> p.toString().endsWith(".md") || p.toString().endsWith(".txt"))
-                    .sorted().toList();
+                .sorted()
+                .toList();
             for (Path file : files) {
                 if (manifestLoader == null) {
                     result.add(new DocFile(file, null, null, List.of()));
@@ -327,7 +369,8 @@ public class LegalDocIngestor implements ApplicationRunner {
     }
 
     private void quarantine(Path file, String reasonCodes) {
-        if (quarantine == null) return;
+        if (quarantine == null)
+            return;
         try {
             String hash = sha256File(file);
             if (!quarantine.existsBySourceFileAndFileHash(file.getFileName().toString(), hash)) {
@@ -335,19 +378,21 @@ public class LegalDocIngestor implements ApplicationRunner {
                 entity.setSourceFile(file.getFileName().toString());
                 entity.setFileHash(hash);
                 entity.setReasonCodes(reasonCodes);
-                entity.setDetectedAt(LocalDateTime.now());
+                entity.setDetectedAt(LocalDateTime.now(clock));
                 quarantine.save(entity);
             }
-        } catch (Exception e) {
+        }
+        catch (Exception e) {
             log.warn("隔离审计记录写入失败（不影响启动）: {}", e.getMessage());
         }
     }
 
     private double firstNumber(String json, String field) {
         try {
-            var node = new com.fasterxml.jackson.databind.ObjectMapper().readTree(json).path(field);
+            var node = new ObjectMapper().readTree(json).path(field);
             return node.isNumber() ? node.asDouble() : -1;
-        } catch (Exception e) {
+        }
+        catch (JsonProcessingException e) {
             return -1;
         }
     }
@@ -357,4 +402,5 @@ public class LegalDocIngestor implements ApplicationRunner {
             return manifest != null && rejectReasons.isEmpty();
         }
     }
+
 }

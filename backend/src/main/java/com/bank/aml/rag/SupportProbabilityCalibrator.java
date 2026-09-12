@@ -1,19 +1,19 @@
 package com.bank.aml.rag;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Value;
-import org.springframework.stereotype.Component;
-
+import com.bank.aml.config.RagProperties;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Component;
 
 /**
  * 将 Reranker 原始分数校准为支持概率 supportProbability。
  * <ul>
- *   <li>{@code platt}：Platt Scaling（逻辑回归）拟合，将 logit 分数映射到概率区间；</li>
- *   <li>{@code isotonic}：保序回归（等渗回归），无需单调函数假设，直接学习分数→概率保序映射。</li>
+ * <li>{@code platt}：Platt Scaling（逻辑回归）拟合，将 logit 分数映射到概率区间；</li>
+ * <li>{@code isotonic}：保序回归（等渗回归），无需单调函数假设，直接学习分数→概率保序映射。</li>
  * </ul>
  * 未拟合（默认）时使用恒等 logit 变换 {@code sigmoid(raw)}。拟合数据为 (score, relevant) 的标注样本。
  */
@@ -27,6 +27,7 @@ public class SupportProbabilityCalibrator {
 
     // Platt Scaling 参数 p = sigmoid(a * score + b)
     private double plattA = 1.0;
+
     private double plattB = 0.0;
 
     // Isotonic：升序断点 (score, calibrated)
@@ -34,8 +35,12 @@ public class SupportProbabilityCalibrator {
 
     private boolean fitted = false;
 
-    @org.springframework.beans.factory.annotation.Autowired
-    public SupportProbabilityCalibrator(@Value("${aml.rag.support.calibration-method:platt}") String method) {
+    @Autowired
+    public SupportProbabilityCalibrator(RagProperties properties) {
+        this(properties.getSupport().getCalibrationMethod());
+    }
+
+    public SupportProbabilityCalibrator(String method) {
         this.method = method == null || method.isBlank() ? "platt" : method;
     }
 
@@ -57,8 +62,8 @@ public class SupportProbabilityCalibrator {
     }
 
     /**
-     * 从人工标注样本拟合校准参数。样本形如 {@code (rawScore, relevant)}，
-     * {@code relevant} 表示该 query-doc 对是否被标注为相关。
+     * 从人工标注样本拟合校准参数。样本形如 {@code (rawScore, relevant)}， {@code relevant} 表示该 query-doc
+     * 对是否被标注为相关。
      */
     public void fit(List<double[]> samples) {
         if (samples == null || samples.size() < 2) {
@@ -68,15 +73,15 @@ public class SupportProbabilityCalibrator {
         if ("isotonic".equalsIgnoreCase(method)) {
             isotonicBreaks = fitIsotonic(samples);
             fitted = true;
-        } else {
+        }
+        else {
             double[] ab = fitPlatt(samples);
             plattA = ab[0];
             plattB = ab[1];
             fitted = true;
         }
-        log.info("支持分数校准完成：method={} samples={} a={} b={} breaks={}",
-                method, samples.size(), Math.round(plattA * 100) / 100.0,
-                Math.round(plattB * 100) / 100.0, isotonicBreaks.size());
+        log.info("支持分数校准完成：method={} samples={} a={} b={} breaks={}", method, samples.size(),
+                Math.round(plattA * 100) / 100.0, Math.round(plattB * 100) / 100.0, isotonicBreaks.size());
     }
 
     /** Platt Scaling：对单个变量的二分类做梯度下降拟合 a、b。 */
@@ -97,7 +102,7 @@ public class SupportProbabilityCalibrator {
             a -= learningRate * gA / samples.size();
             b -= learningRate * gB / samples.size();
         }
-        return new double[]{a, b};
+        return new double[] { a, b };
     }
 
     /** Isotonic（PAVA）：保序回归，断点按 score 升序返回 (score, calibrated)。 */
@@ -122,16 +127,19 @@ public class SupportProbabilityCalibrator {
         List<double[]> breaks = new ArrayList<>();
         for (List<double[]> block : blocks) {
             double mean = mean(block);
-            breaks.add(new double[]{block.get(block.size() - 1)[0], mean});
+            breaks.add(new double[] { block.get(block.size() - 1)[0], mean });
         }
         return breaks;
     }
 
     private double isotonic(double score) {
-        if (isotonicBreaks.isEmpty()) return sigmoid(score);
-        if (score <= isotonicBreaks.getFirst()[0]) return isotonicBreaks.getFirst()[1];
+        if (isotonicBreaks.isEmpty())
+            return sigmoid(score);
+        if (score <= isotonicBreaks.getFirst()[0])
+            return isotonicBreaks.getFirst()[1];
         double[] last = isotonicBreaks.get(isotonicBreaks.size() - 1);
-        if (score >= last[0]) return last[1];
+        if (score >= last[0])
+            return last[1];
         for (int i = 0; i < isotonicBreaks.size() - 1; i++) {
             double[] lower = isotonicBreaks.get(i);
             double[] upper = isotonicBreaks.get(i + 1);
@@ -145,7 +153,8 @@ public class SupportProbabilityCalibrator {
 
     private double mean(List<double[]> block) {
         double sum = 0;
-        for (double[] sample : block) sum += sample[1];
+        for (double[] sample : block)
+            sum += sample[1];
         return sum / block.size();
     }
 
@@ -153,4 +162,5 @@ public class SupportProbabilityCalibrator {
         // 数值稳定：避免 exp 溢出
         return 1.0 / (1.0 + Math.exp(-Math.min(40.0, Math.max(-40.0, value))));
     }
+
 }

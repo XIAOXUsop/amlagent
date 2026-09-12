@@ -1,5 +1,6 @@
 package com.bank.aml.datasource.entity;
 
+import com.bank.aml.common.crypto.IdCardCipher;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.GeneratedValue;
@@ -8,13 +9,13 @@ import jakarta.persistence.Id;
 import jakarta.persistence.PrePersist;
 import jakarta.persistence.PreUpdate;
 import jakarta.persistence.Table;
-
+import java.time.Clock;
 import java.time.LocalDateTime;
-import com.bank.aml.security.IdCardCipher;
 
 /**
  * 客户/人员主数据（新建预警工单可选客户的数据源）。
- * <p>删除采用逻辑删除（deleted=true），保护历史工单关联；证件号必填且唯一。
+ * <p>
+ * 删除采用逻辑删除（deleted=true），保护历史工单关联；证件号必填且唯一。
  */
 @Entity
 @Table(name = "customer")
@@ -66,13 +67,13 @@ public class CustomerEntity {
 
     @PrePersist
     void onCreate() {
-        this.createdAt = LocalDateTime.now();
+        this.createdAt = LocalDateTime.now(Clock.systemUTC());
         this.updatedAt = this.createdAt;
     }
 
     @PreUpdate
     void onUpdate() {
-        this.updatedAt = LocalDateTime.now();
+        this.updatedAt = LocalDateTime.now(Clock.systemUTC());
     }
 
     public Long getId() {
@@ -104,9 +105,17 @@ public class CustomerEntity {
         this.idCardFingerprint = IdCardCipher.fingerprint(idCard);
     }
 
-    public String getIdCardFingerprint() { return idCardFingerprint; }
-    public void refreshIdCardFingerprint() { this.idCardFingerprint = IdCardCipher.fingerprint(getIdCard()); }
-    public boolean isIdCardEncrypted() { return IdCardCipher.isEncrypted(idCard); }
+    public String getIdCardFingerprint() {
+        return idCardFingerprint;
+    }
+
+    public void refreshIdCardFingerprint() {
+        this.idCardFingerprint = IdCardCipher.fingerprint(getIdCard());
+    }
+
+    public boolean isIdCardEncrypted() {
+        return IdCardCipher.isEncrypted(idCard);
+    }
 
     public String getType() {
         return type;
@@ -171,4 +180,5 @@ public class CustomerEntity {
     public void setDeleted(boolean deleted) {
         this.deleted = deleted;
     }
+
 }

@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 AML Agent 压测脚本：并发创建工单，测量系统吞吐与端到端延迟。
 
@@ -10,50 +9,30 @@ AML Agent 压测脚本：并发创建工单，测量系统吞吐与端到端延�
       以排除外部模型延迟的干扰；如带真实模型，延迟会包含模型推理时间，如实记录即可。
     - 端到端延迟包含 Outbox 发布器轮询间隔（默认 5s，见 aml.queue.outbox-poll-seconds）。
 """
+
 import argparse
 import json
 import statistics
 import time
-import urllib.request
-import urllib.error
 from concurrent.futures import ThreadPoolExecutor, as_completed
+
+from http_client import SessionClient
 
 BASE = "http://localhost:8080"
 TERMINAL = {"DONE", "HOLD", "FAILED"}
 
 
-def request(method, path, body=None, token=None, timeout=60):
-    data = json.dumps(body, ensure_ascii=False).encode("utf-8") if body is not None else None
-    headers = {"Content-Type": "application/json"}
-    if token:
-        headers["Authorization"] = f"Bearer {token}"
-    req = urllib.request.Request(BASE + path, data=data, headers=headers, method=method)
-    try:
-        with urllib.request.urlopen(req, timeout=timeout) as r:
-            raw = r.read().decode("utf-8")
-            return r.status, json.loads(raw) if raw else None
-    except urllib.error.HTTPError as e:
-        return e.code, None
-
-
-def login(username, password):
-    code, resp = request("POST", "/api/auth/login", {"username": username, "password": password})
-    if code != 200 or not resp:
-        raise RuntimeError(f"登录失败: {code}")
-    return resp["token"]
-
-
-def create_case(token, customer_id):
-    code, case = request("POST", "/api/cases", {"customerId": customer_id, "alertRule": "压测"}, token=token)
-    if code != 200 or not case:
+def create_case(client, customer_id):
+    code, case = client.request("POST", "/api/cases", {"customerId": customer_id, "alertRule": "压测"})
+    if code != 201 or not case:
         return None, time.time()
     return case["id"], time.time()
 
 
-def wait_terminal(token, case_id, timeout):
+def wait_terminal(client, case_id, timeout):
     deadline = time.time() + timeout
     while time.time() < deadline:
-        code, case = request("GET", f"/api/cases/{case_id}", token=token)
+        code, case = client.request("GET", f"/api/cases/{case_id}")
         if code == 200 and case and case.get("status") in TERMINAL:
             return time.time()
         time.sleep(0.2)
@@ -77,7 +56,8 @@ def main():
     parser.add_argument("--password", default="admin123")
     args = parser.parse_args()
 
-    token = login(args.username, args.password)
+    client = SessionClient(BASE)
+    client.authenticate(args.username, args.password)
     print(f"已登录，开始压测 {args.count} 个工单（并发 {args.concurrency}）...")
 
     # 并发创建
@@ -85,7 +65,7 @@ def main():
     created = []
     failures = 0
     with ThreadPoolExecutor(max_workers=args.concurrency) as pool:
-        futures = [pool.submit(create_case, token, args.customer) for _ in range(args.count)]
+        futures = [pool.submit(create_case, client, args.customer) for _ in range(args.count)]
         for f in as_completed(futures):
             cid, done_at = f.result()
             if cid is None:
@@ -99,7 +79,7 @@ def main():
     e2e_ms = []
     timed_out = 0
     for cid, created_at in created:
-        terminal_at = wait_terminal(token, cid, args.timeout)
+        terminal_at = wait_terminal(client, cid, args.timeout)
         if terminal_at is None:
             timed_out += 1
         else:
@@ -125,7 +105,9 @@ def main():
     print("\n===== 压测结果 =====")
     print(f"创建: {report['created']} 成功 / {report['createFailures']} 失败，吞吐 {report['createQps']} 工单/秒")
     print(f"端到端: {report['e2eSuccess']} 完成 / {report['timedOut']} 超时")
-    print(f"  平均 {report['e2eMeanMs']}ms，P50 {report['e2eP50Ms']}ms，P95 {report['e2eP95Ms']}ms，P99 {report['e2eP99Ms']}ms")
+    print(
+        f"  平均 {report['e2eMeanMs']}ms，P50 {report['e2eP50Ms']}ms，P95 {report['e2eP95Ms']}ms，P99 {report['e2eP99Ms']}ms"
+    )
 
     with open("benchmark/load-test-report.json", "w", encoding="utf-8") as f:
         json.dump(report, f, ensure_ascii=False, indent=2)

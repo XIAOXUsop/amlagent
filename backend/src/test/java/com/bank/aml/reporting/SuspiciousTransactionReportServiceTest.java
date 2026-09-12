@@ -1,12 +1,12 @@
 package com.bank.aml.reporting;
 
+import com.bank.aml.TestClocks;
 import com.bank.aml.audit.AuditOutboxService;
 import com.bank.aml.common.enums.CaseStatus;
 import com.bank.aml.datasource.entity.CaseEntity;
 import com.bank.aml.datasource.repository.CaseRepository;
-import org.junit.jupiter.api.Test;
-
 import java.util.Optional;
+import org.junit.jupiter.api.Test;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -16,12 +16,15 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class SuspiciousTransactionReportServiceTest {
-    private final SuspiciousTransactionReportRepository repository =
-            mock(SuspiciousTransactionReportRepository.class);
+
+    private final SuspiciousTransactionReportRepository repository = mock(SuspiciousTransactionReportRepository.class);
+
     private final CaseRepository caseRepository = mock(CaseRepository.class);
+
     private final AuditOutboxService auditOutbox = mock(AuditOutboxService.class);
-    private final SuspiciousTransactionReportService service =
-            new SuspiciousTransactionReportService(repository, caseRepository, auditOutbox);
+
+    private final SuspiciousTransactionReportService service = new SuspiciousTransactionReportService(repository,
+            caseRepository, auditOutbox, TestClocks.FIXED);
 
     @Test
     void acceptedExternalSubmissionIsTheOnlyTransitionThatCompletesCase() {
@@ -54,8 +57,7 @@ class SuspiciousTransactionReportServiceTest {
         when(caseRepository.reopenSuspiciousReport(7L, CaseStatus.DONE, CaseStatus.REPORT_PENDING)).thenReturn(1);
         when(repository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
 
-        SuspiciousTransactionReportView result = service.returnForCorrection(
-                7L, 2, "外部系统退回，需补正交易对手信息", "reviewer");
+        SuspiciousTransactionReportView result = service.returnForCorrection(7L, 2, "外部系统退回，需补正交易对手信息", "reviewer");
 
         assertThat(result.status()).isEqualTo(SuspiciousTransactionReportStatus.RETURNED_FOR_CORRECTION);
         assertThat(result.revision()).isEqualTo(3);
@@ -67,12 +69,12 @@ class SuspiciousTransactionReportServiceTest {
         CaseEntity caseEntity = new CaseEntity();
         caseEntity.setStatus(CaseStatus.REPORT_PENDING);
         when(caseRepository.findByIdForUpdate(7L)).thenReturn(Optional.of(caseEntity));
-        when(repository.findByCaseId(7L)).thenReturn(Optional.of(
-                report(SuspiciousTransactionReportStatus.PENDING_SUBMISSION, 3)));
+        when(repository.findByCaseId(7L))
+            .thenReturn(Optional.of(report(SuspiciousTransactionReportStatus.PENDING_SUBMISSION, 3)));
 
         assertThatThrownBy(() -> service.markSubmitted(7L, 2, "PBOC:STR/2026-001", "reviewer"))
-                .isInstanceOf(IllegalStateException.class)
-                .hasMessageContaining("版本已变化");
+            .isInstanceOf(IllegalStateException.class)
+            .hasMessageContaining("版本已变化");
     }
 
     private SuspiciousTransactionReport report(SuspiciousTransactionReportStatus status, int revision) {
@@ -85,4 +87,5 @@ class SuspiciousTransactionReportServiceTest {
         report.setRevision(revision);
         return report;
     }
+
 }

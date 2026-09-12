@@ -1,53 +1,50 @@
 package com.bank.aml.evaluation;
 
 import com.bank.aml.common.enums.RiskLevel;
+import com.bank.aml.domain.RiskContext;
 import com.bank.aml.evaluation.RuleRegressionCaseGenerator.RuleRegressionCase;
-import com.bank.aml.risk.RiskContext;
-import com.bank.aml.risk.RiskRuleEngine;
 import com.bank.aml.risk.RiskRuleEngine.TriggeredRule;
+import com.bank.aml.risk.RiskRuleEngine;
+import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import org.springframework.stereotype.Service;
-
+import java.time.Clock;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import org.springframework.stereotype.Service;
 
 /**
  * 风险规则回归评测。
  *
- * <p>本评测不调用真实 LLM，也不执行 Agent 工具，只验证 RiskRuleEngine
- * 和 Guardrails 在确定性合成数据上的行为是否符合预期。
+ * <p>
+ * 本评测不调用真实 LLM，也不执行 Agent 工具，只验证 RiskRuleEngine 和 Guardrails 在确定性合成数据上的行为是否符合预期。
  */
 @Service
 public class RuleRegressionEvaluator {
 
     private final RuleRegressionCaseGenerator generator;
+
     private final RiskRuleEngine ruleEngine;
+
     private final ObjectMapper objectMapper;
 
+    private final Clock clock;
+
     public RuleRegressionEvaluator(RuleRegressionCaseGenerator generator, RiskRuleEngine ruleEngine,
-                                   ObjectMapper objectMapper) {
+            ObjectMapper objectMapper, Clock clock) {
         this.generator = generator;
         this.ruleEngine = ruleEngine;
         this.objectMapper = objectMapper;
+        this.clock = clock;
     }
 
-    public record PerCase(String id, String scenario, String expectedRiskLevel,
-                          String baselineRiskLevel, String finalRiskLevel, boolean escalated) {
+    public record PerCase(String id, String scenario, String expectedRiskLevel, String baselineRiskLevel,
+            String finalRiskLevel, boolean escalated) {
     }
 
-    public record RuleRegressionReport(
-            int totalCases,
-            double highRiskRecallRate,
-            double lowRiskFalsePositiveRate,
-            double accuracy,
-            int manualReviewMissCount,
-            int manualReviewTotal,
-            long p50DurationMs,
-            long p95DurationMs,
-            int[][] confusionMatrix,
-            List<PerCase> details
-    ) {
+    public record RuleRegressionReport(int totalCases, double highRiskRecallRate, double lowRiskFalsePositiveRate,
+            double accuracy, int manualReviewMissCount, int manualReviewTotal, long p50DurationMs, long p95DurationMs,
+            int[][] confusionMatrix, List<PerCase> details) {
     }
 
     public RuleRegressionReport run() {
@@ -60,18 +57,18 @@ public class RuleRegressionEvaluator {
         List<PerCase> details = new ArrayList<>();
 
         for (RuleRegressionCase regressionCase : cases) {
-            long start = System.currentTimeMillis();
+            long start = clock.millis();
 
             String baselineLevel = baselineLevel(regressionCase);
             RiskContext context = new RiskContext(regressionCase.maxSeverity(), regressionCase.sanctionHit(),
                     regressionCase.crossRatio(), regressionCase.nightRatio(), regressionCase.largeCount(),
                     regressionCase.transactionDataComplete(), regressionCase.transactionRiskExplained(),
-                    regressionCase.transactionPatternSeverity(), regressionCase.uboRiskSeverity(),
-                    baselineLevel, levelCode(baselineLevel));
+                    regressionCase.transactionPatternSeverity(), regressionCase.uboRiskSeverity(), baselineLevel,
+                    levelCode(baselineLevel));
             List<TriggeredRule> triggered = ruleEngine.evaluate(context);
             String finalLevel = applyRules(baselineLevel, triggered);
             boolean escalate = triggered.stream().anyMatch(r -> "MANUAL_REVIEW".equals(r.action()));
-            durations.add(System.currentTimeMillis() - start);
+            durations.add(clock.millis() - start);
 
             confusion[levelIndex(regressionCase.expectedRiskLevel())][levelIndex(finalLevel)]++;
             if (regressionCase.expectedRiskLevel().equals(finalLevel)) {
@@ -95,8 +92,8 @@ public class RuleRegressionEvaluator {
                     manualReviewMiss++;
                 }
             }
-            details.add(new PerCase(regressionCase.id(), regressionCase.scenario(),
-                    regressionCase.expectedRiskLevel(), baselineLevel, finalLevel, escalate));
+            details.add(new PerCase(regressionCase.id(), regressionCase.scenario(), regressionCase.expectedRiskLevel(),
+                    baselineLevel, finalLevel, escalate));
         }
 
         int total = cases.size();
@@ -110,8 +107,7 @@ public class RuleRegressionEvaluator {
     }
 
     /**
-     * 固定低风险基线，用于隔离并验证护栏的升级行为。
-     * 这里不复制任何待测规则，也不代表真实模型预测。
+     * 固定低风险基线，用于隔离并验证护栏的升级行为。 这里不复制任何待测规则，也不代表真实模型预测。
      */
     private String baselineLevel(RuleRegressionCase regressionCase) {
         return "低风险";
@@ -156,8 +152,10 @@ public class RuleRegressionEvaluator {
     public String metricsJson(RuleRegressionReport report) {
         try {
             return objectMapper.writeValueAsString(report);
-        } catch (Exception e) {
-            return "{}";
+        }
+        catch (JsonProcessingException e) {
+            throw new IllegalStateException("规则回归报告序列化失败", e);
         }
     }
+
 }

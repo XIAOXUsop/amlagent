@@ -5,9 +5,7 @@ import java.util.List;
 /**
  * 客户尽调初审报告（AiServices 结构化输出）。
  */
-public record DueDiligenceReport(
-        String customerId,
-        String customerName,
+public record DueDiligenceReport(String customerId, String customerName,
         /** 风险评级：低风险 / 中风险 / 高风险 */
         String riskLevel,
         /** 交易画像摘要 */
@@ -29,16 +27,15 @@ public record DueDiligenceReport(
         /** 风险发现代码，只能来自系统提示声明的闭集 */
         List<String> findingCodes,
         /** 后续处置代码，只能来自系统提示声明的闭集 */
-        List<String> actionCodes
-) {
+        List<String> actionCodes) {
     /** 将不含身份信息的模型分析封装为可信最终报告。 */
     public static DueDiligenceReport fromAnalysis(String customerId, String customerName, AgentAnalysis analysis) {
         if (analysis == null) {
             return null;
         }
-        return new DueDiligenceReport(customerId, customerName, analysis.riskLevel(),
-                analysis.transactionProfile(), analysis.corporateProfile(), analysis.sanctions(),
-                analysis.legalBasis(), analysis.riskPoints(), analysis.conclusion(), analysis.evidenceChain(),
-                analysis.manualReviewRequired(), analysis.findingCodes(), analysis.actionCodes());
+        return new DueDiligenceReport(customerId, customerName, analysis.riskLevel(), analysis.transactionProfile(),
+                analysis.corporateProfile(), analysis.sanctions(), analysis.legalBasis(), analysis.riskPoints(),
+                analysis.conclusion(), analysis.evidenceChain(), analysis.manualReviewRequired(),
+                analysis.findingCodes(), analysis.actionCodes());
     }
 }

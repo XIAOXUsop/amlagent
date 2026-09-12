@@ -1,17 +1,21 @@
 package com.bank.aml.risk;
 
-import org.springframework.stereotype.Component;
-
+import com.bank.aml.config.RiskProperties;
+import com.bank.aml.domain.RiskContext;
+import java.time.Clock;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Component;
 
 /**
  * 风险规则引擎：加载启用的规则，按优先级评估 {@link RiskContext}，返回命中的规则及证据。
- * <p>条件表达式为简单 DSL，如：{@code sanction.maxSeverity == 1 && transaction.crossRatio > 20}
+ * <p>
+ * 条件表达式为简单 DSL，如：{@code sanction.maxSeverity == 1 && transaction.crossRatio > 20}
  * 支持字段：sanction.maxSeverity / sanction.sanctionHit / transaction.crossRatio /
  * transaction.nightRatio / transaction.largeCount / transaction.dataComplete /
  * transaction.riskExplained / transaction.patternSeverity / corporate.uboRiskSeverity
@@ -20,35 +24,39 @@ import java.util.regex.Pattern;
 public class RiskRuleEngine {
 
     private static final Pattern CONDITION_PATTERN = Pattern.compile("^(\\w+\\.\\w+)\\s*(==|>=|<=|>|<)\\s*([\\w.]+)$");
-    private static final Set<String> SUPPORTED_FIELDS = Set.of(
-            "sanction.maxSeverity",
-            "sanction.sanctionHit",
-            "transaction.crossRatio",
-            "transaction.nightRatio",
-            "transaction.largeCount",
-            "transaction.dataComplete",
-            "transaction.riskExplained",
-            "transaction.patternSeverity",
-            "corporate.uboRiskSeverity"
-    );
+
+    private static final Set<String> SUPPORTED_FIELDS = Set.of("sanction.maxSeverity", "sanction.sanctionHit",
+            "transaction.crossRatio", "transaction.nightRatio", "transaction.largeCount", "transaction.dataComplete",
+            "transaction.riskExplained", "transaction.patternSeverity", "corporate.uboRiskSeverity");
 
     private final RiskRuleRepository repository;
-    /** 启用规则缓存：规则表低频变更，避免每次 Guardrails 评估都查库；TTL 后自动刷新 */
-    private static final long RULE_CACHE_TTL_MS = 60_000L;
+
+    private final Clock clock;
+
+    private final long ruleCacheTtlMs;
+
     private volatile List<RiskRule> cachedRules = List.of();
+
     private volatile long cachedAt = 0L;
 
-    public RiskRuleEngine(RiskRuleRepository repository) {
+    public RiskRuleEngine(RiskRuleRepository repository, Clock clock) {
+        this(repository, clock, new RiskProperties());
+    }
+
+    @Autowired
+    public RiskRuleEngine(RiskRuleRepository repository, Clock clock, RiskProperties properties) {
         this.repository = repository;
+        this.clock = clock;
+        this.ruleCacheTtlMs = java.time.Duration.ofSeconds(properties.getRuleCacheTtlSeconds()).toMillis();
     }
 
     /** 触发的规则 */
-    public record TriggeredRule(String ruleCode, int ruleVersion, String targetRiskLevel,
-                                String action, String evidence) {
+    public record TriggeredRule(String ruleCode, int ruleVersion, String targetRiskLevel, String action,
+            String evidence) {
     }
 
     public List<TriggeredRule> evaluate(RiskContext ctx) {
-        LocalDateTime now = LocalDateTime.now();
+        LocalDateTime now = LocalDateTime.now(clock);
         List<TriggeredRule> triggered = new ArrayList<>();
         for (RiskRule r : activeRules()) {
             if (r.getEffectiveFrom() != null && now.isBefore(r.getEffectiveFrom())) {
@@ -58,8 +66,8 @@ public class RiskRuleEngine {
                 continue;
             }
             if (evaluate(r.getConditionExpression(), ctx)) {
-                triggered.add(new TriggeredRule(r.getRuleCode(), r.getVersion(),
-                        r.getTargetRiskLevel(), r.getAction(), evidenceText(ctx, r)));
+                triggered.add(new TriggeredRule(r.getRuleCode(), r.getVersion(), r.getTargetRiskLevel(), r.getAction(),
+                        evidenceText(ctx, r)));
             }
         }
         return triggered;
@@ -67,8 +75,8 @@ public class RiskRuleEngine {
 
     /** 带 TTL 的启用规则缓存；并发下允许短暂读到旧快照（规则低频变更，可接受） */
     private List<RiskRule> activeRules() {
-        long now = System.currentTimeMillis();
-        if (now - cachedAt > RULE_CACHE_TTL_MS) {
+        long now = clock.millis();
+        if (now - cachedAt > ruleCacheTtlMs) {
             cachedRules = repository.findByEnabledTrueOrderByPriorityAsc();
             cachedAt = now;
         }
@@ -99,8 +107,7 @@ public class RiskRuleEngine {
     }
 
     /**
-     * 在规则执行前校验 DSL。无效字段不能按 0 处理，否则类似
-     * {@code transaction.typo == false} 的拼写错误会意外命中所有客户。
+     * 在规则执行前校验 DSL。无效字段不能按 0 处理，否则类似 {@code transaction.typo == false} 的拼写错误会意外命中所有客户。
      */
     public void validateExpression(String expr) {
         if (expr == null || expr.isBlank()) {
@@ -171,7 +178,8 @@ public class RiskRuleEngine {
         }
         try {
             return Double.parseDouble(v);
-        } catch (NumberFormatException e) {
+        }
+        catch (NumberFormatException e) {
             return Double.NaN;
         }
     }
@@ -191,4 +199,5 @@ public class RiskRuleEngine {
             default -> "规则条件触发";
         };
     }
+
 }

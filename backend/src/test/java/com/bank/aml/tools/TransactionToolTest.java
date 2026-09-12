@@ -51,4 +51,5 @@ class TransactionToolTest {
         String result = profile("C003");
         assertThat(result).contains("交易笔数：15 笔");
     }
+
 }

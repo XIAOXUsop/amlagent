@@ -1,0 +1,431 @@
+{
+  "info": {
+    "_postman_id": "804d33e7-8d8e-4cbb-9e72-aml-business-regression",
+    "name": "aml",
+    "description": "AML 业务正向闭环与对抗性回归集合。按文件夹编号顺序执行；每个破坏性对抗场景建议使用独立案件。Postman Cookie Jar 会自动保存 aml_token。",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "baseUrl", "value": "http://localhost:8080" },
+    { "key": "xsrfToken", "value": "" },
+    { "key": "alertId", "value": "" },
+    { "key": "alertRevision", "value": "0" },
+    { "key": "caseId", "value": "" },
+    { "key": "caseStatus", "value": "" },
+    { "key": "reviewRevision", "value": "0" },
+    { "key": "unitId", "value": "" },
+    { "key": "draftRevision", "value": "0" },
+    { "key": "scopeIssueId", "value": "" },
+    { "key": "scopeIssueRevision", "value": "0" },
+    { "key": "factIssueId", "value": "" },
+    { "key": "factIssueRevision", "value": "0" },
+    { "key": "artifactVersionId", "value": "" },
+    { "key": "submissionId", "value": "" },
+    { "key": "reviewBasisToken", "value": "" },
+    { "key": "oldReviewBasisToken", "value": "" },
+    { "key": "txId", "value": "MOCK-C001-1" },
+    { "key": "txAmount", "value": "" },
+    { "key": "sourceVersion", "value": "customer-db-v2" },
+    { "key": "refundEventId", "value": "PM-REFUND-IDEMP-1" }
+  ],
+  "item": [
+    {
+      "name": "00-认证与会话",
+      "item": [
+        {
+          "name": "管理员登录",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"username\": \"admin\",\n  \"password\": \"admin123\"\n}" },
+            "url": "{{baseUrl}}/api/auth/login",
+            "description": "登录成功后 JWT 写入 HttpOnly Cookie。Postman 必须启用 Cookie Jar。"
+          },
+          "event": [{ "listen": "test", "script": { "exec": ["pm.test('管理员登录成功', () => pm.response.to.have.status(200));", "pm.test('角色为 ADMIN', () => pm.expect(pm.response.json().role).to.eql('ADMIN'));"], "type": "text/javascript" } }]
+        },
+        {
+          "name": "分析员登录",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"username\": \"analyst\",\n  \"password\": \"analyst123\"\n}" },
+            "url": "{{baseUrl}}/api/auth/login",
+            "description": "用于验证非管理员无法冻结预警范围，或作为解释提交人。"
+          }
+        },
+        {
+          "name": "复核员登录",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"username\": \"reviewer\",\n  \"password\": \"reviewer123\"\n}" },
+            "url": "{{baseUrl}}/api/auth/login",
+            "description": "最终复核必须由不同于提交人的复核员执行。登录会覆盖当前 aml_token Cookie。"
+          }
+        },
+        {
+          "name": "获取 CSRF Token",
+          "request": { "method": "GET", "url": "{{baseUrl}}/api/auth/csrf", "description": "每次切换登录账号后都执行一次。" },
+          "event": [{ "listen": "test", "script": { "exec": ["pm.test('CSRF 获取成功', () => pm.response.to.have.status(200));", "const token = pm.cookies.get('XSRF-TOKEN');", "pm.expect(token, 'XSRF-TOKEN cookie').to.be.ok;", "pm.collectionVariables.set('xsrfToken', token);"], "type": "text/javascript" } }]
+        },
+        {
+          "name": "当前登录用户",
+          "request": { "method": "GET", "url": "{{baseUrl}}/api/auth/me" }
+        }
+      ]
+    },
+    {
+      "name": "01-完整正向业务链",
+      "item": [
+        {
+          "name": "01 创建集团代付预警",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }, { "key": "X-XSRF-TOKEN", "value": "{{xsrfToken}}" }],
+            "body": { "mode": "raw", "raw": "{\n  \"externalAlertId\": \"PM-A9-{{$timestamp}}\",\n  \"customerId\": \"C001\",\n  \"ruleCode\": \"GROUP_PAYMENT_REFUND\",\n  \"scenarioCode\": \"GROUP_PAYMENT\",\n  \"hitReason\": \"集团代付后发生退款，需要验证授权范围与资金回流\",\n  \"occurredAt\": \"2026-09-09T10:00:00\"\n}" },
+            "url": "{{baseUrl}}/api/alerts"
+          },
+          "event": [{ "listen": "test", "script": { "exec": ["pm.test('预警创建成功', () => pm.response.to.have.status(200));", "const j = pm.response.json();", "pm.collectionVariables.set('alertId', j.id);", "pm.collectionVariables.set('alertRevision', j.revision);"], "type": "text/javascript" } }]
+        },
+        {
+          "name": "02 冻结权威预警范围",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }, { "key": "X-XSRF-TOKEN", "value": "{{xsrfToken}}" }],
+            "body": { "mode": "raw", "raw": "{\n  \"triggerTransactionIds\": [\"{{txId}}\"],\n  \"auxiliaryTransactionIds\": [],\n  \"sourceVersion\": \"{{sourceVersion}}\"\n}" },
+            "url": "{{baseUrl}}/api/alerts/{{alertId}}/scope/freeze",
+            "description": "仅 ADMIN 可执行。"
+          },
+          "event": [{ "listen": "test", "script": { "exec": ["pm.test('冻结成功', () => pm.response.to.have.status(200));"], "type": "text/javascript" } }]
+        },
+        {
+          "name": "03 由预警建案",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }, { "key": "X-XSRF-TOKEN", "value": "{{xsrfToken}}" }],
+            "body": { "mode": "raw", "raw": "{\n  \"expectedRevision\": {{alertRevision}},\n  \"autoProcess\": true,\n  \"enableExplanationPolicy\": true\n}" },
+            "url": "{{baseUrl}}/api/alerts/{{alertId}}/create-case"
+          },
+          "event": [{ "listen": "test", "script": { "exec": ["pm.test('建案成功', () => pm.response.to.have.status(200));", "const j = pm.response.json();", "pm.collectionVariables.set('caseId', j.id);", "pm.collectionVariables.set('caseStatus', j.status);", "pm.collectionVariables.set('reviewRevision', j.reviewRevision);"], "type": "text/javascript" } }]
+        },
+        {
+          "name": "04 查询案件状态（复核前应为 HOLD）",
+          "request": { "method": "GET", "url": "{{baseUrl}}/api/cases/{{caseId}}", "description": "如果尚未进入 HOLD，等待后台自动处理后重试。" },
+          "event": [{ "listen": "test", "script": { "exec": ["pm.test('案件可查询', () => pm.response.to.have.status(200));", "const j = pm.response.json();", "pm.collectionVariables.set('caseStatus', j.status);", "pm.collectionVariables.set('reviewRevision', j.reviewRevision);"], "type": "text/javascript" } }]
+        },
+        {
+          "name": "05 获取解释工作区",
+          "request": { "method": "GET", "url": "{{baseUrl}}/api/cases/{{caseId}}/investigation/explanation-workspace" },
+          "event": [{ "listen": "test", "script": { "exec": ["pm.test('工作区可查询', () => pm.response.to.have.status(200));", "const j = pm.response.json();", "pm.expect(j.units.length, '至少一个解释单元').to.be.above(0);", "pm.collectionVariables.set('unitId', j.units[0].unitId);", "pm.collectionVariables.set('draftRevision', j.units[0].draftRevision);", "for (const issue of (j.issues || [])) {", "  if (issue.disposition === 'OPEN' && issue.issueKey && issue.issueKey.startsWith('ALERT_SCOPE_UNRESOLVED')) { pm.collectionVariables.set('scopeIssueId', issue.issueId); pm.collectionVariables.set('scopeIssueRevision', issue.revision); }", "  if (issue.disposition === 'OPEN' && issue.issueKey && issue.issueKey.startsWith('FACT_UNASSIGNED')) { pm.collectionVariables.set('factIssueId', issue.issueId); pm.collectionVariables.set('factIssueRevision', issue.revision); }", "}"], "type": "text/javascript" } }]
+        },
+        {
+          "name": "06 处置范围问题",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }, { "key": "X-XSRF-TOKEN", "value": "{{xsrfToken}}" }],
+            "body": { "mode": "raw", "raw": "{\n  \"expectedRevision\": {{scopeIssueRevision}},\n  \"disposition\": \"RESOLVED_WITH_EVIDENCE\",\n  \"reason\": \"已按监测系统当前来源版本冻结并核对全部命中交易范围\",\n  \"evidenceReference\": \"scope:{{sourceVersion}}\"\n}" },
+            "url": "{{baseUrl}}/api/cases/{{caseId}}/investigation/issues/{{scopeIssueId}}/dispositions",
+            "description": "仅当工作区存在 OPEN 的 ALERT_SCOPE_UNRESOLVED 时执行。"
+          }
+        },
+        {
+          "name": "07 采集核心流水材料",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }, { "key": "X-XSRF-TOKEN", "value": "{{xsrfToken}}" }],
+            "body": { "mode": "raw", "raw": "{\n  \"sourceSystem\": \"CORE_BANKING\",\n  \"sourceReference\": \"TXN-DOC-001\"\n}" },
+            "url": "{{baseUrl}}/api/cases/{{caseId}}/investigation/evidence/captures"
+          },
+          "event": [{ "listen": "test", "script": { "exec": ["pm.test('材料采集成功', () => pm.response.to.have.status(200));", "pm.collectionVariables.set('artifactVersionId', pm.response.json().artifactVersionId);"], "type": "text/javascript" } }]
+        },
+        {
+          "name": "08 核验材料（通用确认）",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }, { "key": "X-XSRF-TOKEN", "value": "{{xsrfToken}}" }],
+            "body": { "mode": "raw", "raw": "{\n  \"method\": \"INDEPENDENT_SOURCE_CHECK\",\n  \"observedFacts\": \"已从核心系统核对付款主体、收款主体、金额及交易附言\",\n  \"limitations\": \"仅覆盖当前冻结范围内交易\",\n  \"result\": \"CONFIRMED\",\n  \"subjectFactKey\": null\n}" },
+            "url": "{{baseUrl}}/api/cases/{{caseId}}/investigation/evidence/{{artifactVersionId}}/verifications"
+          }
+        },
+        {
+          "name": "09 刷新工作区并提取材料问题",
+          "request": { "method": "GET", "url": "{{baseUrl}}/api/cases/{{caseId}}/investigation/explanation-workspace" },
+          "event": [{ "listen": "test", "script": { "exec": ["const j = pm.response.json();", "pm.collectionVariables.set('draftRevision', j.units[0].draftRevision);", "for (const issue of (j.issues || [])) {", "  if (issue.disposition === 'OPEN' && issue.issueKey && issue.issueKey.startsWith('FACT_UNASSIGNED')) { pm.collectionVariables.set('factIssueId', issue.issueId); pm.collectionVariables.set('factIssueRevision', issue.revision); break; }", "}"], "type": "text/javascript" } }]
+        },
+        {
+          "name": "10 处置材料未分派问题",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }, { "key": "X-XSRF-TOKEN", "value": "{{xsrfToken}}" }],
+            "body": { "mode": "raw", "raw": "{\n  \"expectedRevision\": {{factIssueRevision}},\n  \"disposition\": \"RESOLVED_WITH_EVIDENCE\",\n  \"reason\": \"材料已关联到本单元六个问题并完成来源核验\",\n  \"evidenceReference\": \"core_banking:txn-doc-001\"\n}" },
+            "url": "{{baseUrl}}/api/cases/{{caseId}}/investigation/issues/{{factIssueId}}/dispositions"
+          }
+        },
+        {
+          "name": "11 获取权威退款账本金额",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/api/cases/{{caseId}}/refund-events/ledger?originalTransactionIds={{txId}}", "host": ["{{baseUrl}}"], "path": ["api", "cases", "{{caseId}}", "refund-events", "ledger"], "query": [{ "key": "originalTransactionIds", "value": "{{txId}}" }] },
+            "description": "原付款金额必须取服务端权威账本，不接受客户端覆盖。"
+          },
+          "event": [{ "listen": "test", "script": { "exec": ["pm.test('账本读取成功', () => pm.response.to.have.status(200));", "const j = pm.response.json();", "pm.collectionVariables.set('txAmount', j.totalOriginal);", "pm.expect(Number(j.totalOriginal)).to.be.above(0);"], "type": "text/javascript" } }]
+        },
+        {
+          "name": "12 保存完整解释草稿",
+          "event": [
+            { "listen": "prerequest", "script": { "exec": ["const txId = pm.collectionVariables.get('txId');", "const amount = pm.collectionVariables.get('txAmount');", "const artifactId = Number(pm.collectionVariables.get('artifactVersionId'));", "const questions = {};", "['Q1','Q2','Q3','Q4','Q5','Q6'].forEach(code => { questions[code] = { assessment:'SATISFIED', judgement:`${code} 已通过核心流水、业务关系及授权材料核验，结论有明确事实依据`, factLocation:'CORE_BANKING 流水及授权材料', factKind:'OBSERVED_FACT', verificationMethod:'INDEPENDENT_SOURCE_CHECK', limitations:'仅覆盖服务器冻结范围内的交易', artifactVersionIds:[artifactId] }; });", "const draft = { policy:{ businessRole:'境内贸易企业，自营商品交易并由买方集团统一代付', paymentStage:'DELIVERED_SETTLEMENT', payerMatchesContractBuyer:false, payeeMatchesContractSeller:true, groupRelationshipStatus:'GROUP_RELATIONSHIP_CONFIRMED' }, scope:{ reviewedTransactionIds:[txId], scopeEnumerationNote:'依据监测系统冻结范围逐笔核对全部命中交易', transactionAmounts:{[txId]:amount}, allocations:[{transactionId:txId,amount}] }, claims:{ C1:{status:'SUPPORTED',judgement:'核心流水确认实际付款账户归属集团代付主体'}, C2:{status:'SUPPORTED',judgement:'订单及交付记录确认合同买方存在付款义务'}, C3:{status:'SUPPORTED',judgement:'授权文件确认代付主体在付款时具有有效授权'}, C4:{status:'SUPPORTED',judgement:'本笔付款金额与授权覆盖范围逐笔核对一致'} }, authority:{ authorityRef:'AU-PM-001', limitAmount:amount, coveredTransactionIds:[txId], facts:[{authorityRef:'AU-PM-001',effectiveFrom:'2025-01-01',effectiveTo:'2027-12-31',factType:'GRANTED'}] }, questions, outcome:'EXPLAINED' };", "pm.variables.set('draftRequestBody', JSON.stringify({ expectedDraftRevision:Number(pm.collectionVariables.get('draftRevision')), draftJson:JSON.stringify(draft) }));"], "type": "text/javascript" } },
+            { "listen": "test", "script": { "exec": ["pm.test('草稿保存成功', () => pm.response.to.have.status(200));", "pm.collectionVariables.set('draftRevision', pm.response.json().draftRevision);"], "type": "text/javascript" } }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [{ "key": "Content-Type", "value": "application/json" }, { "key": "X-XSRF-TOKEN", "value": "{{xsrfToken}}" }],
+            "body": { "mode": "raw", "raw": "{{draftRequestBody}}" },
+            "url": "{{baseUrl}}/api/cases/{{caseId}}/investigation/units/{{unitId}}/draft"
+          }
+        },
+        {
+          "name": "13 获取当前复核依据",
+          "request": { "method": "GET", "url": "{{baseUrl}}/api/cases/{{caseId}}/investigation/review-basis" },
+          "event": [{ "listen": "test", "script": { "exec": ["pm.test('复核依据读取成功', () => pm.response.to.have.status(200));", "const j = pm.response.json();", "pm.collectionVariables.set('reviewBasisToken', j.reviewBasisToken);"], "type": "text/javascript" } }]
+        },
+        {
+          "name": "14 原子提交解释",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }, { "key": "X-XSRF-TOKEN", "value": "{{xsrfToken}}" }],
+            "body": { "mode": "raw", "raw": "{\n  \"expectedDraftRevision\": {{draftRevision}},\n  \"reviewBasisToken\": \"{{reviewBasisToken}}\",\n  \"idempotencyKey\": \"PM-SUBMIT-{{$guid}}\"\n}" },
+            "url": "{{baseUrl}}/api/cases/{{caseId}}/investigation/units/{{unitId}}/submissions"
+          },
+          "event": [{ "listen": "test", "script": { "exec": ["pm.test('解释提交成功', () => pm.response.to.have.status(200));", "const j = pm.response.json();", "pm.expect(j.state).to.eql('CURRENT');", "pm.collectionVariables.set('submissionId', j.submissionId);", "pm.collectionVariables.set('reviewBasisToken', j.reviewBasisToken);"], "type": "text/javascript" } }]
+        },
+        {
+          "name": "15 复核预检",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }, { "key": "X-XSRF-TOKEN", "value": "{{xsrfToken}}" }],
+            "body": { "mode": "raw", "raw": "{\n  \"decision\": \"EXCLUDE_FALSE_POSITIVE\",\n  \"reviewBasisToken\": \"{{reviewBasisToken}}\",\n  \"continuationTasks\": []\n}" },
+            "url": "{{baseUrl}}/api/reviews/{{caseId}}/prechecks",
+            "description": "先执行复核员登录和获取 CSRF，再刷新 review-basis。"
+          },
+          "event": [{ "listen": "test", "script": { "exec": ["pm.test('预检通过 HTTP 校验', () => pm.response.to.have.status(200));", "const j = pm.response.json();", "pm.test('依据令牌仍为当前', () => pm.expect(j.tokenCurrent).to.eql(true));"], "type": "text/javascript" } }]
+        },
+        {
+          "name": "16 最终排除复核",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }, { "key": "X-XSRF-TOKEN", "value": "{{xsrfToken}}" }],
+            "body": { "mode": "raw", "raw": "{\n  \"reviewerRiskLevel\": \"低风险\",\n  \"decision\": \"EXCLUDE_FALSE_POSITIVE\",\n  \"reasonCode\": \"VERIFIED_LEGITIMATE_PURPOSE\",\n  \"comment\": \"已独立复核交易范围、付款授权及来源材料，合理业务解释成立。\",\n  \"expectedReviewRevision\": {{reviewRevision}},\n  \"requiredItems\": [],\n  \"dueAt\": null,\n  \"assignedTo\": null,\n  \"assignedUnit\": null,\n  \"reviewBasisToken\": \"{{reviewBasisToken}}\",\n  \"continuationTasks\": []\n}" },
+            "url": "{{baseUrl}}/api/reviews/{{caseId}}",
+            "description": "仅在案件为 HOLD，且当前用户为独立 reviewer 时执行。"
+          },
+          "event": [{ "listen": "test", "script": { "exec": ["pm.test('最终复核提交成功', () => pm.response.to.have.status(200));"], "type": "text/javascript" } }]
+        }
+      ]
+    },
+    {
+      "name": "02-对抗回归探针",
+      "description": "这些请求会有意使提交失效或制造冲突。建议每组使用新的正向基线案件。",
+      "item": [
+        {
+          "name": "P01 错误来源版本不可冻结",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }, { "key": "X-XSRF-TOKEN", "value": "{{xsrfToken}}" }],
+            "body": { "mode": "raw", "raw": "{\n  \"triggerTransactionIds\": [\"{{txId}}\"],\n  \"auxiliaryTransactionIds\": [],\n  \"sourceVersion\": \"stale-client-version\"\n}" },
+            "url": "{{baseUrl}}/api/alerts/{{alertId}}/scope/freeze"
+          },
+          "event": [{ "listen": "test", "script": { "exec": ["pm.test('过期来源版本被拒绝', () => pm.response.to.have.status(400));"], "type": "text/javascript" } }]
+        },
+        {
+          "name": "P02 非管理员不可冻结范围",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }, { "key": "X-XSRF-TOKEN", "value": "{{xsrfToken}}" }],
+            "body": { "mode": "raw", "raw": "{\n  \"triggerTransactionIds\": [\"{{txId}}\"],\n  \"auxiliaryTransactionIds\": [],\n  \"sourceVersion\": \"{{sourceVersion}}\"\n}" },
+            "url": "{{baseUrl}}/api/alerts/{{alertId}}/scope/freeze",
+            "description": "先执行分析员登录并刷新 CSRF。"
+          },
+          "event": [{ "listen": "test", "script": { "exec": ["pm.test('ANALYST 被拒绝', () => pm.response.to.have.status(403));"], "type": "text/javascript" } }]
+        },
+        {
+          "name": "P03 新的 Q1 否定核验使旧提交失效",
+          "event": [{ "listen": "prerequest", "script": { "exec": ["pm.collectionVariables.set('oldReviewBasisToken', pm.collectionVariables.get('reviewBasisToken'));"], "type": "text/javascript" } }],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }, { "key": "X-XSRF-TOKEN", "value": "{{xsrfToken}}" }],
+            "body": { "mode": "raw", "raw": "{\n  \"method\": \"INDEPENDENT_SOURCE_CHECK\",\n  \"observedFacts\": \"最新独立来源未能确认 Q1 付款主体身份，原通用核验不再足以支持该事实\",\n  \"limitations\": \"尚待付款行书面确认\",\n  \"result\": \"UNRESOLVED\",\n  \"subjectFactKey\": \"Q1\"\n}" },
+            "url": "{{baseUrl}}/api/cases/{{caseId}}/investigation/evidence/{{artifactVersionId}}/verifications"
+          },
+          "event": [{ "listen": "test", "script": { "exec": ["pm.test('否定核验登记成功', () => pm.response.to.have.status(200));"], "type": "text/javascript" } }]
+        },
+        {
+          "name": "P04 检查旧 CURRENT 已清除",
+          "request": { "method": "GET", "url": "{{baseUrl}}/api/cases/{{caseId}}/investigation/explanation-workspace" },
+          "event": [{ "listen": "test", "script": { "exec": ["pm.test('工作区读取成功', () => pm.response.to.have.status(200));", "const j = pm.response.json();", "const u = j.units.find(x => String(x.unitId) === String(pm.collectionVariables.get('unitId')));", "pm.test('旧提交不再 CURRENT', () => pm.expect(u.hasCurrentSubmission).to.eql(false));", "pm.collectionVariables.set('draftRevision', u.draftRevision);"], "type": "text/javascript" } }]
+        },
+        {
+          "name": "P05 手工声明不可伪造 POSTED",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }, { "key": "X-XSRF-TOKEN", "value": "{{xsrfToken}}" }],
+            "body": { "mode": "raw", "raw": "{\n  \"sourceSystem\": \"CORE_BANKING\",\n  \"externalEventId\": \"PM-MANUAL-POSTED-{{$guid}}\",\n  \"eventStatus\": \"POSTED\",\n  \"payerSubject\": \"客户主体\",\n  \"payeeSubject\": \"原付款主体\",\n  \"payeeAccountRef\": \"ACCT-A\",\n  \"amount\": 100.00,\n  \"currency\": \"CNY\",\n  \"effectiveAt\": \"2026-09-09T12:00:00\",\n  \"allocations\": []\n}" },
+            "url": "{{baseUrl}}/api/cases/{{caseId}}/refund-events"
+          },
+          "event": [{ "listen": "test", "script": { "exec": ["pm.test('手工 POSTED 被拒绝', () => pm.response.to.have.status(400));", "pm.expect(pm.response.text()).to.include('REQUESTED');"], "type": "text/javascript" } }]
+        },
+        {
+          "name": "P06 幂等登记退款（首次）",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }, { "key": "X-XSRF-TOKEN", "value": "{{xsrfToken}}" }],
+            "body": { "mode": "raw", "raw": "{\n  \"sourceSystem\": \"MANUAL\",\n  \"externalEventId\": \"{{refundEventId}}\",\n  \"eventStatus\": \"REQUESTED\",\n  \"payerSubject\": \"客户主体\",\n  \"payeeSubject\": \"原付款主体\",\n  \"payeeAccountRef\": \"ACCT-A\",\n  \"amount\": 100.00,\n  \"currency\": \"CNY\",\n  \"effectiveAt\": \"2026-09-09T12:00:00\",\n  \"allocations\": []\n}" },
+            "url": "{{baseUrl}}/api/cases/{{caseId}}/refund-events"
+          },
+          "event": [{ "listen": "test", "script": { "exec": ["pm.test('首次登记成功', () => pm.response.to.have.status(200));", "pm.test('不是幂等重放', () => pm.expect(pm.response.json().idempotentReplay).to.eql(false));"], "type": "text/javascript" } }]
+        },
+        {
+          "name": "P07 完全相同请求为幂等重放",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }, { "key": "X-XSRF-TOKEN", "value": "{{xsrfToken}}" }],
+            "body": { "mode": "raw", "raw": "{\n  \"sourceSystem\": \"MANUAL\",\n  \"externalEventId\": \"{{refundEventId}}\",\n  \"eventStatus\": \"REQUESTED\",\n  \"payerSubject\": \"客户主体\",\n  \"payeeSubject\": \"原付款主体\",\n  \"payeeAccountRef\": \"ACCT-A\",\n  \"amount\": 100.00,\n  \"currency\": \"CNY\",\n  \"effectiveAt\": \"2026-09-09T12:00:00\",\n  \"allocations\": []\n}" },
+            "url": "{{baseUrl}}/api/cases/{{caseId}}/refund-events"
+          },
+          "event": [{ "listen": "test", "script": { "exec": ["pm.test('幂等重放返回成功', () => pm.response.to.have.status(200));", "pm.test('标记为幂等重放', () => pm.expect(pm.response.json().idempotentReplay).to.eql(true));"], "type": "text/javascript" } }]
+        },
+        {
+          "name": "P08 仅更换收款账户必须冲突",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }, { "key": "X-XSRF-TOKEN", "value": "{{xsrfToken}}" }],
+            "body": { "mode": "raw", "raw": "{\n  \"sourceSystem\": \"MANUAL\",\n  \"externalEventId\": \"{{refundEventId}}\",\n  \"eventStatus\": \"REQUESTED\",\n  \"payerSubject\": \"客户主体\",\n  \"payeeSubject\": \"原付款主体\",\n  \"payeeAccountRef\": \"ACCT-B\",\n  \"amount\": 100.00,\n  \"currency\": \"CNY\",\n  \"effectiveAt\": \"2026-09-09T12:00:00\",\n  \"allocations\": []\n}" },
+            "url": "{{baseUrl}}/api/cases/{{caseId}}/refund-events"
+          },
+          "event": [{ "listen": "test", "script": { "exec": ["pm.test('账户变化触发幂等冲突', () => pm.response.to.have.status(409));"], "type": "text/javascript" } }]
+        },
+        {
+          "name": "P09 篡改原金额参数无效",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/api/cases/{{caseId}}/refund-events/ledger?originalTransactionIds={{txId}}&originalAmounts=99999999", "host": ["{{baseUrl}}"], "path": ["api", "cases", "{{caseId}}", "refund-events", "ledger"], "query": [{ "key": "originalTransactionIds", "value": "{{txId}}" }, { "key": "originalAmounts", "value": "99999999", "description": "故意注入的无效客户端金额" }] }
+          },
+          "event": [{ "listen": "test", "script": { "exec": ["pm.test('账本仍可读取', () => pm.response.to.have.status(200));", "pm.test('客户端金额未覆盖权威值', () => pm.expect(String(pm.response.json().totalOriginal)).to.eql(String(pm.collectionVariables.get('txAmount'))));"], "type": "text/javascript" } }]
+        },
+        {
+          "name": "P10 新退款导致旧复核令牌失效",
+          "event": [{ "listen": "prerequest", "script": { "exec": ["pm.collectionVariables.set('oldReviewBasisToken', pm.collectionVariables.get('reviewBasisToken'));"], "type": "text/javascript" } }],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }, { "key": "X-XSRF-TOKEN", "value": "{{xsrfToken}}" }],
+            "body": { "mode": "raw", "raw": "{\n  \"sourceSystem\": \"MANUAL\",\n  \"externalEventId\": \"PM-INVALIDATE-{{$guid}}\",\n  \"eventStatus\": \"REQUESTED\",\n  \"payerSubject\": \"客户主体\",\n  \"payeeSubject\": \"原付款主体\",\n  \"payeeAccountRef\": \"ACCT-A\",\n  \"amount\": 1.00,\n  \"currency\": \"CNY\",\n  \"effectiveAt\": \"2026-09-09T12:00:00\",\n  \"allocations\": []\n}" },
+            "url": "{{baseUrl}}/api/cases/{{caseId}}/refund-events"
+          },
+          "event": [{ "listen": "test", "script": { "exec": ["pm.test('新退款登记成功', () => pm.response.to.have.status(200));"], "type": "text/javascript" } }]
+        },
+        {
+          "name": "P11 用旧令牌执行复核预检",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }, { "key": "X-XSRF-TOKEN", "value": "{{xsrfToken}}" }],
+            "body": { "mode": "raw", "raw": "{\n  \"decision\": \"EXCLUDE_FALSE_POSITIVE\",\n  \"reviewBasisToken\": \"{{oldReviewBasisToken}}\",\n  \"continuationTasks\": []\n}" },
+            "url": "{{baseUrl}}/api/reviews/{{caseId}}/prechecks",
+            "description": "切换到 reviewer 后执行。"
+          },
+          "event": [{ "listen": "test", "script": { "exec": ["pm.test('预检响应成功', () => pm.response.to.have.status(200));", "pm.test('旧令牌已失效', () => pm.expect(pm.response.json().tokenCurrent).to.eql(false));"], "type": "text/javascript" } }]
+        },
+        {
+          "name": "P12 Claim C3 被否认",
+          "request": {
+            "method": "PUT",
+            "header": [{ "key": "Content-Type", "value": "application/json" }, { "key": "X-XSRF-TOKEN", "value": "{{xsrfToken}}" }],
+            "body": { "mode": "raw", "raw": "{\n  \"claims\": [{\n    \"claimCode\": \"C3\",\n    \"status\": \"CONTRADICTED\",\n    \"importance\": \"DECISION_CRITICAL\",\n    \"judgement\": \"付款主体明确否认该笔交易存在有效代付授权\",\n    \"methodNote\": \"电话回访及书面确认\",\n    \"limitations\": \"等待补充授权原件\",\n    \"notApplicableReason\": null,\n    \"links\": []\n  }]\n}" },
+            "url": "{{baseUrl}}/api/cases/{{caseId}}/investigation/units/{{unitId}}/claims"
+          },
+          "event": [{ "listen": "test", "script": { "exec": ["pm.test('Claim 否认登记成功', () => pm.response.to.have.status(200));"], "type": "text/javascript" } }]
+        },
+        {
+          "name": "P13 授权事实缺失草稿（提交前置）",
+          "event": [
+            { "listen": "prerequest", "script": { "exec": ["const txId = pm.collectionVariables.get('txId');", "const amount = pm.collectionVariables.get('txAmount');", "const artifactId = Number(pm.collectionVariables.get('artifactVersionId'));", "const questions = {};", "['Q1','Q2','Q3','Q4','Q5','Q6'].forEach(code => { questions[code] = {assessment:'SATISFIED',judgement:`${code} 已完成核验且仅对授权时间字段进行本次对抗`,factLocation:'CORE_BANKING 流水及授权材料',factKind:'OBSERVED_FACT',verificationMethod:'INDEPENDENT_SOURCE_CHECK',limitations:'仅覆盖冻结范围',artifactVersionIds:[artifactId]}; });", "const draft = { policy:{businessRole:'集团代付',paymentStage:'DELIVERED_SETTLEMENT',payerMatchesContractBuyer:false,payeeMatchesContractSeller:true,groupRelationshipStatus:'GROUP_RELATIONSHIP_CONFIRMED'}, scope:{reviewedTransactionIds:[txId],scopeEnumerationNote:'已核对冻结范围',transactionAmounts:{[txId]:amount},allocations:[{transactionId:txId,amount}]}, claims:{C1:{status:'SUPPORTED',judgement:'已确认付款主体'},C2:{status:'SUPPORTED',judgement:'已确认付款义务'},C3:{status:'SUPPORTED',judgement:'声称存在授权'},C4:{status:'SUPPORTED',judgement:'声称金额受覆盖'}}, authority:{authorityRef:'AU-MISSING',limitAmount:amount,coveredTransactionIds:[txId]}, questions, outcome:'EXPLAINED' };", "pm.variables.set('invalidDraftBody', JSON.stringify({expectedDraftRevision:Number(pm.collectionVariables.get('draftRevision')),draftJson:JSON.stringify(draft)}));"], "type": "text/javascript" } },
+            { "listen": "test", "script": { "exec": ["pm.test('缺失事实草稿保存成功以进入提交门禁', () => pm.response.to.have.status(200));", "pm.collectionVariables.set('draftRevision', pm.response.json().draftRevision);"], "type": "text/javascript" } }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [{ "key": "Content-Type", "value": "application/json" }, { "key": "X-XSRF-TOKEN", "value": "{{xsrfToken}}" }],
+            "body": { "mode": "raw", "raw": "{{invalidDraftBody}}" },
+            "url": "{{baseUrl}}/api/cases/{{caseId}}/investigation/units/{{unitId}}/draft",
+            "description": "在独立基线案件执行。保存可能成功，但后续提交必须因付款时点授权事实缺失而失败。"
+          }
+        },
+        {
+          "name": "P14 提交缺失授权事实必须失败",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }, { "key": "X-XSRF-TOKEN", "value": "{{xsrfToken}}" }],
+            "body": { "mode": "raw", "raw": "{\n  \"expectedDraftRevision\": {{draftRevision}},\n  \"reviewBasisToken\": \"{{reviewBasisToken}}\",\n  \"idempotencyKey\": \"PM-MISSING-AUTH-{{$guid}}\"\n}" },
+            "url": "{{baseUrl}}/api/cases/{{caseId}}/investigation/units/{{unitId}}/submissions"
+          },
+          "event": [{ "listen": "test", "script": { "exec": ["pm.test('缺失付款时点授权事实被拒绝', () => pm.response.to.have.status(400));"], "type": "text/javascript" } }]
+        },
+        {
+          "name": "P15 保存已过期授权草稿（提交前置）",
+          "event": [
+            { "listen": "prerequest", "script": { "exec": ["const txId = pm.collectionVariables.get('txId');", "const amount = pm.collectionVariables.get('txAmount');", "const artifactId = Number(pm.collectionVariables.get('artifactVersionId'));", "const questions = {};", "['Q1','Q2','Q3','Q4','Q5','Q6'].forEach(code => { questions[code] = {assessment:'SATISFIED',judgement:`${code} 已完成核验且仅对授权有效期进行本次对抗`,factLocation:'CORE_BANKING 流水及授权材料',factKind:'OBSERVED_FACT',verificationMethod:'INDEPENDENT_SOURCE_CHECK',limitations:'仅覆盖冻结范围',artifactVersionIds:[artifactId]}; });", "const draft = {policy:{businessRole:'集团代付',paymentStage:'DELIVERED_SETTLEMENT',payerMatchesContractBuyer:false,payeeMatchesContractSeller:true,groupRelationshipStatus:'GROUP_RELATIONSHIP_CONFIRMED'},scope:{reviewedTransactionIds:[txId],scopeEnumerationNote:'已核对冻结范围',transactionAmounts:{[txId]:amount},allocations:[{transactionId:txId,amount}]},claims:{C1:{status:'SUPPORTED',judgement:'已确认付款主体'},C2:{status:'SUPPORTED',judgement:'已确认付款义务'},C3:{status:'SUPPORTED',judgement:'声称存在授权'},C4:{status:'SUPPORTED',judgement:'声称金额受覆盖'}},authority:{authorityRef:'AU-EXPIRED',limitAmount:amount,coveredTransactionIds:[txId],facts:[{authorityRef:'AU-EXPIRED',effectiveFrom:'2020-01-01',effectiveTo:'2020-12-31',factType:'GRANTED'}]},questions,outcome:'EXPLAINED'};", "pm.variables.set('expiredDraftBody', JSON.stringify({expectedDraftRevision:Number(pm.collectionVariables.get('draftRevision')),draftJson:JSON.stringify(draft)}));"], "type": "text/javascript" } },
+            { "listen": "test", "script": { "exec": ["pm.test('过期授权草稿保存成功以进入提交门禁', () => pm.response.to.have.status(200));", "pm.collectionVariables.set('draftRevision', pm.response.json().draftRevision);"], "type": "text/javascript" } }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [{ "key": "Content-Type", "value": "application/json" }, { "key": "X-XSRF-TOKEN", "value": "{{xsrfToken}}" }],
+            "body": { "mode": "raw", "raw": "{{expiredDraftBody}}" },
+            "url": "{{baseUrl}}/api/cases/{{caseId}}/investigation/units/{{unitId}}/draft",
+            "description": "请在另一独立基线案件执行；保存后刷新 review-basis，再执行 P16。"
+          }
+        },
+        {
+          "name": "P16 提交已过期授权必须失败",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }, { "key": "X-XSRF-TOKEN", "value": "{{xsrfToken}}" }],
+            "body": { "mode": "raw", "raw": "{\n  \"expectedDraftRevision\": {{draftRevision}},\n  \"reviewBasisToken\": \"{{reviewBasisToken}}\",\n  \"idempotencyKey\": \"PM-EXPIRED-AUTH-{{$guid}}\"\n}" },
+            "url": "{{baseUrl}}/api/cases/{{caseId}}/investigation/units/{{unitId}}/submissions"
+          },
+          "event": [{ "listen": "test", "script": { "exec": ["pm.test('过期授权被提交门禁拒绝', () => pm.response.to.have.status(400));", "pm.test('错误说明涉及授权有效性', () => pm.expect(pm.response.text()).to.match(/授权|过期|INVALID/i));"], "type": "text/javascript" } }]
+        },
+        {
+          "name": "P17 分配全部权威原付款金额",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }, { "key": "X-XSRF-TOKEN", "value": "{{xsrfToken}}" }],
+            "body": { "mode": "raw", "raw": "{\n  \"sourceSystem\": \"MANUAL\",\n  \"externalEventId\": \"PM-FULL-ALLOC-{{$guid}}\",\n  \"eventStatus\": \"REQUESTED\",\n  \"payerSubject\": \"客户主体\",\n  \"payeeSubject\": \"原付款主体\",\n  \"payeeAccountRef\": \"ACCT-A\",\n  \"amount\": {{txAmount}},\n  \"currency\": \"CNY\",\n  \"effectiveAt\": \"2026-09-09T12:00:00\",\n  \"allocations\": [{\n    \"originalTransactionId\": \"{{txId}}\",\n    \"originalAllocationKey\": \"FULL\",\n    \"allocatedAmount\": {{txAmount}},\n    \"returnedObligationRef\": null\n  }]\n}" },
+            "url": "{{baseUrl}}/api/cases/{{caseId}}/refund-events",
+            "description": "在尚无退款分配的独立案件执行。"
+          },
+          "event": [{ "listen": "test", "script": { "exec": ["pm.test('全额分配成功', () => pm.response.to.have.status(200));"], "type": "text/javascript" } }]
+        },
+        {
+          "name": "P18 累计再分配 0.01 必须失败",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }, { "key": "X-XSRF-TOKEN", "value": "{{xsrfToken}}" }],
+            "body": { "mode": "raw", "raw": "{\n  \"sourceSystem\": \"MANUAL\",\n  \"externalEventId\": \"PM-OVER-ALLOC-{{$guid}}\",\n  \"eventStatus\": \"REQUESTED\",\n  \"payerSubject\": \"客户主体\",\n  \"payeeSubject\": \"原付款主体\",\n  \"payeeAccountRef\": \"ACCT-A\",\n  \"amount\": 0.01,\n  \"currency\": \"CNY\",\n  \"effectiveAt\": \"2026-09-09T12:01:00\",\n  \"allocations\": [{\n    \"originalTransactionId\": \"{{txId}}\",\n    \"originalAllocationKey\": \"OVER\",\n    \"allocatedAmount\": 0.01,\n    \"returnedObligationRef\": null\n  }]\n}" },
+            "url": "{{baseUrl}}/api/cases/{{caseId}}/refund-events"
+          },
+          "event": [{ "listen": "test", "script": { "exec": ["pm.test('累计超额退款被拒绝', () => pm.response.to.have.status(400));", "pm.expect(pm.response.text()).to.match(/累计|超过|RF-14/);"], "type": "text/javascript" } }]
+        }
+      ]
+    },
+    {
+      "name": "03-辅助查询",
+      "item": [
+        { "name": "预警收件箱", "request": { "method": "GET", "url": "{{baseUrl}}/api/alerts" } },
+        { "name": "案件列表", "request": { "method": "GET", "url": "{{baseUrl}}/api/cases" } },
+        { "name": "待复核案件", "request": { "method": "GET", "url": "{{baseUrl}}/api/reviews/pending" } },
+        { "name": "案件审计日志", "request": { "method": "GET", "url": "{{baseUrl}}/api/cases/{{caseId}}/logs" } },
+        { "name": "案件事件流", "request": { "method": "GET", "url": "{{baseUrl}}/api/cases/{{caseId}}/events" } },
+        { "name": "解释政策目录", "request": { "method": "GET", "url": "{{baseUrl}}/api/cases/{{caseId}}/investigation/explanation-policies" } },
+        { "name": "读取 Claims", "request": { "method": "GET", "url": "{{baseUrl}}/api/cases/{{caseId}}/investigation/units/{{unitId}}/claims" } },
+        { "name": "下一步核验建议", "request": { "method": "GET", "url": "{{baseUrl}}/api/cases/{{caseId}}/investigation/units/{{unitId}}/next-actions" } }
+      ]
+    }
+  ]
+}

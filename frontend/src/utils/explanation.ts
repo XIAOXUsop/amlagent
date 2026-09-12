@@ -10,11 +10,7 @@ export type QuestionAssessment = 'SATISFIED' | 'NOT_SATISFIED' | 'UNKNOWN' | 'NO
 
 export type IssueSeverity = 'INTEGRITY_BLOCKER' | 'DECISION_CRITICAL' | 'CONTEXT_GAP' | 'FUTURE_OBLIGATION'
 
-export type IssueDisposition =
-  | 'OPEN'
-  | 'RESOLVED_WITH_EVIDENCE'
-  | 'NOT_RELEVANT_WITH_REASON'
-  | 'DISCLOSED_UNRESOLVED'
+export type IssueDisposition = 'OPEN' | 'RESOLVED_WITH_EVIDENCE' | 'NOT_RELEVANT_WITH_REASON' | 'DISCLOSED_UNRESOLVED'
 
 /** 案件层前提（与后端 CaseContext / 设计样例 contextDefaults 对应）。 */
 export interface CaseDecisionContext {
@@ -47,31 +43,37 @@ export interface Decision {
 
 /** 决策表（§7.2）：与 ExplanationDecisionRules.evaluate 同一口径。 */
 export function evaluateDecision(context: CaseDecisionContext, units: UnitDecisionInput[]): Decision {
-  const eligible = context.caseStatusHold
-    && context.scopeEnumerated && context.adoptedFactsUsable
-    && context.reviewBasisCurrent && context.policyApplicable
-    && context.reviewerIndependent && context.otherScenarioGateSatisfied
-    && units.length > 0 && units.every((unit) => unit.assessmentValid)
-  const taskGate = !context.hasOpenDecisionSupportEdd
-    || (context.obligationTransferReady && context.continuationPlanReady)
+  const eligible =
+    context.caseStatusHold &&
+    context.scopeEnumerated &&
+    context.adoptedFactsUsable &&
+    context.reviewBasisCurrent &&
+    context.policyApplicable &&
+    context.reviewerIndependent &&
+    context.otherScenarioGateSatisfied &&
+    units.length > 0 &&
+    units.every((unit) => unit.assessmentValid)
+  const taskGate =
+    !context.hasOpenDecisionSupportEdd || (context.obligationTransferReady && context.continuationPlanReady)
   const followupReady = (unit: UnitDecisionInput) =>
-    !(unit.followupRequired || unit.outcome === 'UNRESOLVED' || unit.criticalUnknown)
-      || context.continuationPlanReady
+    !(unit.followupRequired || unit.outcome === 'UNRESOLVED' || unit.criticalUnknown) || context.continuationPlanReady
   const explained = (unit: UnitDecisionInput) =>
     unit.outcome === 'EXPLAINED' && !unit.criticalUnknown && followupReady(unit)
   const evaluableForSuspicion = (unit: UnitDecisionInput) => {
     if (unit.outcome === 'EXPLAINED') return explained(unit)
     if (unit.outcome === 'SUSPICIOUS') {
-      return unit.suspicionBasisComplete && followupReady(unit)
-        && (!unit.criticalUnknown || unit.unresolvedDisclosed)
+      return unit.suspicionBasisComplete && followupReady(unit) && (!unit.criticalUnknown || unit.unresolvedDisclosed)
     }
     return unit.unresolvedDisclosed && followupReady(unit)
   }
   return {
     canExclude: Boolean(eligible && taskGate && units.length > 0 && units.every(explained)),
-    canConfirm: Boolean(eligible && taskGate
-      && units.some((unit) => unit.outcome === 'SUSPICIOUS' && unit.suspicionBasisComplete)
-      && units.every(evaluableForSuspicion)),
+    canConfirm: Boolean(
+      eligible &&
+      taskGate &&
+      units.some((unit) => unit.outcome === 'SUSPICIOUS' && unit.suspicionBasisComplete) &&
+      units.every(evaluableForSuspicion),
+    ),
   }
 }
 

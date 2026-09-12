@@ -4,6 +4,8 @@ import com.bank.aml.datasource.entity.AuditLogEntity;
 import com.bank.aml.datasource.repository.AuditLogRepository;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.SimpleTransactionStatus;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
@@ -11,16 +13,16 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 class AuditServiceTest {
 
     private final AuditLogRepository repository = mock(AuditLogRepository.class);
-    private final org.springframework.transaction.PlatformTransactionManager txManager =
-            mock(org.springframework.transaction.PlatformTransactionManager.class);
+
+    private final PlatformTransactionManager txManager = mock(PlatformTransactionManager.class);
 
     private AuditService audit() {
-        org.mockito.Mockito.when(txManager.getTransaction(org.mockito.ArgumentMatchers.any()))
-                .thenReturn(new org.springframework.transaction.support.SimpleTransactionStatus());
+        when(txManager.getTransaction(any())).thenReturn(new SimpleTransactionStatus());
         return new AuditService(repository, txManager);
     }
 
@@ -56,6 +58,7 @@ class AuditServiceTest {
         doThrow(new IllegalStateException("db down")).when(repository).save(any());
 
         assertThatCode(() -> audit().record("a", "LOGIN_SUCCESS", null, null, "SUCCESS", null, null))
-                .doesNotThrowAnyException();
+            .doesNotThrowAnyException();
     }
+
 }

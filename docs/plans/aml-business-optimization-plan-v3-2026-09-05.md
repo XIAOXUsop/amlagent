@@ -1,8 +1,8 @@
 # 反洗钱尽调业务优化详细计划书 v3
 
-编制日期：2026-09-05。  
-项目：`D:\JCode`，AML 智能反洗钱尽调 Agent 平台。  
-依据：[本轮修改验收](../reviews/remediation-acceptance-v3-2026-09-05.md)、[业务前沿调研与差距分析](../research/aml-business-frontier-2026-09-05.md)。  
+编制日期：2026-09-05。
+项目：`D:\JCode`，AML 智能反洗钱尽调 Agent 平台。
+依据：[本轮修改验收](../reviews/remediation-acceptance-v3-2026-09-05.md)、[业务前沿调研与差距分析](../research/aml-business-frontier-2026-09-05.md)。
 状态：**可供实施的业务优化方案；本文件中的新增业务功能、迁移和指标目标尚未交付或达成。**
 
 ## 1. 总体建议

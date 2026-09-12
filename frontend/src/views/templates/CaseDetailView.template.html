@@ -1,0 +1,811 @@
+<div v-if="detailLoading" class="detail-loading">
+  <el-icon class="is-loading load-icon"><RefreshRight /></el-icon>
+  <span>正在加载工单…</span>
+</div>
+<div v-else-if="loadError" class="detail-error">
+  <div class="err-mark">!</div>
+  <p class="err-msg">工单加载失败，可能是工单不存在或网络异常。</p>
+  <el-button type="primary" @click="retryLoad">重新加载</el-button>
+</div>
+<div v-else-if="caseItem" class="detail">
+  <div class="detail-bar">
+    <el-button size="small" @click="emit('back')">
+      <el-icon><Back /></el-icon>
+      <span>返回列表</span>
+    </el-button>
+    <div class="bar-right">
+      <el-button size="small" :loading="dossierLoading" @click="handleDossierDownload">
+        <el-icon><Download /></el-icon>
+        <span>导出调查档案</span>
+      </el-button>
+      <el-button v-if="canProcess" size="small" type="primary" @click="handleProcess">
+        <el-icon><VideoPlay /></el-icon>
+        <span>开始调查</span>
+      </el-button>
+      <el-button v-if="canRetry" size="small" type="warning" @click="handleRetry">
+        <el-icon><RefreshRight /></el-icon>
+        <span>人工重试</span>
+      </el-button>
+      <el-tag :type="statusMeta[caseItem.status]?.type ?? 'info'" size="large" effect="dark" round>
+        {{ statusMeta[caseItem.status]?.text ?? caseItem.status }}
+      </el-tag>
+      <span v-if="report?.riskLevel" class="rk" :class="riskMeta[report.riskLevel]?.cls"> {{ report.riskLevel }} </span>
+    </div>
+  </div>
+
+  <div class="card">
+    <h3 class="card-title screening-title">
+      可解释制裁筛查
+      <el-tag
+        v-if="sanctionScreening"
+        size="small"
+        :type="
+            sanctionScreening.status === 'CONFIRMED_MATCH'
+              ? 'danger'
+              : sanctionScreening.status === 'REVIEW_REQUIRED'
+                ? 'warning'
+                : 'success'
+          "
+      >
+        {{ sanctionScreening.status === 'CONFIRMED_MATCH' ? '存在确定命中' : sanctionScreening.status ===
+        'REVIEW_REQUIRED' ? '需要人工核验' : '未发现命中' }}
+      </el-tag>
+    </h3>
+    <div v-if="screeningLoading" class="log-empty">正在核验名单候选…</div>
+    <div v-else-if="!sanctionScreening" class="log-empty">筛查服务暂不可用，不影响已归档的尽调报告。</div>
+    <template v-else>
+      <div class="screening-meta">
+        数据源 {{ sanctionScreening.sourceSystem }} / {{ sanctionScreening.sourceVersion }} · {{
+        fmtDateTime(sanctionScreening.screenedAt) }}
+      </div>
+      <div v-if="sanctionScreening.candidates.length === 0" class="screening-empty">未召回同名或同证件号候选</div>
+      <div
+        v-for="candidate in sanctionScreening.candidates"
+        :key="`${candidate.listType}-${candidate.candidateName}`"
+        class="candidate-row"
+      >
+        <div class="candidate-score" :class="`score-${candidate.decision.toLowerCase()}`">{{ candidate.score }}</div>
+        <div class="candidate-main">
+          <div class="candidate-head">
+            <strong>{{ candidate.candidateName }}</strong>
+            <el-tag size="small" :type="screeningTagType(candidate.decision)" effect="plain">
+              {{ screeningDecisionText(candidate.decision) }}
+            </el-tag>
+            <span class="candidate-list">{{ candidate.listType }} · 级别 {{ candidate.severity }}</span>
+          </div>
+          <div class="candidate-explain">{{ candidate.explanation }}</div>
+          <div v-if="candidate.reviewDecision" class="candidate-review">
+            <strong>人工核验：</strong>
+            {{ candidate.reviewDecision === 'CONFIRM' ? '确认命中' : candidate.reviewDecision === 'DISMISS' ? '已排除' :
+            '等待补充材料' }} · v{{ candidate.reviewRevision }} · {{ candidate.reviewedBy }} · {{
+            fmtDateTime(candidate.reviewedAt) }}
+            <span v-if="candidate.reviewComment">（{{ candidate.reviewComment }}）</span>
+          </div>
+          <div class="candidate-foot">
+            <span>身份标识 {{ candidate.identityMasked }}</span>
+            <span v-for="code in candidate.reasonCodes" :key="code" class="code-chip info">{{ code }}</span>
+          </div>
+          <div v-if="canReviewSanctions" class="candidate-actions">
+            <el-button
+              size="small"
+              type="danger"
+              plain
+              :loading="reviewingFingerprint === candidate.candidateFingerprint"
+              @click="handleCandidateReview(candidate, 'CONFIRM')"
+              >确认命中</el-button
+            >
+            <el-button
+              size="small"
+              type="success"
+              plain
+              :disabled="!!reviewingFingerprint"
+              @click="handleCandidateReview(candidate, 'DISMISS')"
+              >排除候选</el-button
+            >
+            <el-button
+              size="small"
+              type="warning"
+              plain
+              :disabled="!!reviewingFingerprint"
+              @click="handleCandidateReview(candidate, 'REQUEST_MORE_INFO')"
+              >补充材料</el-button
+            >
+          </div>
+        </div>
+      </div>
+    </template>
+  </div>
+
+  <div class="card">
+    <h3 class="card-title">工单 #{{ caseItem.id }} · {{ caseItem.customerName }}（{{ caseItem.customerId }}）</h3>
+    <el-descriptions :column="3" border size="small">
+      <el-descriptions-item label="预警规则">{{ caseItem.alertRule }}</el-descriptions-item>
+      <el-descriptions-item label="模型原始评级">
+        <span v-if="caseItem.rawRiskLevel" class="rk" :class="riskMeta[caseItem.rawRiskLevel]?.cls"
+          >{{ caseItem.rawRiskLevel }}</span
+        >
+        <span v-else>-</span>
+      </el-descriptions-item>
+      <el-descriptions-item label="最终评级">
+        <span v-if="caseItem.riskLevel" class="rk" :class="riskMeta[caseItem.riskLevel]?.cls"
+          >{{ caseItem.riskLevel }}</span
+        >
+        <span v-else>-</span>
+      </el-descriptions-item>
+      <el-descriptions-item label="执行版本"
+        ><span class="mono-num">v{{ caseItem.executionVersion }}</span></el-descriptions-item
+      >
+      <el-descriptions-item label="复核版本"
+        ><span class="mono-num">v{{ caseItem.reviewRevision }}</span></el-descriptions-item
+      >
+      <el-descriptions-item label="人工处置"
+        >{{ caseItem.reviewDisposition ? (reviewDispositionText[caseItem.reviewDisposition] ??
+        caseItem.reviewDisposition) : '待处置' }}</el-descriptions-item
+      >
+      <el-descriptions-item label="处置原因"
+        >{{ caseItem.reviewReasonCode ? (reviewReasonText[caseItem.reviewReasonCode] ?? caseItem.reviewReasonCode) : '-'
+        }}</el-descriptions-item
+      >
+      <el-descriptions-item label="处置时间">{{ fmtDateTime(caseItem.reviewedAt) }}</el-descriptions-item>
+      <el-descriptions-item label="快照 ID"
+        ><span class="mono-num snap">{{ snapPrefix(caseItem.snapshotId) }}</span></el-descriptions-item
+      >
+      <el-descriptions-item v-if="caseItem.failureMessage" label="失败原因" :span="3">
+        {{ caseItem.failureMessage }}
+      </el-descriptions-item>
+      <el-descriptions-item label="创建时间">
+        <span class="mono-num time">{{ fmtDateTime(caseItem.createdAt) }}</span>
+      </el-descriptions-item>
+      <el-descriptions-item label="模型">
+        <span class="mono-num">{{ caseItem.modelName || '-' }}</span>
+      </el-descriptions-item>
+      <el-descriptions-item label="来源">
+        <span v-if="caseItem.reportSource" class="src"
+          >{{ caseItem.reportSource === 'AGENT' ? 'Agent 生成' : '规则降级' }}</span
+        >
+        <span v-else>-</span>
+      </el-descriptions-item>
+    </el-descriptions>
+    <el-descriptions v-if="caseOperations" :column="3" border size="small" class="operations-detail">
+      <el-descriptions-item label="运营优先级">
+        <el-tag
+          :type="
+              caseOperations.priority === 'CRITICAL'
+                ? 'danger'
+                : caseOperations.priority === 'HIGH'
+                  ? 'warning'
+                  : 'info'
+            "
+          effect="dark"
+        >
+          {{ operationsPriorityText[caseOperations.priority] }} · {{ caseOperations.priorityScore }}
+        </el-tag>
+      </el-descriptions-item>
+      <el-descriptions-item label="当前责任阶段">{{ operationsPhaseText[caseOperations.phase] }}</el-descriptions-item>
+      <el-descriptions-item label="责任队列"
+        >{{ caseOperations.assignedTo || caseOperations.assignedUnit }}</el-descriptions-item
+      >
+      <el-descriptions-item label="阶段截止时间">
+        <span :class="{ overdue: caseOperations.overdue }"
+          >{{ caseOperations.dueAt ? fmtDateTime(caseOperations.dueAt) : '-' }}</span
+        >
+      </el-descriptions-item>
+      <el-descriptions-item label="SLA 状态">
+        <strong :class="caseOperations.overdue ? 'overdue' : 'ops-ok'">
+          {{ caseOperations.overdue ? `已逾期 ${Math.abs(caseOperations.minutesRemaining)} 分钟` : `剩余
+          ${caseOperations.minutesRemaining} 分钟` }}
+        </strong>
+      </el-descriptions-item>
+      <el-descriptions-item label="优先原因">{{ caseOperations.priorityReasons.join('；') }}</el-descriptions-item>
+    </el-descriptions>
+  </div>
+
+  <div class="card">
+    <h3 class="card-title investigation-title">
+      客户整体交易窗口
+      <span v-if="transactionWindows" class="window-asof">
+        截至 {{ fmtDateTime(transactionWindows.asOfTime) }} · {{ transactionWindows.sourceSystem }} / {{
+        transactionWindows.sourceVersion }}
+      </span>
+    </h3>
+    <el-alert
+      v-if="investigationLoadError"
+      type="error"
+      :closable="false"
+      show-icon
+      title="调查链路或交易窗口加载失败；在数据恢复前请勿作出最终处置。"
+    />
+    <div v-else-if="transactionWindows" class="window-grid">
+      <div v-for="window in transactionWindows.windows" :key="window.days" class="window-card">
+        <strong>近 {{ window.days }} 天</strong>
+        <div class="window-metrics">
+          <span>交易 <b>{{ window.transactionCount }}</b> 笔</span>
+          <span>跨境 {{ window.crossBorderCount }} 笔</span>
+          <span>夜间 {{ window.nightCount }} 笔</span>
+        </div>
+        <div class="currency-list">
+          <span v-if="!window.currencyBreakdown.length" class="muted">暂无金额</span>
+          <span v-for="currency in window.currencyBreakdown" :key="currency.currency">
+            <b>{{ currency.currency }} {{ formatAmount(currency.totalAmount) }}</b>
+            · 入 {{ formatAmount(currency.incomingAmount) }} · 出 {{ formatAmount(currency.outgoingAmount) }}
+            <template v-if="currency.crossBorderAmount">
+              · 跨境 {{ formatAmount(currency.crossBorderAmount) }}</template
+            >
+          </span>
+        </div>
+        <div class="counterparty-list">
+          <span class="muted">主要交易对手</span>
+          <span v-if="!window.topCounterparties.length" class="muted">暂无</span>
+          <span v-for="party in window.topCounterparties" :key="party.counterparty">
+            {{ party.counterparty }} · {{ party.transactionCount }} 笔 · {{ party.amounts.map((item) =>
+            `${item.currency} ${formatAmount(item.amount)}`).join(' / ') }}
+          </span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div v-if="investigation" class="card">
+    <h3 class="card-title investigation-title">
+      假设—证据—结论调查链
+      <el-tag :type="investigation.contractVersion >= 1 ? 'primary' : 'info'" size="small" effect="plain">
+        {{ investigation.contractVersion >= 1 ? `调查契约 v${investigation.contractVersion}` : '存量兼容案件' }}
+      </el-tag>
+    </h3>
+    <p v-if="investigation.contractVersion < 1" class="hint">
+      该案件创建于调查契约启用前，可查看迁移预警，但最终处置暂不强制执行新门槛。
+    </p>
+    <!-- A4-01：写入已成功但事实刷新失败——旧事实不能当作当前事实，提供显式重新加载入口 -->
+    <el-alert
+      v-if="investigationStale"
+      type="warning"
+      :closable="false"
+      show-icon
+      title="已保存的写入尚未反映到当前页面（调查事实加载失败）；在重新加载前不能继续编辑"
+    >
+      <template #default>
+        <el-button size="small" type="primary" plain @click="reloadInvestigationFacts">重新加载调查事实</el-button>
+      </template>
+    </el-alert>
+    <el-alert v-if="holdPhaseHint" type="info" :closable="false" show-icon :title="holdPhaseHint" />
+    <el-alert
+      v-if="
+          investigation.contractVersion >= 1 &&
+          !investigation.readyForFinalReview &&
+          investigation.generalBlockers.length
+        "
+      type="warning"
+      :closable="false"
+      show-icon
+      title="调查尚未完成，最终处置被阻断"
+    >
+      <template #default>{{ investigation.generalBlockers.join('；') }}</template>
+    </el-alert>
+
+    <h4 class="investigation-subtitle">关联预警（{{ investigation.alerts.length }}）</h4>
+    <el-table :data="investigation.alerts" stripe>
+      <el-table-column prop="externalAlertId" label="预警编号" width="180" />
+      <el-table-column label="场景" width="170">
+        <template #default="{ row }">{{ investigationScenarioText[row.scenarioCode] ?? row.scenarioCode }}</template>
+      </el-table-column>
+      <el-table-column prop="ruleCode" label="规则" width="145" />
+      <el-table-column prop="hitReason" label="命中原因" min-width="220" show-overflow-tooltip />
+      <el-table-column label="覆盖结论" width="130">
+        <template #default="{ row }">
+          <el-tag
+            :type="
+                coverageFor(row.id)?.conclusion === 'SUSPICIOUS'
+                  ? 'danger'
+                  : coverageFor(row.id)?.conclusion === 'EXPLAINED'
+                    ? 'success'
+                    : 'warning'
+              "
+            effect="plain"
+          >
+            {{ coverageConclusionText[coverageFor(row.id)?.conclusion ?? 'PENDING'] }}
+          </el-tag>
+        </template>
+      </el-table-column>
+      <el-table-column v-if="canEditInvestigation || canSplitOnCase" label="操作" width="210" fixed="right">
+        <template #default="{ row }">
+          <el-button
+            v-if="canEditInvestigation && coverageGapFor(row.id) === 'PENDING'"
+            size="small"
+            :loading="investigationActionId === row.id"
+            @click="editAlertCoverage(row.id, 'CONCLUDE')"
+            >形成结论</el-button
+          >
+          <el-button
+            v-else-if="canEditInvestigation && coverageGapFor(row.id)"
+            size="small"
+            type="warning"
+            plain
+            :loading="investigationActionId === row.id"
+            @click="reconfirmAlertCoverage(row.id)"
+            >重新确认</el-button
+          >
+          <el-tooltip
+            v-if="canEditInvestigation && coverageGapFor(row.id) && coverageGapFor(row.id) !== 'PENDING'"
+            :content="coverageGapText(coverageGapFor(row.id))"
+            placement="top"
+          >
+            <span class="muted">需重新确认</span>
+          </el-tooltip>
+          <!-- 拆分入口：待处理可调整边界；容量超限等执行前失败（无任何调查产出）的 FAILED 案件也可受控拆分后重试 -->
+          <el-button
+            v-if="canSplitOnCase && investigation.alerts.length > 1"
+            size="small"
+            type="warning"
+            plain
+            :loading="investigationActionId === row.id"
+            @click="splitCaseAlert(row)"
+            >拆分</el-button
+          >
+        </template>
+      </el-table-column>
+    </el-table>
+
+    <h4 class="investigation-subtitle">调查假设（{{ investigation.hypotheses.length }}）</h4>
+    <div class="hypothesis-list">
+      <div v-for="hypothesis in investigation.hypotheses" :key="hypothesis.id" class="hypothesis-card">
+        <div class="hypothesis-head">
+          <div>
+            <strong>{{ hypothesis.title }}</strong>
+            <span class="hypothesis-code">{{ hypothesis.hypothesisCode }}</span>
+          </div>
+          <el-tag
+            :type="
+                hypothesis.status === 'CONFIRMED' ? 'danger' : hypothesis.status === 'REJECTED' ? 'success' : 'warning'
+              "
+            effect="plain"
+          >
+            {{ hypothesisStatusText[hypothesis.status] }}
+          </el-tag>
+        </div>
+        <p class="investigation-question">{{ hypothesis.investigationQuestion }}</p>
+        <div class="required-evidence">
+          <span class="muted">必需证据</span>
+          <span v-for="type in hypothesis.requiredEvidenceTypes" :key="type" class="code-chip info"
+            >{{ evidenceTypeText[type] }}</span
+          >
+        </div>
+        <div v-if="hypothesis.evidence.length" class="evidence-chain-list">
+          <div v-for="item in hypothesis.evidence" :key="item.id" class="evidence-chain-row">
+            <el-tag size="small" :type="item.stance === 'SUPPORTS' ? 'danger' : 'success'" effect="plain">
+              {{ evidenceStanceText[item.stance] }}
+            </el-tag>
+            <strong>{{ evidenceTypeText[item.evidenceType] }}</strong>
+            <span class="mono-num">{{ item.evidenceReference }}</span>
+            <span>{{ item.findingSummary }}</span>
+          </div>
+        </div>
+        <p v-else class="muted">尚未关联证据。</p>
+        <p v-if="hypothesis.rationale" class="hypothesis-rationale">
+          <strong>判断依据：</strong>{{ hypothesis.rationale }}
+        </p>
+        <div v-if="canEditInvestigation && hypothesis.status === 'OPEN'" class="hypothesis-actions">
+          <el-button size="small" @click="openInvestigationEvidence(hypothesis)">关联证据</el-button>
+          <el-button
+            size="small"
+            type="danger"
+            plain
+            :loading="investigationActionId === hypothesis.id"
+            @click="decideInvestigationHypothesis(hypothesis, 'CONFIRMED')"
+            >确认假设</el-button
+          >
+          <el-button
+            size="small"
+            type="success"
+            plain
+            :loading="investigationActionId === hypothesis.id"
+            @click="decideInvestigationHypothesis(hypothesis, 'REJECTED')"
+            >排除假设</el-button
+          >
+        </div>
+        <div v-else-if="canEditInvestigation" class="hypothesis-actions">
+          <el-button size="small" @click="openInvestigationEvidence(hypothesis)">补充证据</el-button>
+          <!-- 重申判断：保持原结论，仅重新确认依据；与原依据完全相同时后端幂等返回不递增版本 -->
+          <el-button
+            size="small"
+            :type="hypothesis.status === 'CONFIRMED' ? 'danger' : 'success'"
+            plain
+            :loading="investigationActionId === hypothesis.id"
+            @click="decideInvestigationHypothesis(hypothesis, hypothesis.status)"
+            >重申判断</el-button
+          >
+          <el-button
+            size="small"
+            :type="hypothesis.status === 'CONFIRMED' ? 'success' : 'danger'"
+            plain
+            :loading="investigationActionId === hypothesis.id"
+            @click="
+                decideInvestigationHypothesis(hypothesis, hypothesis.status === 'CONFIRMED' ? 'REJECTED' : 'CONFIRMED')
+              "
+            >修改判断</el-button
+          >
+          <span class="muted">修改判断将使引用该假设的覆盖结论失效，需要重新确认</span>
+        </div>
+      </div>
+    </div>
+
+    <div v-if="investigation.contractVersion >= 1" class="review-gates">
+      <el-alert
+        :type="investigation.confirmSuspiciousBlockers.length ? 'warning' : 'success'"
+        :closable="false"
+        show-icon
+        :title="investigation.confirmSuspiciousBlockers.length ? '确认可疑仍被阻断' : '已满足确认可疑调查门槛'"
+      >
+        <template v-if="investigation.confirmSuspiciousBlockers.length" #default>
+          {{ investigation.confirmSuspiciousBlockers.join('；') }}
+        </template>
+      </el-alert>
+      <el-alert
+        :type="investigation.excludeFalsePositiveBlockers.length ? 'warning' : 'success'"
+        :closable="false"
+        show-icon
+        :title="investigation.excludeFalsePositiveBlockers.length ? '排除预警仍被阻断' : '已满足排除预警调查门槛'"
+      >
+        <template v-if="investigation.excludeFalsePositiveBlockers.length" #default>
+          {{ investigation.excludeFalsePositiveBlockers.join('；') }}
+        </template>
+      </el-alert>
+    </div>
+  </div>
+
+  <ExplanationWorkspace v-if="investigation && investigation.contractVersion >= 2" :case-id="props.caseId" />
+
+  <RefundPanel v-if="investigation && investigation.contractVersion >= 2" :case-id="props.caseId" />
+
+  <div v-if="reviewHistory.length" class="card">
+    <h3 class="card-title">人工处置记录</h3>
+    <el-table :data="reviewHistory" stripe>
+      <el-table-column label="时间" width="168">
+        <template #default="{ row }"
+          ><span class="mono-num time">{{ fmtDateTime(row.completedAt || row.createdAt) }}</span></template
+        >
+      </el-table-column>
+      <el-table-column prop="reviewerId" label="复核人" width="110" />
+      <el-table-column label="结论" width="130">
+        <template #default="{ row }">{{ reviewDecisionLabel(row.decision) }}</template>
+      </el-table-column>
+      <el-table-column label="原因" min-width="190">
+        <template #default="{ row }"
+          >{{ row.reasonCode ? (reviewReasonText[row.reasonCode] ?? row.reasonCode) : '-' }}</template
+        >
+      </el-table-column>
+      <el-table-column prop="reviewerRiskLevel" label="复核评级" width="100" />
+      <el-table-column prop="comment" label="分析记录" min-width="240" show-overflow-tooltip />
+    </el-table>
+  </div>
+
+  <div v-if="eddRequests.length || eddHistoryLoadError" class="card">
+    <h3 class="card-title">补充尽调任务</h3>
+    <el-alert
+      v-if="eddHistoryLoadError"
+      type="error"
+      :closable="false"
+      title="补充尽调历史加载失败，当前内容可能不完整，请刷新重试"
+    />
+    <el-table v-else :data="eddRequests" stripe>
+      <el-table-column label="轮次" width="72">
+        <template #default="{ row }"><span class="mono-num">#{{ row.roundNo }}</span></template>
+      </el-table-column>
+      <el-table-column label="状态" width="126">
+        <template #default="{ row }">
+          <el-tag
+            :type="row.status === 'OPEN' ? 'warning' : row.status === 'SUBMITTED' ? 'success' : 'info'"
+            effect="plain"
+          >
+            {{ eddStatusText[row.status] ?? row.status }}
+          </el-tag>
+        </template>
+      </el-table-column>
+      <el-table-column label="需补材料" min-width="220">
+        <template #default="{ row }">{{ formatEddRequiredItems(row) }}</template>
+      </el-table-column>
+      <el-table-column label="承办" width="160">
+        <template #default="{ row }"
+          >{{ row.assignedTo || '-' }}<br /><span class="muted">{{ row.assignedUnit || '-' }}</span></template
+        >
+      </el-table-column>
+      <el-table-column label="截止时间" width="168">
+        <template #default="{ row }">
+          <span class="mono-num time" :class="{ overdue: row.overdue }">
+            {{ fmtDateTime(row.dueAt) }}{{ row.overdue ? '（已逾期）' : '' }}
+          </span>
+        </template>
+      </el-table-column>
+      <el-table-column label="提交结果" min-width="220" show-overflow-tooltip>
+        <template #default="{ row }">{{ row.responseSummary ?? '-' }}</template>
+      </el-table-column>
+      <el-table-column label="证据编号" min-width="160">
+        <template #default="{ row }">
+          <el-tooltip v-if="row.evidenceItems.length" placement="top" effect="light">
+            <template #content>
+              <div v-for="item in row.evidenceItems" :key="item.id" class="evidence-meta">
+                {{ item.evidenceId }} · {{ item.sourceSystem }} · {{ item.sourceReference }} · SHA-256 {{
+                item.contentSha256 }}
+              </div>
+            </template>
+            <span class="mono-num evidence-link">{{ row.evidenceReferences.join('、') }}</span>
+          </el-tooltip>
+          <span v-else class="mono-num">-</span>
+        </template>
+      </el-table-column>
+      <el-table-column v-if="canSubmitEdd" label="操作" width="110" fixed="right">
+        <template #default="{ row }">
+          <el-button v-if="row.status === 'OPEN'" size="small" type="primary" @click="openEddResponse(row)"
+            >提交材料</el-button
+          >
+          <span v-else class="muted">{{ row.status === 'CANCELLED' ? row.cancellationReason : '已提交' }}</span>
+        </template>
+      </el-table-column>
+    </el-table>
+  </div>
+
+  <div v-if="suspiciousReport || reportWorkflowLoadError" class="card">
+    <h3 class="card-title">可疑交易报告闭环</h3>
+    <el-alert
+      v-if="reportWorkflowLoadError"
+      type="error"
+      :closable="false"
+      title="可疑交易报告状态加载失败，请刷新重试"
+    />
+    <el-descriptions v-else-if="suspiciousReport" :column="2" border>
+      <el-descriptions-item label="报告状态"
+        >{{ reportStatusText[suspiciousReport.status] ?? suspiciousReport.status }}</el-descriptions-item
+      >
+      <el-descriptions-item label="外部受理编号"
+        ><span class="mono-num">{{ suspiciousReport.externalReference || '-' }}</span></el-descriptions-item
+      >
+      <el-descriptions-item label="报告理由" :span="2">{{ suspiciousReport.reportReason }}</el-descriptions-item>
+      <el-descriptions-item v-if="suspiciousReport.returnReason" label="退回原因" :span="2"
+        >{{ suspiciousReport.returnReason }}</el-descriptions-item
+      >
+      <el-descriptions-item label="报送人">{{ suspiciousReport.submittedBy || '-' }}</el-descriptions-item>
+      <el-descriptions-item label="报送时间">{{ fmtDateTime(suspiciousReport.submittedAt) }}</el-descriptions-item>
+    </el-descriptions>
+    <div v-if="suspiciousReport?.status === 'SUBMITTED' && canReviewSanctions" class="report-actions">
+      <el-button type="warning" plain :loading="returningReport" @click="returnReportForCorrection">退回补正</el-button>
+    </div>
+  </div>
+
+  <div class="card">
+    <h3 class="card-title">
+      Agent 工作流
+      <span class="sse-indicator" :class="sseState">
+        <i class="sse-dot"></i>
+        <span
+          >{{ sseState === 'open' ? '实时连接' : sseState === 'reconnecting' ? '连接中断，正在重连…' : sseState ===
+          'closed' ? '流程已结束' : '正在连接…' }}</span
+        >
+      </span>
+    </h3>
+    <div class="flow">
+      <div
+        v-for="(s, i) in workflowStages"
+        :key="s.key"
+        class="flow-node"
+        :class="{ done: isDone(s.key), active: isActive(s.key) }"
+      >
+        <div class="node-circle">
+          <span v-if="isDone(s.key)">✓</span>
+          <span v-else>{{ i + 1 }}</span>
+        </div>
+        <div class="node-label">{{ s.label }}</div>
+        <div class="node-desc">{{ s.desc }}</div>
+        <div v-if="i < workflowStages.length - 1" class="node-link" :class="{ done: isDone(s.key) }"></div>
+      </div>
+    </div>
+    <el-collapse v-model="logOpen" class="log-list">
+      <el-collapse-item title="阶段日志（实时）" name="log">
+        <div v-if="logs.length === 0" class="log-empty">暂无日志</div>
+        <div v-for="l in logs" :key="`${l.stage}|${l.content}`" class="log-line">
+          <el-tag size="small" effect="plain">{{ l.stage }}</el-tag>
+          <span class="log-time">{{ l.at }}</span>
+          <span class="log-content">{{ l.content }}</span>
+        </div>
+      </el-collapse-item>
+      <el-collapse-item title="工具调用轨迹" name="tools">
+        <div v-if="toolTraces.length === 0" class="log-empty">暂无工具调用记录</div>
+        <div v-for="t in toolTraces" :key="`${t.executionVersion}-${t.sequenceNo}`" class="log-line tool-line">
+          <el-tag size="small" :type="t.success ? 'success' : t.argumentValid ? 'danger' : 'warning'" effect="plain">
+            {{ t.toolName }}
+          </el-tag>
+          <span class="log-time">v{{ t.executionVersion }} · {{ t.durationMs }}ms</span>
+          <span class="log-content">
+            {{ t.success ? '成功' : t.argumentValid ? `失败（${t.errorCode ?? 'ERROR'}）` : '参数校验未通过' }}
+            <span v-if="t.resultDigest" class="trace-digest">#{{ t.resultDigest }}</span>
+          </span>
+        </div>
+      </el-collapse-item>
+    </el-collapse>
+  </div>
+
+  <div v-if="streamingText" class="card">
+    <h3 class="card-title">可选 AI 分析摘要</h3>
+    <div class="streaming-text">{{ streamingText }}<span class="cursor">▍</span></div>
+    <p class="hint">此为独立生成的分析摘要，非主 Agent 内部推理过程。</p>
+  </div>
+
+  <div v-if="report" class="card">
+    <h3 class="card-title">尽调初审报告</h3>
+    <div class="report">
+      <div v-if="caseItem?.reportSource || caseItem?.snapshotId" class="report-row">
+        <div class="report-label">执行溯源</div>
+        <div class="trace-line">
+          <span class="src" :class="caseItem?.reportSource === 'AGENT' ? 'src-agent' : 'src-rule'">
+            {{ caseItem?.reportSource === 'AGENT' ? 'Agent 生成' : '规则降级' }}
+          </span>
+          <span v-if="caseItem?.snapshotId" class="mono-num trace-id">快照 {{ snapPrefix(caseItem.snapshotId) }}</span>
+        </div>
+      </div>
+
+      <div class="report-row">
+        <div class="report-label">风险评级</div>
+        <span class="rk" :class="riskMeta[report.riskLevel]?.cls">{{ report.riskLevel }}</span>
+        <span v-if="report.manualReviewRequired" class="need-review">需人工复核</span>
+      </div>
+
+      <div v-if="report.findingCodes?.length" class="report-row">
+        <div class="report-label">风险发现代码</div>
+        <div class="code-chips">
+          <span v-for="c in report.findingCodes" :key="c" class="code-chip warn">{{ c }}</span>
+        </div>
+      </div>
+
+      <div v-if="report.actionCodes?.length" class="report-row">
+        <div class="report-label">处置代码</div>
+        <div class="code-chips">
+          <span
+            v-for="c in report.actionCodes"
+            :key="c"
+            class="code-chip"
+            :class="c === 'MANUAL_REVIEW' ? 'danger' : 'info'"
+            >{{ c }}</span
+          >
+        </div>
+      </div>
+
+      <div class="report-row">
+        <div class="report-label">风险点</div>
+        <ul class="risk-list">
+          <li v-for="p in report.riskPoints" :key="p">{{ p }}</li>
+        </ul>
+      </div>
+
+      <div class="report-row">
+        <div class="report-label">交易画像</div>
+        <pre class="mono">{{ report.transactionProfile }}</pre>
+      </div>
+
+      <div class="report-row">
+        <div class="report-label">股权穿透 / UBO</div>
+        <pre class="mono">{{ report.corporateProfile }}</pre>
+      </div>
+
+      <div v-if="report.sanctions.length" class="report-row">
+        <div class="report-label">黑名单命中</div>
+        <ul class="risk-list sanction">
+          <li v-for="s in report.sanctions" :key="s">{{ s }}</li>
+        </ul>
+      </div>
+
+      <div v-if="report.legalBasis.length" class="report-row">
+        <div class="report-label">法规依据（RAG）</div>
+        <el-collapse>
+          <el-collapse-item v-for="b in report.legalBasis" :key="b" :title="legalTitle(b)">
+            <div class="legal-body">{{ legalBody(b) }}</div>
+          </el-collapse-item>
+        </el-collapse>
+      </div>
+
+      <div class="report-row">
+        <div class="report-label">结论与建议</div>
+        <div class="conclusion">{{ report.conclusion }}</div>
+      </div>
+
+      <div v-if="report.evidenceChain.length" class="report-row">
+        <div class="report-label">证据链</div>
+        <div class="evidence">
+          <span v-for="e in report.evidenceChain" :key="e" class="ev-chip">{{ e }}</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <el-dialog v-model="eddDialogOpen" title="提交补充尽调材料" width="760px">
+    <div v-if="respondingEdd">
+      <p class="hint">
+        第 {{ respondingEdd.roundNo }} 轮 · 截止 {{ fmtDateTime(respondingEdd.dueAt) }}<br />
+        需补充：{{ respondingEdd.requiredItems.map((item) => eddRequiredItemText[item] ?? item).join('、') }}
+      </p>
+      <el-form label-width="96px">
+        <el-form-item label="材料说明">
+          <el-input
+            v-model="eddResponseSummary"
+            type="textarea"
+            :rows="5"
+            maxlength="2000"
+            show-word-limit
+            placeholder="说明已核验的信息、结论及与原预警的关系（至少 10 个字符）"
+          />
+        </el-form-item>
+        <el-form-item label="证据元数据">
+          <div class="edd-evidence-list">
+            <div v-for="(item, index) in eddEvidenceItems" :key="item.requiredItemCode" class="edd-evidence-row">
+              <strong>{{ eddRequiredItemText[item.requiredItemCode] ?? item.requiredItemCode }}</strong>
+              <el-select
+                v-model="item.sourceSystem"
+                :aria-label="`${eddRequiredItemText[item.requiredItemCode] ?? item.requiredItemCode}来源系统`"
+                placeholder="来源系统"
+              >
+                <el-option
+                  v-for="source in eddSourceSystemOptions"
+                  :key="source.value"
+                  :label="source.label"
+                  :value="source.value"
+                />
+              </el-select>
+              <el-input
+                v-model="item.sourceReference"
+                :aria-label="`证据 ${index + 1} 来源记录编号`"
+                :placeholder="`来源记录编号 ${index + 1}`"
+                maxlength="128"
+              />
+              <el-input
+                v-model="item.contentSha256"
+                :aria-label="`证据 ${index + 1} 内容摘要`"
+                placeholder="文件或记录内容 SHA-256（64 位十六进制）"
+                maxlength="64"
+                class="mono-num"
+              />
+            </div>
+          </div>
+        </el-form-item>
+      </el-form>
+    </div>
+    <template #footer>
+      <el-button @click="eddDialogOpen = false">取消</el-button>
+      <el-button type="primary" :loading="eddSubmitting" @click="submitEddResponse">提交并转复核</el-button>
+    </template>
+  </el-dialog>
+
+  <el-dialog v-model="evidenceDialogOpen" title="关联调查证据" width="680px">
+    <div v-if="evidenceHypothesis">
+      <p class="hint">{{ evidenceHypothesis.title }} · 证据必须能回溯到冻结快照、业务系统记录或外部数据编号。</p>
+      <el-form label-width="90px">
+        <el-form-item label="证据类型">
+          <el-select v-model="evidenceType" style="width: 100%">
+            <el-option v-for="(label, value) in evidenceTypeText" :key="value" :label="label" :value="value" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="证据方向">
+          <el-radio-group v-model="evidenceStance">
+            <el-radio value="SUPPORTS">支持假设</el-radio>
+            <el-radio value="CONTRADICTS">反向证据</el-radio>
+          </el-radio-group>
+        </el-form-item>
+        <el-form-item label="证据引用">
+          <el-input v-model="evidenceReference" maxlength="160" placeholder="来源系统记录号、快照号或文档编号" />
+        </el-form-item>
+        <el-form-item label="调查摘要">
+          <el-input
+            v-model="evidenceSummary"
+            type="textarea"
+            :rows="5"
+            maxlength="1000"
+            show-word-limit
+            placeholder="说明证据中的具体事实，以及它如何支持或反驳该假设（至少 10 个字符）"
+          />
+        </el-form-item>
+      </el-form>
+    </div>
+    <template #footer>
+      <el-button @click="evidenceDialogOpen = false">取消</el-button>
+      <el-button type="primary" :loading="evidenceSubmitting" @click="submitInvestigationEvidence"
+        >保存证据关联</el-button
+      >
+    </template>
+  </el-dialog>
+</div>

@@ -1,8 +1,7 @@
 package com.bank.aml.rag;
 
-import org.junit.jupiter.api.Test;
-
 import java.util.List;
+import org.junit.jupiter.api.Test;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -20,10 +19,9 @@ class SupportProbabilityCalibratorTest {
     void plattScalingFitsFromHumanLabels() {
         SupportProbabilityCalibrator calibrator = new SupportProbabilityCalibrator("platt");
         // 高分相关、低分不相关的标注样本
-        calibrator.fit(List.of(
-                new double[]{-3.0, 0.0}, new double[]{-2.0, 0.0}, new double[]{-0.5, 0.0},
-                new double[]{0.0, 1.0}, new double[]{1.0, 1.0}, new double[]{2.5, 1.0},
-                new double[]{3.5, 1.0}));
+        calibrator.fit(List.of(new double[] { -3.0, 0.0 }, new double[] { -2.0, 0.0 }, new double[] { -0.5, 0.0 },
+                new double[] { 0.0, 1.0 }, new double[] { 1.0, 1.0 }, new double[] { 2.5, 1.0 },
+                new double[] { 3.5, 1.0 }));
 
         assertThat(calibrator.isFitted()).isTrue();
         // 校准后仍保持单调，且对得分的区分更强
@@ -37,12 +35,12 @@ class SupportProbabilityCalibratorTest {
     @Test
     void isotonicRegressionProducesMonotoneProbabilities() {
         SupportProbabilityCalibrator calibrator = new SupportProbabilityCalibrator("isotonic");
-        calibrator.fit(List.of(
-                new double[]{-4.0, 0.0}, new double[]{-3.0, 0.0}, new double[]{-1.0, 0.0},
-                new double[]{1.0, 1.0}, new double[]{2.0, 1.0}, new double[]{4.0, 1.0}));
+        calibrator.fit(List.of(new double[] { -4.0, 0.0 }, new double[] { -3.0, 0.0 }, new double[] { -1.0, 0.0 },
+                new double[] { 1.0, 1.0 }, new double[] { 2.0, 1.0 }, new double[] { 4.0, 1.0 }));
 
         assertThat(calibrator.isFitted()).isTrue();
         assertThat(calibrator.calibrate(0.0)).isBetween(0.0, 1.0);
         assertThat(calibrator.calibrate(1.0)).isGreaterThanOrEqualTo(calibrator.calibrate(-1.0));
     }
+
 }

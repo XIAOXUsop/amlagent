@@ -6,7 +6,6 @@ import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
-
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 
@@ -47,23 +46,80 @@ public class RefundAllocation {
     @Column(name = "created_at", nullable = false)
     private LocalDateTime createdAt;
 
-    public Long getId() { return id; }
-    public Long getCaseId() { return caseId; }
-    public void setCaseId(Long value) { caseId = value; }
-    public Long getRefundEventId() { return refundEventId; }
-    public void setRefundEventId(Long value) { refundEventId = value; }
-    public String getOriginalTransactionId() { return originalTransactionId; }
-    public void setOriginalTransactionId(String value) { originalTransactionId = value; }
-    public String getOriginalAllocationKey() { return originalAllocationKey; }
-    public void setOriginalAllocationKey(String value) { originalAllocationKey = value; }
-    public BigDecimal getAllocatedAmount() { return allocatedAmount; }
-    public void setAllocatedAmount(BigDecimal value) { allocatedAmount = value; }
-    public String getCurrency() { return currency; }
-    public void setCurrency(String value) { currency = value; }
-    public String getReturnedObligationRef() { return returnedObligationRef; }
-    public void setReturnedObligationRef(String value) { returnedObligationRef = value; }
-    public String getCreatedBy() { return createdBy; }
-    public void setCreatedBy(String value) { createdBy = value; }
-    public LocalDateTime getCreatedAt() { return createdAt; }
-    public void setCreatedAt(LocalDateTime value) { createdAt = value; }
+    public Long getId() {
+        return id;
+    }
+
+    public Long getCaseId() {
+        return caseId;
+    }
+
+    public void setCaseId(Long value) {
+        caseId = value;
+    }
+
+    public Long getRefundEventId() {
+        return refundEventId;
+    }
+
+    public void setRefundEventId(Long value) {
+        refundEventId = value;
+    }
+
+    public String getOriginalTransactionId() {
+        return originalTransactionId;
+    }
+
+    public void setOriginalTransactionId(String value) {
+        originalTransactionId = value;
+    }
+
+    public String getOriginalAllocationKey() {
+        return originalAllocationKey;
+    }
+
+    public void setOriginalAllocationKey(String value) {
+        originalAllocationKey = value;
+    }
+
+    public BigDecimal getAllocatedAmount() {
+        return allocatedAmount;
+    }
+
+    public void setAllocatedAmount(BigDecimal value) {
+        allocatedAmount = value;
+    }
+
+    public String getCurrency() {
+        return currency;
+    }
+
+    public void setCurrency(String value) {
+        currency = value;
+    }
+
+    public String getReturnedObligationRef() {
+        return returnedObligationRef;
+    }
+
+    public void setReturnedObligationRef(String value) {
+        returnedObligationRef = value;
+    }
+
+    public String getCreatedBy() {
+        return createdBy;
+    }
+
+    public void setCreatedBy(String value) {
+        createdBy = value;
+    }
+
+    public LocalDateTime getCreatedAt() {
+        return createdAt;
+    }
+
+    public void setCreatedAt(LocalDateTime value) {
+        createdAt = value;
+    }
+
 }

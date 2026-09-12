@@ -6,12 +6,11 @@ import dev.langchain4j.model.embedding.EmbeddingModel;
 import dev.langchain4j.model.embedding.onnx.allminilml6v2.AllMiniLmL6V2EmbeddingModel;
 import dev.langchain4j.store.embedding.EmbeddingStore;
 import dev.langchain4j.store.embedding.pgvector.PgVectorEmbeddingStore;
+import javax.sql.DataSource;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-
-import javax.sql.DataSource;
 
 /**
  * RAG 基础设施：PostgreSQL(pgvector) 数据源、本地 embedding 模型、向量存储。
@@ -36,7 +35,8 @@ public class RagConfig {
     public EmbeddingModel embeddingModel(RagProperties props) {
         if (!"all-MiniLM-L6-v2".equalsIgnoreCase(props.getEmbedding().getModel())
                 || props.getPg().getDimensions() != 384) {
-            throw new IllegalStateException("当前构建仅绑定 all-MiniLM-L6-v2/384 维；切换模型必须同时提供对应 EmbeddingModel Bean，禁止只改 Manifest 配置");
+            throw new IllegalStateException(
+                    "当前构建仅绑定 all-MiniLM-L6-v2/384 维；切换模型必须同时提供对应 EmbeddingModel Bean，禁止只改 Manifest 配置");
         }
         return new AllMiniLmL6V2EmbeddingModel();
     }
@@ -44,12 +44,15 @@ public class RagConfig {
     /** PGVector 向量存储（存储法规条文与案例库） */
     @Bean
     public EmbeddingStore<TextSegment> embeddingStore(RagProperties props,
-                                                      @Qualifier("pgDataSource") DataSource pgDataSource) {
+            @Qualifier("pgDataSource") DataSource pgDataSource) {
+        LegalVectorTable table = LegalVectorTable.fromConfiguration(props.getPg().getTable());
         return PgVectorEmbeddingStore.datasourceBuilder()
-                .datasource(pgDataSource)
-                .table(props.getPg().getTable())
-                .dimension(props.getPg().getDimensions())
-                .createTable(true)
-                .build();
+            .datasource(pgDataSource)
+            .table(table.configuredName())
+            .dimension(props.getPg().getDimensions())
+            .createTable(false)
+            .skipCreateVectorExtension(true)
+            .build();
     }
+
 }

@@ -5,12 +5,13 @@ import java.util.Map;
 
 /**
  * 单线程（ThreadLocal）检索分段耗时探针，用于候选评测输出 dense/lexical/fusion/rerank/filter 各阶段耗时。
- * <p>同一线程内每次评测前 {@link #reset()}，检索完成后 {@link #drain()} 取走并清空；非评测路径不调用。</p>
+ * <p>
+ * 同一线程内每次评测前 {@link #reset()}，检索完成后 {@link #drain()} 取走并清空；非评测路径不调用。
+ * </p>
  */
 public final class RetrievalTimings {
 
-    private static final ThreadLocal<Map<String, Long>> HOLDER =
-            ThreadLocal.withInitial(LinkedHashMap::new);
+    private static final ThreadLocal<Map<String, Long>> HOLDER = ThreadLocal.withInitial(LinkedHashMap::new);
 
     private RetrievalTimings() {
     }
@@ -21,7 +22,8 @@ public final class RetrievalTimings {
 
     /** 累加某阶段的耗时 ms。 */
     public static void add(String phase, long elapsedMs) {
-        if (elapsedMs <= 0) return;
+        if (elapsedMs <= 0)
+            return;
         HOLDER.get().merge(phase, elapsedMs, Long::sum);
     }
 
@@ -31,4 +33,5 @@ public final class RetrievalTimings {
         HOLDER.get().clear();
         return copy;
     }
+
 }

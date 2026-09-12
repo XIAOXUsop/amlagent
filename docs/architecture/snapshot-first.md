@@ -41,4 +41,4 @@ GuardrailEngine.apply(snapshot, report)（同一快照）
 `backend/src/test/java/com/bank/aml/agent/InvestigationSnapshotTest.java`：
 - 快照创建后修改数据源，工具仍返回快照旧值（`verify transactionsOf` 仅调用一次）
 - 相同事实产生稳定 `sourceDigest`
-- 不同 `executionVersion` 产生不同 `snapshotId`
+- 不同 `executionVersion` 产生不同 `snapshotId

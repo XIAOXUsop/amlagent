@@ -1,6 +1,9 @@
 package com.bank.aml.security;
 
+import com.bank.aml.TestProperties;
+import com.bank.aml.audit.AuditService;
 import jakarta.servlet.http.Cookie;
+import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.mock.web.MockHttpServletResponse;
@@ -9,51 +12,44 @@ import org.springframework.security.authentication.DisabledException;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.userdetails.User;
 
-import java.util.Map;
-
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 class AuthControllerTest {
 
     private final AuthenticationManager authenticationManager = mock(AuthenticationManager.class);
-    private final JwtTokenProvider tokenProvider = mock(JwtTokenProvider.class);
-    private final LoginRateLimiter rateLimiter = mock(LoginRateLimiter.class);
-    private final com.bank.aml.audit.AuditService audit = mock(com.bank.aml.audit.AuditService.class);
-    private final UserAccountRepository userAccounts = mock(UserAccountRepository.class);
-    private final AuthController controller =
-            new AuthController(authenticationManager, tokenProvider, rateLimiter, audit, userAccounts, false);
 
-    private UserAccount account(String username) {
-        UserAccount account = new UserAccount();
-        account.setUsername(username);
-        account.setPassword("encoded");
-        account.setRole("ANALYST");
-        account.setTokenVersion(0);
-        return account;
-    }
+    private final JwtTokenProvider tokenProvider = mock(JwtTokenProvider.class);
+
+    private final LoginRateLimiter rateLimiter = mock(LoginRateLimiter.class);
+
+    private final AuditService audit = mock(AuditService.class);
+
+    private final AuthenticationAccountService accountService = mock(AuthenticationAccountService.class);
+
+    private final AuthController controller = new AuthController(authenticationManager, tokenProvider, rateLimiter,
+            audit, accountService, TestProperties.aml());
 
     @Test
     void enabledUserIsAuthenticatedBySpringSecurityAndReceivesCookie() {
-        var user = User.withUsername("analyst")
-                .password("encoded")
-                .roles("ANALYST")
-                .build();
-        var authenticated = UsernamePasswordAuthenticationToken.authenticated(
-                user, null, user.getAuthorities());
+        var user = User.withUsername("analyst").password("encoded").roles("ANALYST").build();
+        var authenticated = UsernamePasswordAuthenticationToken.authenticated(user, null, user.getAuthorities());
         var request = request();
         var response = new MockHttpServletResponse();
-        when(authenticationManager.authenticate(org.mockito.ArgumentMatchers.any())).thenReturn(authenticated);
-        when(userAccounts.findByUsername("analyst")).thenReturn(java.util.Optional.of(account("analyst")));
+        when(authenticationManager.authenticate(any())).thenReturn(authenticated);
+        when(accountService.tokenVersion("analyst")).thenReturn(0);
         when(tokenProvider.createToken("analyst", "ANALYST", 0)).thenReturn("signed-token");
 
-        Map<String, Object> body = controller.login(
-                new AuthController.LoginRequest("analyst", "secret"), request, response);
+        AuthController.LoginResponse body = controller.login(new AuthController.LoginRequest("analyst", "secret"),
+                request, response);
 
-        assertThat(body).containsEntry("username", "analyst").containsEntry("role", "ANALYST");
+        assertThat(body.username()).isEqualTo("analyst");
+        assertThat(body.role()).isEqualTo("ANALYST");
         Cookie cookie = response.getCookie("aml_token");
         assertThat(cookie).isNotNull();
         assertThat(cookie.getValue()).isEqualTo("signed-token");
@@ -65,13 +61,11 @@ class AuthControllerTest {
     void disabledUserCannotLoginEvenWhenPasswordWouldOtherwiseMatch() {
         var request = request();
         var response = new MockHttpServletResponse();
-        when(authenticationManager.authenticate(org.mockito.ArgumentMatchers.any()))
-                .thenThrow(new DisabledException("disabled"));
+        when(authenticationManager.authenticate(any())).thenThrow(new DisabledException("disabled"));
 
-        assertThatThrownBy(() -> controller.login(
-                new AuthController.LoginRequest("disabled-user", "correct-password"), request, response))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessage("用户名或密码错误");
+        assertThatThrownBy(() -> controller.login(new AuthController.LoginRequest("disabled-user", "correct-password"),
+                request, response))
+            .isInstanceOf(DisabledException.class);
 
         assertThat(response.getCookie("aml_token")).isNull();
         verify(rateLimiter).recordFailure("127.0.0.1", "disabled-user");
@@ -82,12 +76,11 @@ class AuthControllerTest {
         var request = request();
         request.addHeader("X-Forwarded-For", "203.0.113.7");
         var response = new MockHttpServletResponse();
-        when(authenticationManager.authenticate(org.mockito.ArgumentMatchers.any()))
-                .thenThrow(new DisabledException("disabled"));
+        when(authenticationManager.authenticate(any())).thenThrow(new DisabledException("disabled"));
 
-        assertThatThrownBy(() -> controller.login(
-                new AuthController.LoginRequest("analyst", "wrong"), request, response))
-                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(
+                () -> controller.login(new AuthController.LoginRequest("analyst", "wrong"), request, response))
+            .isInstanceOf(DisabledException.class);
 
         verify(rateLimiter).checkBlocked("127.0.0.1", "analyst");
         verify(rateLimiter).recordFailure("127.0.0.1", "analyst");
@@ -95,17 +88,13 @@ class AuthControllerTest {
 
     @Test
     void logoutRevokesOutstandingTokensByIncrementingTokenVersion() {
-        UserAccount account = account("analyst");
-        when(userAccounts.findByUsername("analyst")).thenReturn(java.util.Optional.of(account));
         var response = new MockHttpServletResponse();
-        var auth = org.springframework.security.authentication.UsernamePasswordAuthenticationToken
-                .authenticated(org.springframework.security.core.userdetails.User
-                        .withUsername("analyst").password("x").roles("ANALYST").build(), null, java.util.List.of());
+        var auth = UsernamePasswordAuthenticationToken
+            .authenticated(User.withUsername("analyst").password("x").roles("ANALYST").build(), null, List.of());
 
         controller.logout(auth, response);
 
-        org.mockito.Mockito.verify(userAccounts).save(account);
-        assertThat(account.getTokenVersion()).isEqualTo(1);
+        verify(accountService).revokeTokens("analyst");
         assertThat(response.getCookie("aml_token")).isNotNull();
     }
 
@@ -115,8 +104,7 @@ class AuthControllerTest {
 
         controller.logout(null, response);
 
-        org.mockito.Mockito.verify(userAccounts, org.mockito.Mockito.never())
-                .findByUsername(org.mockito.ArgumentMatchers.anyString());
+        verifyNoInteractions(accountService);
         assertThat(response.getCookie("aml_token")).isNotNull();
     }
 
@@ -125,4 +113,5 @@ class AuthControllerTest {
         request.setRemoteAddr("127.0.0.1");
         return request;
     }
+
 }

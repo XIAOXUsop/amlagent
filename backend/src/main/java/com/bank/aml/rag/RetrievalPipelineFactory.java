@@ -1,24 +1,28 @@
 package com.bank.aml.rag;
 
-import com.bank.aml.evaluation.RetrievalPipeline;
-import org.springframework.stereotype.Component;
-
+import com.bank.aml.evidence.LegalDoc;
 import java.util.List;
+import org.springframework.stereotype.Component;
 
 /**
  * 按检索管线产出对应的 {@link LegalDocumentSearcher}，供 A/B 评测对比。
- * <p>生产检索仍然走 {@link CachingLegalSearcher}（默认 HYBRID_RERANK），此工厂仅用于评测实验。</p>
+ * <p>
+ * 生产检索仍然走 {@link CachingLegalSearcher}（默认 HYBRID_RERANK），此工厂仅用于评测实验。
+ * </p>
  */
 @Component
 public class RetrievalPipelineFactory {
 
     private final VectorLegalSearcher vector;
+
     private final KeywordLegalSearcher keyword;
+
     private final HybridLegalSearcher hybrid;
+
     private final ReRankingLegalSearcher reranking;
 
     public RetrievalPipelineFactory(VectorLegalSearcher vector, KeywordLegalSearcher keyword,
-                                    HybridLegalSearcher hybrid, ReRankingLegalSearcher reranking) {
+            HybridLegalSearcher hybrid, ReRankingLegalSearcher reranking) {
         this.vector = vector;
         this.keyword = keyword;
         this.hybrid = hybrid;
@@ -44,4 +48,5 @@ public class RetrievalPipelineFactory {
             }
         };
     }
+
 }

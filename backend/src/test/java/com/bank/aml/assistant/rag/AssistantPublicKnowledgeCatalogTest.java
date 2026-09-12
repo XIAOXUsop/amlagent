@@ -1,17 +1,18 @@
 package com.bank.aml.assistant.rag;
 
+import com.bank.aml.TestClocks;
 import com.bank.aml.assistant.domain.AssistantEvidence;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
-import org.junit.jupiter.api.Test;
-
 import java.time.Instant;
+import org.junit.jupiter.api.Test;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
 class AssistantPublicKnowledgeCatalogTest {
+
     private final AssistantPublicKnowledgeCatalog catalog = new AssistantPublicKnowledgeCatalog(
-            new ObjectMapper().registerModule(new JavaTimeModule()));
+            new ObjectMapper().registerModule(new JavaTimeModule()), TestClocks.FIXED);
 
     @Test
     void returnsOnlyRelevantEffectiveFrozenEvidence() {
@@ -28,4 +29,5 @@ class AssistantPublicKnowledgeCatalogTest {
         var hits = catalog.retrieve("客户尽职调查 KYC", Instant.parse("2025-08-23T00:00:00Z"), 10);
         assertThat(hits).noneMatch(hit -> hit.evidenceId().equals("KB-KYC-CN-2025-001"));
     }
+
 }

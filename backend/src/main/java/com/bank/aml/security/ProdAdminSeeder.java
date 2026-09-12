@@ -10,7 +10,8 @@ import org.springframework.stereotype.Component;
 
 /**
  * 生产环境管理员初始化：仅从环境变量创建管理员写入 {@code sys_user} 表。
- * <p>不内置任何演示账号；未设置环境变量时启动失败，避免留下默认口令后门。
+ * <p>
+ * 不内置任何演示账号；未设置环境变量时启动失败，避免留下默认口令后门。
  */
 @Component
 @Profile("prod")
@@ -19,6 +20,7 @@ public class ProdAdminSeeder implements ApplicationRunner {
     private static final Logger log = LoggerFactory.getLogger(ProdAdminSeeder.class);
 
     private final UserAccountRepository repository;
+
     private final PasswordEncoder passwordEncoder;
 
     public ProdAdminSeeder(UserAccountRepository repository, PasswordEncoder passwordEncoder) {
@@ -43,4 +45,5 @@ public class ProdAdminSeeder implements ApplicationRunner {
             log.info("已初始化生产管理员：{}", adminUser);
         }
     }
+
 }

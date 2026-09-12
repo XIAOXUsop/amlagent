@@ -1,5 +1,6 @@
 package com.bank.aml.assistant.application;
 
+import com.bank.aml.TestClocks;
 import com.bank.aml.assistant.config.AssistantProperties;
 import com.bank.aml.assistant.persistence.entity.AssistantConversationEntity;
 import com.bank.aml.assistant.persistence.entity.AssistantMessageEntity;
@@ -9,34 +10,40 @@ import com.bank.aml.assistant.persistence.repository.AssistantMessageRepository;
 import com.bank.aml.assistant.persistence.repository.AssistantRunRepository;
 import com.bank.aml.datasource.entity.CustomerEntity;
 import com.bank.aml.datasource.repository.CustomerRepository;
-import org.junit.jupiter.api.Test;
-
 import java.time.LocalDateTime;
 import java.util.Optional;
+import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class AssistantConversationServiceTest {
+
     private final AssistantProperties properties = enabledProperties();
+
     private final CustomerRepository customers = mock(CustomerRepository.class);
+
     private final AssistantConversationRepository conversations = mock(AssistantConversationRepository.class);
+
     private final AssistantMessageRepository messages = mock(AssistantMessageRepository.class);
+
     private final AssistantRunRepository runs = mock(AssistantRunRepository.class);
-    private final AssistantConversationService service = new AssistantConversationService(
-            properties, customers, conversations, messages, runs);
+
+    private final AssistantConversationService service = new AssistantConversationService(properties, customers,
+            conversations, messages, runs, TestClocks.FIXED);
 
     @Test
     void featureFlagFailsClosedBeforeDataAccess() {
         properties.setEnabled(false);
 
-        assertThatThrownBy(() -> service.create(1L, "admin"))
-                .isInstanceOf(AssistantDisabledException.class);
+        assertThatThrownBy(() -> service.create(1L, "admin")).isInstanceOf(AssistantDisabledException.class);
         verify(customers, never()).findById(any());
     }
 
@@ -59,7 +66,7 @@ class AssistantConversationServiceTest {
         when(conversations.findForUpdate(conversation.getId())).thenReturn(Optional.of(conversation));
 
         assertThatThrownBy(() -> service.acceptMessage(conversation.getId(), "attacker", "m-1", "test"))
-                .isInstanceOf(ConversationNotFoundException.class);
+            .isInstanceOf(ConversationNotFoundException.class);
         verify(messages, never()).save(any());
     }
 
@@ -67,11 +74,10 @@ class AssistantConversationServiceTest {
     void createsEncryptedMessagePairAndRunWithMonotonicSequence() {
         AssistantConversationEntity conversation = conversation("admin");
         when(conversations.findForUpdate(conversation.getId())).thenReturn(Optional.of(conversation));
-        when(messages.findByConversationIdAndClientMessageId(conversation.getId(), "m-1"))
-                .thenReturn(Optional.empty());
+        when(messages.findByConversationIdAndClientMessageId(conversation.getId(), "m-1")).thenReturn(Optional.empty());
         AssistantMessageEntity previous = AssistantMessageEntity.user(conversation.getId(), 4, "old", "old");
         when(messages.findTopByConversationIdOrderBySequenceNoDesc(conversation.getId()))
-                .thenReturn(Optional.of(previous));
+            .thenReturn(Optional.of(previous));
         when(messages.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
         when(runs.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
         when(conversations.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
@@ -80,8 +86,8 @@ class AssistantConversationServiceTest {
 
         assertThat(accepted.idempotentReplay()).isFalse();
         assertThat(accepted.runId()).isNotBlank();
-        org.mockito.ArgumentCaptor<AssistantMessageEntity> captor = org.mockito.ArgumentCaptor.forClass(AssistantMessageEntity.class);
-        verify(messages, org.mockito.Mockito.times(2)).save(captor.capture());
+        ArgumentCaptor<AssistantMessageEntity> captor = ArgumentCaptor.forClass(AssistantMessageEntity.class);
+        verify(messages, times(2)).save(captor.capture());
         assertThat(captor.getAllValues()).extracting(AssistantMessageEntity::getSequenceNo).containsExactly(5L, 6L);
         assertThat(captor.getAllValues().getFirst().getContentCiphertext()).doesNotContain("分析当前客户");
         assertThat(captor.getAllValues().getFirst().content()).isEqualTo("分析当前客户");
@@ -95,7 +101,7 @@ class AssistantConversationServiceTest {
         AssistantRunEntity run = AssistantRunEntity.accepted(conversation.getId(), user.getId(), answer.getId());
         when(conversations.findForUpdate(conversation.getId())).thenReturn(Optional.of(conversation));
         when(messages.findByConversationIdAndClientMessageId(conversation.getId(), "m-1"))
-                .thenReturn(Optional.of(user));
+            .thenReturn(Optional.of(user));
         when(runs.findByUserMessageId(user.getId())).thenReturn(Optional.of(run));
 
         var replay = service.acceptMessage(conversation.getId(), "admin", "m-1", "different body ignored");
@@ -112,8 +118,9 @@ class AssistantConversationServiceTest {
         when(conversations.findForUpdate(conversation.getId())).thenReturn(Optional.of(conversation));
 
         assertThatThrownBy(() -> service.acceptMessage(conversation.getId(), "admin", "m-1", "question"))
-                .isInstanceOf(ConversationStateException.class)
-                .extracting("code").isEqualTo("CONVERSATION_ARCHIVED");
+            .isInstanceOf(ConversationStateException.class)
+            .extracting("code")
+            .isEqualTo("CONVERSATION_ARCHIVED");
     }
 
     private static AssistantProperties enabledProperties() {
@@ -133,4 +140,5 @@ class AssistantConversationServiceTest {
         when(customer.isDeleted()).thenReturn(false);
         return customer;
     }
+
 }

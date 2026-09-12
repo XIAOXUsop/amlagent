@@ -1,5 +1,6 @@
 package com.bank.aml.review;
 
+import com.bank.aml.domain.EddTaskPurpose;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
@@ -10,7 +11,8 @@ import jakarta.persistence.Id;
 import jakarta.persistence.PrePersist;
 import jakarta.persistence.PreUpdate;
 import jakarta.persistence.Table;
-
+import java.math.BigDecimal;
+import java.time.Clock;
 import java.time.LocalDateTime;
 
 /** 一轮补充尽调任务；只保存内部证据引用，不在此表保存附件或敏感材料正文。 */
@@ -84,7 +86,7 @@ public class EnhancedDueDiligenceRequest {
     /** 任务目的：DECISION_SUPPORT=当前判断补件；CONTINUING_REVIEW=决定后持续核验（v2 计划 §8.2）。 */
     @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 32)
-    private com.bank.aml.explanation.EddTaskPurpose purpose = com.bank.aml.explanation.EddTaskPurpose.DECISION_SUPPORT;
+    private EddTaskPurpose purpose = EddTaskPurpose.DECISION_SUPPORT;
 
     /** 义务接续来源：原任务/原复核；消费时按实际 ID 而非“最近一轮”。 */
     private Long originRequestId;
@@ -113,7 +115,7 @@ public class EnhancedDueDiligenceRequest {
 
     /** 义务关联金额（定点十进制；可选）。 */
     @Column(name = "obligation_amount", precision = 20, scale = 2)
-    private java.math.BigDecimal obligationAmount;
+    private BigDecimal obligationAmount;
 
     /** 义务关联交易（sourceRecordId 逗号分隔；可选）。 */
     @Column(name = "obligation_transaction_ids", length = 500)
@@ -127,80 +129,272 @@ public class EnhancedDueDiligenceRequest {
 
     @PrePersist
     void onCreate() {
-        LocalDateTime now = LocalDateTime.now();
-        if (createdAt == null) createdAt = now;
-        if (updatedAt == null) updatedAt = now;
-        if (requestedAt == null) requestedAt = now;
-        if (status == null) status = EnhancedDueDiligenceStatus.OPEN;
+        LocalDateTime now = LocalDateTime.now(Clock.systemUTC());
+        if (createdAt == null)
+            createdAt = now;
+        if (updatedAt == null)
+            updatedAt = now;
+        if (requestedAt == null)
+            requestedAt = now;
+        if (status == null)
+            status = EnhancedDueDiligenceStatus.OPEN;
     }
 
     @PreUpdate
     void onUpdate() {
-        updatedAt = LocalDateTime.now();
+        updatedAt = LocalDateTime.now(Clock.systemUTC());
     }
 
-    public Long getId() { return id; }
-    public Long getCaseId() { return caseId; }
-    public void setCaseId(Long caseId) { this.caseId = caseId; }
-    public int getRoundNo() { return roundNo; }
-    public void setRoundNo(int roundNo) { this.roundNo = roundNo; }
-    public String getReasonCode() { return reasonCode; }
-    public void setReasonCode(String reasonCode) { this.reasonCode = reasonCode; }
-    public String getRequiredItemsJson() { return requiredItemsJson; }
-    public void setRequiredItemsJson(String requiredItemsJson) { this.requiredItemsJson = requiredItemsJson; }
-    public String getRequestedBy() { return requestedBy; }
-    public void setRequestedBy(String requestedBy) { this.requestedBy = requestedBy; }
-    public LocalDateTime getRequestedAt() { return requestedAt; }
-    public void setRequestedAt(LocalDateTime requestedAt) { this.requestedAt = requestedAt; }
-    public String getAssignedTo() { return assignedTo; }
-    public void setAssignedTo(String assignedTo) { this.assignedTo = assignedTo; }
-    public String getAssignedUnit() { return assignedUnit; }
-    public void setAssignedUnit(String assignedUnit) { this.assignedUnit = assignedUnit; }
-    public LocalDateTime getDueAt() { return dueAt; }
-    public void setDueAt(LocalDateTime dueAt) { this.dueAt = dueAt; }
-    public EnhancedDueDiligenceStatus getStatus() { return status; }
-    public void setStatus(EnhancedDueDiligenceStatus status) { this.status = status; }
-    public int getRevision() { return revision; }
-    public void setRevision(int revision) { this.revision = revision; }
-    public String getResponseSummary() { return responseSummary; }
-    public void setResponseSummary(String responseSummary) { this.responseSummary = responseSummary; }
-    public String getEvidenceReferencesJson() { return evidenceReferencesJson; }
-    public void setEvidenceReferencesJson(String evidenceReferencesJson) { this.evidenceReferencesJson = evidenceReferencesJson; }
-    public String getRespondedBy() { return respondedBy; }
-    public void setRespondedBy(String respondedBy) { this.respondedBy = respondedBy; }
-    public LocalDateTime getRespondedAt() { return respondedAt; }
-    public void setRespondedAt(LocalDateTime respondedAt) { this.respondedAt = respondedAt; }
-    public LocalDateTime getResolvedAt() { return resolvedAt; }
-    public void setResolvedAt(LocalDateTime resolvedAt) { this.resolvedAt = resolvedAt; }
-    public String getResolvedBy() { return resolvedBy; }
-    public void setResolvedBy(String resolvedBy) { this.resolvedBy = resolvedBy; }
-    public String getCancelledBy() { return cancelledBy; }
-    public void setCancelledBy(String cancelledBy) { this.cancelledBy = cancelledBy; }
-    public LocalDateTime getCancelledAt() { return cancelledAt; }
-    public void setCancelledAt(LocalDateTime cancelledAt) { this.cancelledAt = cancelledAt; }
-    public String getCancellationReason() { return cancellationReason; }
-    public void setCancellationReason(String cancellationReason) { this.cancellationReason = cancellationReason; }
+    public Long getId() {
+        return id;
+    }
 
-    public com.bank.aml.explanation.EddTaskPurpose getPurpose() { return purpose; }
-    public void setPurpose(com.bank.aml.explanation.EddTaskPurpose value) { purpose = value; }
-    public Long getOriginRequestId() { return originRequestId; }
-    public void setOriginRequestId(Long value) { originRequestId = value; }
-    public Long getOriginReviewId() { return originReviewId; }
-    public void setOriginReviewId(Long value) { originReviewId = value; }
-    public String getIssueBindings() { return issueBindings; }
-    public void setIssueBindings(String value) { issueBindings = value; }
-    public String getDueCalendarVersion() { return dueCalendarVersion; }
-    public void setDueCalendarVersion(String value) { dueCalendarVersion = value; }
-    public String getResolutionReason() { return resolutionReason; }
-    public void setResolutionReason(String value) { resolutionReason = value; }
-    public String getCompletionStandard() { return completionStandard; }
-    public void setCompletionStandard(String value) { completionStandard = value; }
-    public String getObligationFactKey() { return obligationFactKey; }
-    public void setObligationFactKey(String value) { obligationFactKey = value; }
-    public java.math.BigDecimal getObligationAmount() { return obligationAmount; }
-    public void setObligationAmount(java.math.BigDecimal value) { obligationAmount = value; }
-    public String getObligationTransactionIds() { return obligationTransactionIds; }
-    public void setObligationTransactionIds(String value) { obligationTransactionIds = value; }
-    public LocalDateTime getCreatedAt() { return createdAt; }
-    public LocalDateTime getUpdatedAt() { return updatedAt; }
+    public Long getCaseId() {
+        return caseId;
+    }
+
+    public void setCaseId(Long caseId) {
+        this.caseId = caseId;
+    }
+
+    public int getRoundNo() {
+        return roundNo;
+    }
+
+    public void setRoundNo(int roundNo) {
+        this.roundNo = roundNo;
+    }
+
+    public String getReasonCode() {
+        return reasonCode;
+    }
+
+    public void setReasonCode(String reasonCode) {
+        this.reasonCode = reasonCode;
+    }
+
+    public String getRequiredItemsJson() {
+        return requiredItemsJson;
+    }
+
+    public void setRequiredItemsJson(String requiredItemsJson) {
+        this.requiredItemsJson = requiredItemsJson;
+    }
+
+    public String getRequestedBy() {
+        return requestedBy;
+    }
+
+    public void setRequestedBy(String requestedBy) {
+        this.requestedBy = requestedBy;
+    }
+
+    public LocalDateTime getRequestedAt() {
+        return requestedAt;
+    }
+
+    public void setRequestedAt(LocalDateTime requestedAt) {
+        this.requestedAt = requestedAt;
+    }
+
+    public String getAssignedTo() {
+        return assignedTo;
+    }
+
+    public void setAssignedTo(String assignedTo) {
+        this.assignedTo = assignedTo;
+    }
+
+    public String getAssignedUnit() {
+        return assignedUnit;
+    }
+
+    public void setAssignedUnit(String assignedUnit) {
+        this.assignedUnit = assignedUnit;
+    }
+
+    public LocalDateTime getDueAt() {
+        return dueAt;
+    }
+
+    public void setDueAt(LocalDateTime dueAt) {
+        this.dueAt = dueAt;
+    }
+
+    public EnhancedDueDiligenceStatus getStatus() {
+        return status;
+    }
+
+    public void setStatus(EnhancedDueDiligenceStatus status) {
+        this.status = status;
+    }
+
+    public int getRevision() {
+        return revision;
+    }
+
+    public void setRevision(int revision) {
+        this.revision = revision;
+    }
+
+    public String getResponseSummary() {
+        return responseSummary;
+    }
+
+    public void setResponseSummary(String responseSummary) {
+        this.responseSummary = responseSummary;
+    }
+
+    public String getEvidenceReferencesJson() {
+        return evidenceReferencesJson;
+    }
+
+    public void setEvidenceReferencesJson(String evidenceReferencesJson) {
+        this.evidenceReferencesJson = evidenceReferencesJson;
+    }
+
+    public String getRespondedBy() {
+        return respondedBy;
+    }
+
+    public void setRespondedBy(String respondedBy) {
+        this.respondedBy = respondedBy;
+    }
+
+    public LocalDateTime getRespondedAt() {
+        return respondedAt;
+    }
+
+    public void setRespondedAt(LocalDateTime respondedAt) {
+        this.respondedAt = respondedAt;
+    }
+
+    public LocalDateTime getResolvedAt() {
+        return resolvedAt;
+    }
+
+    public void setResolvedAt(LocalDateTime resolvedAt) {
+        this.resolvedAt = resolvedAt;
+    }
+
+    public String getResolvedBy() {
+        return resolvedBy;
+    }
+
+    public void setResolvedBy(String resolvedBy) {
+        this.resolvedBy = resolvedBy;
+    }
+
+    public String getCancelledBy() {
+        return cancelledBy;
+    }
+
+    public void setCancelledBy(String cancelledBy) {
+        this.cancelledBy = cancelledBy;
+    }
+
+    public LocalDateTime getCancelledAt() {
+        return cancelledAt;
+    }
+
+    public void setCancelledAt(LocalDateTime cancelledAt) {
+        this.cancelledAt = cancelledAt;
+    }
+
+    public String getCancellationReason() {
+        return cancellationReason;
+    }
+
+    public void setCancellationReason(String cancellationReason) {
+        this.cancellationReason = cancellationReason;
+    }
+
+    public EddTaskPurpose getPurpose() {
+        return purpose;
+    }
+
+    public void setPurpose(EddTaskPurpose value) {
+        purpose = value;
+    }
+
+    public Long getOriginRequestId() {
+        return originRequestId;
+    }
+
+    public void setOriginRequestId(Long value) {
+        originRequestId = value;
+    }
+
+    public Long getOriginReviewId() {
+        return originReviewId;
+    }
+
+    public void setOriginReviewId(Long value) {
+        originReviewId = value;
+    }
+
+    public String getIssueBindings() {
+        return issueBindings;
+    }
+
+    public void setIssueBindings(String value) {
+        issueBindings = value;
+    }
+
+    public String getDueCalendarVersion() {
+        return dueCalendarVersion;
+    }
+
+    public void setDueCalendarVersion(String value) {
+        dueCalendarVersion = value;
+    }
+
+    public String getResolutionReason() {
+        return resolutionReason;
+    }
+
+    public void setResolutionReason(String value) {
+        resolutionReason = value;
+    }
+
+    public String getCompletionStandard() {
+        return completionStandard;
+    }
+
+    public void setCompletionStandard(String value) {
+        completionStandard = value;
+    }
+
+    public String getObligationFactKey() {
+        return obligationFactKey;
+    }
+
+    public void setObligationFactKey(String value) {
+        obligationFactKey = value;
+    }
+
+    public BigDecimal getObligationAmount() {
+        return obligationAmount;
+    }
+
+    public void setObligationAmount(BigDecimal value) {
+        obligationAmount = value;
+    }
+
+    public String getObligationTransactionIds() {
+        return obligationTransactionIds;
+    }
+
+    public void setObligationTransactionIds(String value) {
+        obligationTransactionIds = value;
+    }
+
+    public LocalDateTime getCreatedAt() {
+        return createdAt;
+    }
+
+    public LocalDateTime getUpdatedAt() {
+        return updatedAt;
+    }
+
 }

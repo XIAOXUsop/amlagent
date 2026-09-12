@@ -1,6 +1,7 @@
 package com.bank.aml.assistant.application;
 
 public class ConversationStateException extends RuntimeException {
+
     private final String code;
 
     public ConversationStateException(String code, String message) {
@@ -8,5 +9,8 @@ public class ConversationStateException extends RuntimeException {
         this.code = code;
     }
 
-    public String code() { return code; }
+    public String code() {
+        return code;
+    }
+
 }

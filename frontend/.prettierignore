@@ -1,0 +1,9 @@
+dist
+coverage
+node_modules
+.impeccable
+playwright-report
+test-results
+src/auto-imports.d.ts
+src/components.d.ts
+*.log

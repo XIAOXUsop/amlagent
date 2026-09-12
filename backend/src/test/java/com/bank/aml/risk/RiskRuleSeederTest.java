@@ -1,15 +1,15 @@
 package com.bank.aml.risk;
 
-import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Test;
-import org.mockito.ArgumentCaptor;
-
+import com.bank.aml.TestClocks;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
@@ -25,12 +25,13 @@ import static org.mockito.Mockito.when;
 class RiskRuleSeederTest {
 
     private RiskRuleRepository repository;
+
     private RiskRuleSeeder seeder;
 
     @BeforeEach
     void setUp() {
         repository = mock(RiskRuleRepository.class);
-        seeder = new RiskRuleSeeder(repository, new RiskRuleEngine(repository));
+        seeder = new RiskRuleSeeder(repository, new RiskRuleEngine(repository, TestClocks.FIXED));
     }
 
     @Test
@@ -63,8 +64,8 @@ class RiskRuleSeederTest {
 
     @Test
     void upgradesVersionOneManagedRuleToVersionTwoInPlace() {
-        RiskRule legacy = rule("TXN_ABNORMAL", 1,
-                "transaction.crossRatio > 20 && transaction.nightRatio > 30", "高风险", "AUTO_DONE");
+        RiskRule legacy = rule("TXN_ABNORMAL", 1, "transaction.crossRatio > 20 && transaction.nightRatio > 30", "高风险",
+                "AUTO_DONE");
         when(repository.findByRuleCode(anyString())).thenReturn(Optional.empty());
         when(repository.findByRuleCode("TXN_ABNORMAL")).thenReturn(Optional.of(legacy));
         when(repository.findByEnabledTrueOrderByPriorityAsc()).thenReturn(List.of(legacy));
@@ -80,8 +81,7 @@ class RiskRuleSeederTest {
 
     @Test
     void doesNotOverwriteHumanEditedRuleAtCurrentVersion() {
-        RiskRule customized = rule("TXN_MODERATE", 2,
-                "transaction.largeCount >= 3", "高风险", "MANUAL_REVIEW");
+        RiskRule customized = rule("TXN_MODERATE", 2, "transaction.largeCount >= 3", "高风险", "MANUAL_REVIEW");
         customized.setDescription("合规团队人工配置");
         when(repository.findByRuleCode(anyString())).thenReturn(Optional.empty());
         when(repository.findByRuleCode("TXN_MODERATE")).thenReturn(Optional.of(customized));
@@ -100,16 +100,17 @@ class RiskRuleSeederTest {
     void runningSeederTwiceIsIdempotentEvenWhenNewEntitiesHaveNoId() {
         Map<String, RiskRule> database = new HashMap<>();
         when(repository.findByRuleCode(anyString()))
-                .thenAnswer(invocation -> Optional.ofNullable(database.get(invocation.getArgument(0))));
+            .thenAnswer(invocation -> Optional.ofNullable(database.get(invocation.getArgument(0))));
         when(repository.save(any(RiskRule.class))).thenAnswer(invocation -> {
             RiskRule saved = invocation.getArgument(0);
             database.put(saved.getRuleCode(), saved);
             return saved;
         });
-        when(repository.findByEnabledTrueOrderByPriorityAsc()).thenAnswer(invocation -> database.values().stream()
-                .filter(RiskRule::isEnabled)
-                .sorted(Comparator.comparingInt(RiskRule::getPriority))
-                .toList());
+        when(repository.findByEnabledTrueOrderByPriorityAsc()).thenAnswer(invocation -> database.values()
+            .stream()
+            .filter(RiskRule::isEnabled)
+            .sorted(Comparator.comparingInt(RiskRule::getPriority))
+            .toList());
 
         seeder.run(null);
         seeder.run(null);
@@ -128,8 +129,8 @@ class RiskRuleSeederTest {
         return result;
     }
 
-    private void assertRule(Map<String, RiskRule> rules, String code, int version, String expression,
-                            String target, String action) {
+    private void assertRule(Map<String, RiskRule> rules, String code, int version, String expression, String target,
+            String action) {
         assertThat(rules).containsKey(code);
         RiskRule rule = rules.get(code);
         assertThat(rule.getVersion()).isEqualTo(version);
@@ -152,4 +153,5 @@ class RiskRuleSeederTest {
         rule.setEnabled(true);
         return rule;
     }
+
 }

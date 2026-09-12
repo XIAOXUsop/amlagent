@@ -1,7 +1,7 @@
 # 代码审查问题修改计划 v1
 
-日期：2026-09-05  
-依据：`docs/reviews/code-exploration-review-2026-09-05.md`  
+日期：2026-09-05
+依据：`docs/reviews/code-exploration-review-2026-09-05.md`
 状态：修改方案，尚未实施；以下接口、字段和类名中标注“新增”的部分均为建议设计。
 
 ## 1. 目标与设计决策

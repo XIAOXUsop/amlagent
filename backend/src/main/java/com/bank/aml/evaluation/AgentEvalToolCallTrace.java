@@ -7,18 +7,14 @@ import java.util.Map;
 /**
  * One immutable tool invocation captured during an Agent evaluation case.
  *
- * <p>The result itself is intentionally not retained: a digest is enough to prove which fixture
- * response was returned without duplicating potentially sensitive fixture data in reports.</p>
+ * <p>
+ * The result itself is intentionally not retained: a digest is enough to prove which
+ * fixture response was returned without duplicating potentially sensitive fixture data in
+ * reports.
+ * </p>
  */
-public record AgentEvalToolCallTrace(
-        String toolName,
-        Map<String, String> arguments,
-        boolean success,
-        boolean argumentValid,
-        long durationMs,
-        String resultDigest,
-        String error
-) {
+public record AgentEvalToolCallTrace(String toolName, Map<String, String> arguments, boolean success,
+        boolean argumentValid, long durationMs, String resultDigest, String error) {
 
     public AgentEvalToolCallTrace {
         Map<String, String> sanitized = new LinkedHashMap<>();
@@ -33,8 +29,8 @@ public record AgentEvalToolCallTrace(
             return null;
         }
         String normalized = name == null ? "" : name.toLowerCase();
-        if (normalized.contains("identity") || normalized.contains("idcard")
-                || normalized.contains("name") || normalized.contains("customer")) {
+        if (normalized.contains("identity") || normalized.contains("idcard") || normalized.contains("name")
+                || normalized.contains("customer")) {
             return "[REDACTED]";
         }
         if (normalized.contains("query")) {

@@ -1,17 +1,18 @@
 package com.bank.aml.service;
 
+import com.bank.aml.TestProperties;
+import com.bank.aml.common.crypto.IdCardCipher;
+import com.bank.aml.common.exception.CustomerNotFoundException;
 import com.bank.aml.datasource.DatabaseCustomerDataPort;
 import com.bank.aml.datasource.entity.CustomerEntity;
 import com.bank.aml.datasource.repository.CustomerRepository;
-import com.bank.aml.security.IdCardCipher;
+import java.io.ByteArrayOutputStream;
+import java.util.Optional;
 import org.apache.poi.xssf.usermodel.XSSFWorkbook;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
-
-import java.io.ByteArrayOutputStream;
-import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -24,8 +25,10 @@ import static org.mockito.Mockito.when;
 class CustomerAdminServiceTest {
 
     private final CustomerRepository repository = mock(CustomerRepository.class);
+
     private final DatabaseCustomerDataPort dataPort = mock(DatabaseCustomerDataPort.class);
-    private final CustomerAdminService service = new CustomerAdminService(repository, dataPort);
+
+    private final CustomerAdminService service = new CustomerAdminService(repository, dataPort, TestProperties.aml());
 
     @AfterEach
     void clearTransactionSynchronization() {
@@ -40,8 +43,7 @@ class CustomerAdminServiceTest {
         when(repository.save(any(CustomerEntity.class))).thenAnswer(invocation -> invocation.getArgument(0));
         TransactionSynchronizationManager.initSynchronization();
 
-        var result = service.create(
-                new CustomerAdminService.CreateRequest(" 新客户 ", " ID-001 ", "个人", null, null, null),
+        var result = service.create(new CustomerAdminService.CreateRequest(" 新客户 ", " ID-001 ", "个人", null, null, null),
                 "admin");
 
         assertThat(result.customerNo()).matches("C-[0-9A-F]{16}");
@@ -56,10 +58,10 @@ class CustomerAdminServiceTest {
     void rejectsIdentifierThatExistsInSoftDeletedHistory() {
         when(repository.existsByIdCardFingerprint(IdCardCipher.fingerprint("ID-001"))).thenReturn(true);
 
-        assertThatThrownBy(() -> service.create(
-                new CustomerAdminService.CreateRequest("客户", "ID-001", null, null, null, null), "admin"))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("证件号已存在");
+        assertThatThrownBy(() -> service
+            .create(new CustomerAdminService.CreateRequest("客户", "ID-001", null, null, null, null), "admin"))
+            .isInstanceOf(IllegalArgumentException.class)
+            .hasMessageContaining("证件号已存在");
         verify(repository, never()).save(any());
     }
 
@@ -69,9 +71,8 @@ class CustomerAdminServiceTest {
         var file = new MockMultipartFile("file", "customers.xlsx",
                 "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", oversized);
 
-        assertThatThrownBy(() -> service.importExcel(file, "admin"))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("5MB");
+        assertThatThrownBy(() -> service.importExcel(file, "admin")).isInstanceOf(IllegalArgumentException.class)
+            .hasMessageContaining("5242880 字节");
         verify(repository, never()).save(any());
     }
 
@@ -105,7 +106,7 @@ class CustomerAdminServiceTest {
     void returnsMaskedCustomerDetailAndAllowsDisabledCustomer() {
         CustomerEntity entity = customer("C-DETAIL", "110101199001011234");
         entity.setStatus("DISABLED");
-        when(repository.findById(7L)).thenReturn(java.util.Optional.of(entity));
+        when(repository.findById(7L)).thenReturn(Optional.of(entity));
 
         var result = service.detail(7L);
 
@@ -118,10 +119,9 @@ class CustomerAdminServiceTest {
     void hidesSoftDeletedCustomerDetail() {
         CustomerEntity entity = customer("C-DELETED", "110101199001011234");
         entity.setDeleted(true);
-        when(repository.findById(8L)).thenReturn(java.util.Optional.of(entity));
+        when(repository.findById(8L)).thenReturn(Optional.of(entity));
 
-        assertThatThrownBy(() -> service.detail(8L))
-                .isInstanceOf(com.bank.aml.common.exception.CustomerNotFoundException.class);
+        assertThatThrownBy(() -> service.detail(8L)).isInstanceOf(CustomerNotFoundException.class);
     }
 
     private CustomerEntity customer(String number, String idCard) {
@@ -131,4 +131,5 @@ class CustomerAdminServiceTest {
         entity.setIdCard(idCard);
         return entity;
     }
+
 }

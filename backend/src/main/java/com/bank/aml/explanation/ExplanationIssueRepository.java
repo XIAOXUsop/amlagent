@@ -1,9 +1,8 @@
 package com.bank.aml.explanation;
 
-import org.springframework.data.jpa.repository.JpaRepository;
-
 import java.util.List;
 import java.util.Optional;
+import org.springframework.data.jpa.repository.JpaRepository;
 
 public interface ExplanationIssueRepository extends JpaRepository<ExplanationIssue, Long> {
 
@@ -14,4 +13,5 @@ public interface ExplanationIssueRepository extends JpaRepository<ExplanationIss
     List<ExplanationIssue> findByCaseIdOrderByIdAsc(Long caseId);
 
     List<ExplanationIssue> findByCaseIdAndUnitIdOrderByIdAsc(Long caseId, Long unitId);
+
 }

@@ -26,6 +26,12 @@ const evidenceIds = computed(() => {
 </template>
 
 <style scoped>
-.evidence-panel { margin-top: 14px; }
-.evidence-panel p { margin-top: 0; color: var(--text-faint); font-size: 12px; }
+.evidence-panel {
+  margin-top: 14px;
+}
+.evidence-panel p {
+  margin-top: 0;
+  color: var(--text-faint);
+  font-size: 12px;
+}
 </style>

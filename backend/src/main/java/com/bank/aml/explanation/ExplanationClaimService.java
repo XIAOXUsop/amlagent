@@ -1,69 +1,81 @@
 package com.bank.aml.explanation;
 
-import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
-
+import java.time.Clock;
 import java.time.LocalDateTime;
-import java.util.LinkedHashMap;
+import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
-import java.util.Map;
 import java.util.Set;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 /**
  * 待验证事实 Claim 写入链（v4 计划 G1-2 / §5.2 / RF-20）。
  *
- * <p>一次声明落库 Claim 状态与 ClaimEvidenceLink（支持/反对、来源家族、定位）；
- * 提交时冻结 claim revision 与采用状态。同源家族（sourceSystem + 归一化 sourceReference）
- * 不能当作多份独立确认——独立确认计数按家族去重。
+ * <p>
+ * 一次声明落库 Claim 状态与 ClaimEvidenceLink（支持/反对、来源家族、定位）； 提交时冻结 claim revision
+ * 与采用状态。同源家族（sourceSystem + 归一化 sourceReference） 不能当作多份独立确认——独立确认计数按家族去重。
  */
 @Service
 public class ExplanationClaimService {
 
     private static final Set<String> CLAIM_CODES = Set.of("C1", "C2", "C3", "C4", "C5", "C6");
-    private static final Set<String> STATUSES =
-            Set.of("SUPPORTED", "CONTRADICTED", "UNRESOLVED", "NOT_APPLICABLE", "UNASSESSED");
+
+    private static final Set<String> STATUSES = Set.of("SUPPORTED", "CONTRADICTED", "UNRESOLVED", "NOT_APPLICABLE",
+            "UNASSESSED");
+
     private static final Set<String> DIRECTIONS = Set.of("SUPPORTS", "CHALLENGES", "CONTEXT");
 
     private final ExplanationClaimRepository claimRepository;
+
     private final ClaimEvidenceLinkRepository linkRepository;
+
     private final EvidenceArtifactVersionRepository artifactRepository;
 
+    private final AlertExplanationUnitRepository unitRepository;
+
+    private final ExplanationFactInvalidationService factInvalidationService;
+
+    private final Clock clock;
+
+    /** 仅供不涉及事实失效断言的轻量单元测试兼容。生产由完整构造器注入。 */
     public ExplanationClaimService(ExplanationClaimRepository claimRepository,
-                                   ClaimEvidenceLinkRepository linkRepository,
-                                   EvidenceArtifactVersionRepository artifactRepository) {
+            ClaimEvidenceLinkRepository linkRepository, EvidenceArtifactVersionRepository artifactRepository,
+            Clock clock) {
+        this(claimRepository, linkRepository, artifactRepository, null, null, clock);
+    }
+
+    @Autowired
+    public ExplanationClaimService(ExplanationClaimRepository claimRepository,
+            ClaimEvidenceLinkRepository linkRepository, EvidenceArtifactVersionRepository artifactRepository,
+            AlertExplanationUnitRepository unitRepository, ExplanationFactInvalidationService factInvalidationService,
+            Clock clock) {
         this.claimRepository = claimRepository;
         this.linkRepository = linkRepository;
         this.artifactRepository = artifactRepository;
+        this.unitRepository = unitRepository;
+        this.factInvalidationService = factInvalidationService;
+        this.clock = clock;
     }
 
     /** 声明请求：单条 Claim 状态 + 材料引用。 */
-    public record ClaimDeclaration(
-            String claimCode,
-            String status,
-            String importance,
-            String judgement,
-            String methodNote,
-            String limitations,
-            String notApplicableReason,
-            List<LinkDeclaration> links
-    ) {
+    public record ClaimDeclaration(String claimCode, String status, String importance, String judgement,
+            String methodNote, String limitations, String notApplicableReason, List<LinkDeclaration> links) {
     }
 
-    public record LinkDeclaration(
-            Long artifactVersionId,
-            String direction,
-            String location,
-            String note
-    ) {
+    public record LinkDeclaration(Long artifactVersionId, String direction, String location, String note) {
     }
 
     /** 覆盖式声明单元的 C1~C6（未列出的 Claim 置 UNASSESSED 并保留历史关联）。 */
     @Transactional
-    public List<ExplanationViews.ClaimView> declareClaims(Long caseId, Long unitId,
-                                                          List<ClaimDeclaration> declarations,
-                                                          String actor) {
+    public List<ExplanationViews.ClaimView> declareClaims(Long caseId, Long unitId, List<ClaimDeclaration> declarations,
+            String actor) {
+        if (unitRepository != null) {
+            unitRepository.findByIdAndCaseId(unitId, caseId)
+                .orElseThrow(() -> new IllegalArgumentException("预警核验单元不存在或不属于当前案件：" + unitId));
+        }
         Set<String> declaredCodes = new LinkedHashSet<>();
         for (ClaimDeclaration declaration : declarations == null ? List.<ClaimDeclaration>of() : declarations) {
             String code = upper(declaration.claimCode());
@@ -79,27 +91,25 @@ public class ExplanationClaimService {
             }
             String judgement = declaration.judgement() == null ? "" : declaration.judgement().trim();
             if (!"UNASSESSED".equals(status) && judgement.length() < 10) {
-                throw new IllegalArgumentException("Claim " + code + " 的判断需至少 10 个字符"
-                        + "（为什么证据支持/反对/不足以判断）");
+                throw new IllegalArgumentException("Claim " + code + " 的判断需至少 10 个字符" + "（为什么证据支持/反对/不足以判断）");
             }
-            if ("NOT_APPLICABLE".equals(status)
-                    && (declaration.notApplicableReason() == null
+            if ("NOT_APPLICABLE".equals(status) && (declaration.notApplicableReason() == null
                     || declaration.notApplicableReason().trim().length() < 10)) {
                 throw new IllegalArgumentException("Claim " + code + " 标记不适用需说明理由与适用条件");
             }
-            ExplanationClaim claim = claimRepository
-                    .findByCaseIdAndUnitIdOrderByIdAsc(caseId, unitId).stream()
-                    .filter(existing -> code.equals(existing.getClaimCode()))
-                    .findFirst()
-                    .orElseGet(() -> {
-                        ExplanationClaim created = new ExplanationClaim();
-                        created.setCaseId(caseId);
-                        created.setUnitId(unitId);
-                        created.setClaimCode(code);
-                        created.setClaimRevision(0);
-                        created.setCreatedAt(LocalDateTime.now());
-                        return created;
-                    });
+            ExplanationClaim claim = claimRepository.findByCaseIdAndUnitIdOrderByIdAsc(caseId, unitId)
+                .stream()
+                .filter(existing -> code.equals(existing.getClaimCode()))
+                .findFirst()
+                .orElseGet(() -> {
+                    ExplanationClaim created = new ExplanationClaim();
+                    created.setCaseId(caseId);
+                    created.setUnitId(unitId);
+                    created.setClaimCode(code);
+                    created.setClaimRevision(0);
+                    created.setCreatedAt(LocalDateTime.now(clock));
+                    return created;
+                });
             claim.setStatus(status);
             claim.setImportance(declaration.importance() == null || declaration.importance().isBlank()
                     ? "DECISION_CRITICAL" : declaration.importance().trim());
@@ -109,17 +119,17 @@ public class ExplanationClaimService {
             claim.setNotApplicableReason(declaration.notApplicableReason());
             claim.setClaimRevision(claim.getClaimRevision() + 1);
             claim.setUpdatedBy(actor);
-            claim.setUpdatedAt(LocalDateTime.now());
+            claim.setUpdatedAt(LocalDateTime.now(clock));
             ExplanationClaim saved = claimRepository.save(claim);
 
             // 关联重写（覆盖式）：校验材料归属并落 sourceFamily
-            linkRepository.findByClaimIdOrderByIdAsc(saved.getId())
-                    .forEach(linkRepository::delete);
-            for (LinkDeclaration link : declaration.links() == null ? List.<LinkDeclaration>of() : declaration.links()) {
+            linkRepository.findByClaimIdOrderByIdAsc(saved.getId()).forEach(linkRepository::delete);
+            for (LinkDeclaration link : declaration.links() == null ? List.<LinkDeclaration>of()
+                    : declaration.links()) {
                 EvidenceArtifactVersion artifact = artifactRepository
-                        .findByIdAndCaseId(link.artifactVersionId(), caseId)
-                        .orElseThrow(() -> new IllegalArgumentException(
-                                "Claim " + code + " 引用的材料不属于当前案件：" + link.artifactVersionId()));
+                    .findByIdAndCaseId(link.artifactVersionId(), caseId)
+                    .orElseThrow(() -> new IllegalArgumentException(
+                            "Claim " + code + " 引用的材料不属于当前案件：" + link.artifactVersionId()));
                 String direction = upper(link.direction());
                 if (!DIRECTIONS.contains(direction)) {
                     throw new IllegalArgumentException("Claim " + code + " 关联方向不在允许范围：" + link.direction());
@@ -133,9 +143,13 @@ public class ExplanationClaimService {
                 entity.setLocation(link.location());
                 entity.setNote(link.note());
                 entity.setCreatedBy(actor);
-                entity.setCreatedAt(LocalDateTime.now());
+                entity.setCreatedAt(LocalDateTime.now(clock));
                 linkRepository.save(entity);
             }
+        }
+        if (factInvalidationService != null && !declaredCodes.isEmpty()) {
+            factInvalidationService.invalidate(caseId,
+                    "Claim 状态或证据发生变化：unit=" + unitId + ",claims=" + String.join(",", declaredCodes), actor);
         }
         return viewAll(caseId, unitId);
     }
@@ -154,17 +168,16 @@ public class ExplanationClaimService {
 
     @Transactional(readOnly = true)
     public List<ExplanationViews.ClaimView> viewAll(Long caseId, Long unitId) {
-        Map<Long, Integer> independent = new LinkedHashMap<>();
-        List<ExplanationViews.ClaimView> views = new java.util.ArrayList<>();
+        List<ExplanationViews.ClaimView> views = new ArrayList<>();
         for (ExplanationClaim claim : claimRepository.findByCaseIdAndUnitIdOrderByIdAsc(caseId, unitId)) {
             List<ClaimEvidenceLink> links = linkRepository.findByClaimIdOrderByIdAsc(claim.getId());
             views.add(new ExplanationViews.ClaimView(claim.getId(), claim.getClaimCode(), claim.getStatus(),
-                    claim.getImportance(), claim.getJudgement(), claim.getMethodNote(),
-                    claim.getLimitations(), claim.getNotApplicableReason(), claim.getClaimRevision(),
-                    claim.getUpdatedBy(),
-                    links.stream().map(link -> new ExplanationViews.ClaimLinkView(link.getId(),
-                            link.getArtifactVersionId(), link.getDirection(), link.getSourceFamily(),
-                            link.getLocation(), link.getNote())).toList(),
+                    claim.getImportance(), claim.getJudgement(), claim.getMethodNote(), claim.getLimitations(),
+                    claim.getNotApplicableReason(), claim.getClaimRevision(), claim.getUpdatedBy(),
+                    links.stream()
+                        .map(link -> new ExplanationViews.ClaimLinkView(link.getId(), link.getArtifactVersionId(),
+                                link.getDirection(), link.getSourceFamily(), link.getLocation(), link.getNote()))
+                        .toList(),
                     independentSourceCount(claim.getId())));
         }
         return views;
@@ -172,11 +185,11 @@ public class ExplanationClaimService {
 
     /** 来源家族：sourceSystem + 归一化 sourceReference（同文件复制/转发同家族）。 */
     public static String sourceFamilyOf(EvidenceArtifactVersion artifact) {
-        return (artifact.getSourceSystem() + ":" + artifact.getSourceReference())
-                .toLowerCase(Locale.ROOT);
+        return (artifact.getSourceSystem() + ":" + artifact.getSourceReference()).toLowerCase(Locale.ROOT);
     }
 
     private static String upper(String value) {
         return value == null ? "" : value.trim().toUpperCase(Locale.ROOT);
     }
+
 }

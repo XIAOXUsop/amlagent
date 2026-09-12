@@ -7,6 +7,5 @@ public record RiskSummary(
         /** 风险评级：低风险 / 中风险 / 高风险 */
         String riskLevel,
         /** 摘要说明 */
-        String summary
-) {
+        String summary) {
 }

@@ -5,8 +5,8 @@ import dev.langchain4j.service.UserMessage;
 
 /**
  * 合规尽调 Agent 接口（AiServices 动态实现）。
- * <p>绑定交易画像 / 股权穿透 / 黑名单检索 / 法规检索四个工具；
- * 模型自主规划调用顺序与参数，最终输出不含可信身份字段的结构化 {@link AgentAnalysis}。
+ * <p>
+ * 绑定交易画像 / 股权穿透 / 黑名单检索 / 法规检索四个工具； 模型自主规划调用顺序与参数，最终输出不含可信身份字段的结构化 {@link AgentAnalysis}。
  */
 public interface DueDiligenceAgent {
 
@@ -67,7 +67,8 @@ public interface DueDiligenceAgent {
               RISK_ASSESSMENT_UNCERTAIN、MANUAL_REVIEW、RETRY_TRANSACTION_SOURCE、RESTRICT_AUTOMATED_APPROVAL；
               明确交易模式变化且为中风险→TRANSACTION_PATTERN_CHANGE、INCREASE_MONITORING、REFRESH_CUSTOMER_PROFILE；
             - legalBasis 与 evidenceChain 必须保留法规检索结果中出现的原始 evidenceId，不得自造或改写证据 ID；
-            - manualReviewRequired：只有证据要求人工升级时为 true；manualReviewRequired 必须与 actionCodes 中的 MANUAL_REVIEW 一致（为 true 时 actionCodes 必须含 MANUAL_REVIEW，为 false 时不得含）；
+            - manualReviewRequired：只有证据要求人工升级时为 true；且必须与 actionCodes 中的 MANUAL_REVIEW 一致；
+              为 true 时 actionCodes 必须含 MANUAL_REVIEW，为 false 时不得含；
             - findingCodes：只能从以下闭集中选择，不得自造代码：
               NORMAL_TRANSACTION_PATTERN, NO_SANCTION_HIT, LEGITIMATE_TRANSACTION_PURPOSE,
               SUPPORTING_DOCUMENTS_VERIFIED, CROSS_BORDER_ACTIVITY, NIGHT_CROSS_BORDER_CLUSTER,
@@ -90,4 +91,5 @@ public interface DueDiligenceAgent {
             最后给出结论与后续处置建议。
             """)
     AgentAnalysis investigate(@UserMessage String caseDescription);
+
 }

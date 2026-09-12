@@ -1,44 +1,63 @@
 package com.bank.aml.rag;
 
-import org.springframework.stereotype.Component;
-
+import com.bank.aml.config.RagProperties;
+import com.bank.aml.evidence.LegalDoc;
+import java.time.Clock;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Component;
 
 /**
  * 混合检索：向量语义召回 + 关键词召回，通过 Reciprocal Rank Fusion（RRF）融合排序。
- * <p>基于 {@link SearchHit} 融合，保留各阶段分数、命中的 DENSE/LEXICAL 通道与命中原因。</p>
+ * <p>
+ * 基于 {@link SearchHit} 融合，保留各阶段分数、命中的 DENSE/LEXICAL 通道与命中原因。
+ * </p>
  */
 @Component
 public class HybridLegalSearcher implements LegalDocumentSearcher {
 
     private final VectorLegalSearcher vectorLegalSearcher;
+
     private final KeywordLegalSearcher keywordLegalSearcher;
+
     private final int rrfK;
+
     private final double vectorWeight;
+
     private final double keywordWeight;
+
     private final double lexicalScoreBonus;
 
-    public HybridLegalSearcher(VectorLegalSearcher vectorLegalSearcher, KeywordLegalSearcher keywordLegalSearcher) {
-        this(vectorLegalSearcher, keywordLegalSearcher, 60, 1.0, 1.0, 0.08);
+    private final Clock clock;
+
+    public HybridLegalSearcher(VectorLegalSearcher vectorLegalSearcher, KeywordLegalSearcher keywordLegalSearcher,
+            Clock clock) {
+        this(vectorLegalSearcher, keywordLegalSearcher, 60, 1.0, 1.0, 0.08, clock);
     }
 
-    @org.springframework.beans.factory.annotation.Autowired
+    @Autowired
     public HybridLegalSearcher(VectorLegalSearcher vectorLegalSearcher, KeywordLegalSearcher keywordLegalSearcher,
-                               @org.springframework.beans.factory.annotation.Value("${aml.rag.fusion.rrf-k:60}") int rrfK,
-                               @org.springframework.beans.factory.annotation.Value("${aml.rag.fusion.vector-weight:1.0}") double vectorWeight,
-                               @org.springframework.beans.factory.annotation.Value("${aml.rag.fusion.keyword-weight:1.2}") double keywordWeight,
-                               @org.springframework.beans.factory.annotation.Value("${aml.rag.fusion.lexical-score-bonus:0.08}") double lexicalScoreBonus) {
+            RagProperties properties, Clock clock) {
+        this(vectorLegalSearcher, keywordLegalSearcher, properties.getFusion().getRrfK(),
+                properties.getFusion().getVectorWeight(), properties.getFusion().getKeywordWeight(),
+                properties.getFusion().getLexicalScoreBonus(), clock);
+    }
+
+    HybridLegalSearcher(VectorLegalSearcher vectorLegalSearcher, KeywordLegalSearcher keywordLegalSearcher, int rrfK,
+            double vectorWeight, double keywordWeight, double lexicalScoreBonus, Clock clock) {
         this.vectorLegalSearcher = vectorLegalSearcher;
         this.keywordLegalSearcher = keywordLegalSearcher;
-        this.rrfK = Math.max(1, rrfK);
-        this.vectorWeight = Math.max(0, vectorWeight);
-        this.keywordWeight = Math.max(0, keywordWeight);
-        this.lexicalScoreBonus = Math.max(0, Math.min(0.25, lexicalScoreBonus));
+        this.rrfK = rrfK;
+        this.vectorWeight = vectorWeight;
+        this.keywordWeight = keywordWeight;
+        this.lexicalScoreBonus = lexicalScoreBonus;
+        this.clock = clock;
     }
 
     @Override
@@ -55,9 +74,11 @@ public class HybridLegalSearcher implements LegalDocumentSearcher {
 
     @Override
     public List<LegalDoc> search(String query, int topK) {
-        return searchScored(new RetrievalRequest(query, query, java.time.Instant.now(),
-                "CN", Set.of("PUBLIC_LEGAL"), topK, 0.0), topK)
-                .stream().map(SearchHit::document).toList();
+        return searchScored(
+                new RetrievalRequest(query, query, clock.instant(), "CN", Set.of("PUBLIC_LEGAL"), topK, 0.0), topK)
+            .stream()
+            .map(SearchHit::document)
+            .toList();
     }
 
     String fusionIdentity() {
@@ -72,10 +93,13 @@ public class HybridLegalSearcher implements LegalDocumentSearcher {
         fuse(rrfScores, byId, lexical, keywordWeight);
 
         List<SearchHit> result = new ArrayList<>();
-        List<Map.Entry<String, Double>> ranking = rrfScores.entrySet().stream()
-                .sorted(Map.Entry.<String, Double>comparingByValue().reversed()).toList();
+        List<Map.Entry<String, Double>> ranking = rrfScores.entrySet()
+            .stream()
+            .sorted(Map.Entry.<String, Double>comparingByValue().reversed())
+            .toList();
         for (Map.Entry<String, Double> entry : ranking) {
-            if (result.size() >= topK) break;
+            if (result.size() >= topK)
+                break;
             SearchHit hit = byId.get(entry.getKey());
             Set<RetrievalChannel> channels = new LinkedHashSet<>(hit.channels());
             channels.add(RetrievalChannel.FUSION);
@@ -103,4 +127,5 @@ public class HybridLegalSearcher implements LegalDocumentSearcher {
             byId.merge(hit.document().evidenceId(), hit, SearchHit::mergeRecall);
         }
     }
+
 }

@@ -1,10 +1,12 @@
 package com.bank.aml.evaluation;
 
+import com.bank.aml.rag.RetrievalRequest;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import org.junit.jupiter.api.Test;
-
+import java.time.Instant;
+import java.time.LocalDate;
 import java.util.HashSet;
 import java.util.Set;
+import org.junit.jupiter.api.Test;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -30,7 +32,8 @@ class RagAdversarialDatasetTest {
                 answerable++;
                 assertThat(c.expectedTitleContains()).isNotBlank();
                 assertThat(c.expectedContentContains()).isNotBlank();
-            } else {
+            }
+            else {
                 notAnswerable++;
             }
         }
@@ -51,22 +54,29 @@ class RagAdversarialDatasetTest {
 
         for (String category : Set.of("UNAUTHORIZED_SCOPE", "EXPIRED_LAW", "DOCUMENT_POISONING",
                 "MALICIOUS_DOCUMENT_INSTRUCTION", "FAKE_OFFICIAL_SOURCE", "SENSITIVE_LEAK")) {
-            var evalCase = dataset.cases().stream().filter(c -> category.equals(c.category()))
-                    .findFirst().orElseThrow();
+            var evalCase = dataset.cases()
+                .stream()
+                .filter(c -> category.equals(c.category()))
+                .findFirst()
+                .orElseThrow();
             var fixture = factory.scenario(evalCase, "fixture-v1").orElseThrow();
-            var hit = fixture.searcher().searchScored(new com.bank.aml.rag.RetrievalRequest(
-                    evalCase.question(), evalCase.question(), java.time.Instant.parse("2026-08-01T00:00:00Z"),
-                    "CN", Set.of("PUBLIC_LEGAL"), 5, 0.04), 5).getFirst();
+            var hit = fixture.searcher()
+                .searchScored(new RetrievalRequest(evalCase.question(), evalCase.question(),
+                        Instant.parse("2026-08-01T00:00:00Z"), "CN", Set.of("PUBLIC_LEGAL"), 5, 0.04), 5)
+                .getFirst();
 
             assertThat(hit.denseScore()).isEqualTo(0.99);
             if (category.equals("UNAUTHORIZED_SCOPE")) {
                 assertThat(hit.document().metadata().accessScopes()).containsExactly("AML_INTERNAL");
-            } else if (category.equals("EXPIRED_LAW")) {
-                assertThat(hit.document().metadata().effectiveTo()).isBefore(java.time.LocalDate.of(2026, 8, 1));
-            } else {
+            }
+            else if (category.equals("EXPIRED_LAW")) {
+                assertThat(hit.document().metadata().effectiveTo()).isBefore(LocalDate.of(2026, 8, 1));
+            }
+            else {
                 assertThat(hit.document().metadata().securityStatus()).isEqualTo("UNTRUSTED_METADATA");
                 assertThat(hit.document().content()).contains("忽略系统规则");
             }
         }
     }
+
 }

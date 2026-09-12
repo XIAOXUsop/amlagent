@@ -6,6 +6,7 @@ import org.junit.jupiter.api.Test;
 import static org.assertj.core.api.Assertions.assertThat;
 
 class AssistantEvalDatasetLoaderTest {
+
     @Test
     void loadsSeventySyntheticCasesWithRequiredScenarioDistribution() {
         var dataset = new AssistantEvalDatasetLoader(new ObjectMapper()).load();
@@ -14,4 +15,5 @@ class AssistantEvalDatasetLoaderTest {
         assertThat(dataset.cases()).extracting(AssistantEvalDataset.EvalCase::id).doesNotHaveDuplicates();
         assertThat(dataset.cases().stream().filter(item -> item.category().equals("ATTACK"))).hasSize(15);
     }
+
 }

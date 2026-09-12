@@ -11,7 +11,9 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 
 class AuditOutboxServiceTest {
+
     private final AuditOutboxRepository repository = mock(AuditOutboxRepository.class);
+
     private final AuditOutboxService service = new AuditOutboxService(repository);
 
     @Test
@@ -30,9 +32,10 @@ class AuditOutboxServiceTest {
     void outboxFailurePropagatesSoHighImpactBusinessWriteCanRollback() {
         doThrow(new IllegalStateException("db unavailable")).when(repository).save(any());
 
-        assertThatThrownBy(() -> service.enqueue("CASE_REVIEW:7:0", "reviewer", "REVIEW_DECISION",
-                "CASE", "7", "decision=CONFIRM_SUSPICIOUS"))
-                .isInstanceOf(IllegalStateException.class)
-                .hasMessageContaining("db unavailable");
+        assertThatThrownBy(() -> service.enqueue("CASE_REVIEW:7:0", "reviewer", "REVIEW_DECISION", "CASE", "7",
+                "decision=CONFIRM_SUSPICIOUS"))
+            .isInstanceOf(IllegalStateException.class)
+            .hasMessageContaining("db unavailable");
     }
+
 }

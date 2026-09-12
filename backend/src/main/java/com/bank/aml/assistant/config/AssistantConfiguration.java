@@ -7,4 +7,5 @@ import org.springframework.context.annotation.Configuration;
 @Configuration
 @EnableConfigurationProperties(AssistantProperties.class)
 public class AssistantConfiguration {
+
 }
