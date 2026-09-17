@@ -95,7 +95,14 @@ jobs:
           java-version: '21'
           distribution: 'temurin'
           cache: maven
+      # 扫描结果写到文件：失败时得能分清是"你的依赖有漏洞"还是"漏洞库没拉到"。
+      #
+      # 这个 job 原先一直是红的，而原因是后者——NVD 数据源在没有 API Key 时会被
+      # 严格限流，dependency-check 拉不全数据就整体失败，报一堆
+      # "Failed to process CVE-…"。看起来像发现了上百个漏洞，实际一个都没分析出来。
+      # 两种原因都该让 job 红（门禁没生效本身就是问题），但必须能一眼分开。
       - name: Scan Maven dependencies
+        id: scan
         working-directory: backend
         env:
           NVD_API_KEY: ${{ secrets.NVD_API_KEY }}
@@ -103,8 +110,35 @@ jobs:
           args=(-DfailBuildOnCVSS=7)
           if [ -n "$NVD_API_KEY" ]; then
             args+=("-DnvdApiKey=$NVD_API_KEY")
+          else
+            echo "::notice::未配置 NVD_API_KEY：漏洞库更新会被限流，本步可能因为拉不到数据而失败"
           fi
-          ./mvnw org.owasp:dependency-check-maven:12.2.2:check "${args[@]}"
+          set +e
+          ./mvnw org.owasp:dependency-check-maven:12.2.2:check "${args[@]}" 2>&1 | tee dependency-scan.log
+          code=${PIPESTATUS[0]}
+          set -e
+
+          if [ "$code" -eq 0 ]; then
+            echo "依赖扫描通过"
+            exit 0
+          fi
+
+          # 分类：是数据源问题，还是真的扫出了高危依赖
+          if grep -qE "Failed to process CVE-|Unable to continue dependency-check analysis|Error updating the NVD|NVD returned|429" dependency-scan.log; then
+            echo "::error::依赖扫描未能完成：漏洞库数据源不可用（多半是 NVD 限流）。这**不是**发现依赖漏洞，而是这一次检查根本没跑成。配置 NVD_API_KEY 可解决。"
+          else
+            echo "::error::依赖扫描发现达到 CVSS 7 的依赖漏洞，见下方输出与报告产物"
+          fi
+          exit 1
+      - name: Upload dependency scan report
+        if: ${{ failure() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: dependency-scan-report
+          path: |
+            backend/dependency-scan.log
+            backend/target/dependency-check-report.html
+          if-no-files-found: warn
 
   # 辅助 Python 脚本：与主工程使用相同的 LF、120 列和静态检查基线
   python-quality:

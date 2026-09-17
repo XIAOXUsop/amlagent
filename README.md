@@ -532,7 +532,8 @@ cd backend && AML_LLM_ACTIVE_PROVIDER=mock ./mvnw spring-boot:run
 | Frontend Test & Build | 组件测试、lint、类型检查、生产构建 | push / PR / 定时 |
 | Integration Tests | 真实 MySQL / PGVector / Redis 上的迁移、队列与检索回归 | push / PR / 定时 |
 | Playwright E2E | 后端 + 前端 + 浏览器，跑核心业务闭环 | push / PR / 定时 |
-| Secret Scan / Dependency Scan / Python Quality Gate | 密钥、依赖漏洞、辅助脚本规范 | push / PR / 定时 |
+| Secret Scan / Python Quality Gate | 密钥、辅助脚本规范 | push / PR / 定时 |
+| Backend Dependency Vulnerability Scan | OWASP dependency-check，CVSS ≥ 7 阻断 | push / PR / 定时 |
 
 **为什么有定时任务**：push/PR 只在有人提交时才跑，而依赖镜像 tag、Flyway 迁移、
 外部依赖的变化与提交无关。一个几周没人动的仓库，门禁可能早就红了却没人知道——
@@ -544,8 +545,11 @@ cd backend && AML_LLM_ACTIVE_PROVIDER=mock ./mvnw spring-boot:run
 2. **测试断言失败** → `--failures` 逐条列出失败的测试类；
 3. **应用起不来** → 后端日志落盘为 `backend-e2e.log`，随截图与 trace 一起作为
    `e2e-diagnostics` 工件上传。
+4. **漏洞库拉不到** → 依赖扫描失败时会先分类：报一堆 `Failed to process CVE-…`
+   说明是 NVD 数据源限流（**这一次检查根本没跑成**），与"发现了高危依赖"是两回事。
+   配置 `NVD_API_KEY` 可解决限流；没有它时这一步可能常态化失败。
 
-这三类问题以前会混成一句"job failed"，而它们的处理方式完全不同。
+这几类问题以前会混成一句"job failed"，而它们的处理方式完全不同。
 
 ## 性能压测与可靠性演示
 
