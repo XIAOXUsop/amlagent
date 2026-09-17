@@ -43,7 +43,7 @@
 
 ## 待抽取的单元（按"好做 → 难做"排序）
 
-### ① 事实字典（最容易，零依赖）
+### ① 事实字典 ✅ 已完成
 
 | 项 | 值 |
 |---|---|
@@ -52,7 +52,7 @@
 | 依赖 | 无（纯静态查表） |
 | 目标 | `ExplanationFactCatalog` |
 
-价值不大但零风险，适合作为"抽取流程本身"的第一次彩排。
+已抽成 `ExplanationFactCatalog`（四个方法、零依赖）。服务 2493 行。
 
 ### ② 就绪度评估
 
@@ -127,8 +127,8 @@ ExplanationServerFacts（1 个协作者：customerDataPort）
 
 ```
 [已完成] 前置（ExplanationJson）
-  → ① 事实字典（零依赖，练手）
-  → ③a ExplanationServerFacts（1 个协作者，为 ③ 铺路）
+[已完成] ① 事实字典（ExplanationFactCatalog，零依赖）
+[已完成] ③a 权威交易事实（ExplanationServerFacts，1 个协作者）
   → ② 就绪度
   → ③b 草稿校验（③a 之后才评估）
   → ④ 范围与覆盖
