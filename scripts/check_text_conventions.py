@@ -35,6 +35,7 @@ IMMUTABLE_NO_FINAL_NEWLINE = {
 }
 IGNORED_PARTS = {
     ".git",
+    ".reports",
     ".idea",
     ".tmp",
     "coverage",
