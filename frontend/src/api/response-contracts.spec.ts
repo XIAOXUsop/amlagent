@@ -151,4 +151,46 @@ describe('stream and embedded JSON contracts', () => {
       }),
     ).toThrow(ApiContractError)
   })
+  // 注册资本在本系统里是自由文本，不是金额。曾经它被通用启发式按"金额"校验，
+  // 于是一行演示数据（「36666万」「—」「注册资本5000万人民币」）就让**整个客户列表**
+  // 契约校验失败、被前端整体丢弃——创建工单时报「请选择客户」，而接口明明是 200。
+  // 契约检查的代价是调用方拿不到任何数据，所以它只能卡声明过的形状，不能顺手加码。
+  it('accepts free-text regCapital instead of demanding a decimal amount', () => {
+    const seeded = [
+      {
+        id: 'C001',
+        name: '张伟',
+        type: '企业法人',
+        industry: '国际贸易',
+        region: '上海',
+        regCapital: '注册资本5000万人民币',
+      },
+      { id: 'C-5406', name: '林涛', type: '个人', industry: '出口贸易', region: '深圳', regCapital: '36666万' },
+      { id: 'C002', name: '王强', type: '个体工商户', industry: '服装零售', region: '深圳', regCapital: '—' },
+    ]
+
+    expect(() => validateApiResponse(seeded, '/cases/customers', 'get')).not.toThrow()
+  })
+
+  it('still rejects a non-decimal value in a real monetary field', () => {
+    const windows = {
+      asOfTime: '2026-09-10T01:00:00Z',
+      sourceSystem: 'CORE',
+      sourceVersion: '1',
+      windows: [
+        {
+          days: 30,
+          transactionCount: 1,
+          currencyBreakdown: [
+            { currency: 'CNY', totalAmount: '一万', incomingAmount: '0', outgoingAmount: '0', crossBorderAmount: '0' },
+          ],
+          crossBorderCount: 0,
+          nightCount: 0,
+          topCounterparties: [],
+        },
+      ],
+    }
+
+    expect(() => validateApiResponse(windows, '/cases/7/investigation/transaction-windows', 'get')).toThrow(/金额/)
+  })
 })

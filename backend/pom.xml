@@ -305,6 +305,22 @@
                 <!-- 使用一个不存在的标签表示不排除 integration。 -->
                 <test.excluded-groups>__none__</test.excluded-groups>
             </properties>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-surefire-plugin</artifactId>
+                        <configuration>
+                            <!--
+                                集成测试的报告写到独立目录：两者共用 target/surefire-reports 时，
+                                后跑的一次会把前一次的结果盖掉/混进来，于是"单元测试有多少项、失败几项"
+                                变成一个取决于运行顺序的数字。scripts/test_summary.py 按目录分栏统计。
+                            -->
+                            <reportsDirectory>${project.build.directory}/surefire-reports-integration</reportsDirectory>
+                        </configuration>
+                    </plugin>
+                </plugins>
+            </build>
         </profile>
     </profiles>
 </project>

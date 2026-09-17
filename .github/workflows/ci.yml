@@ -7,6 +7,12 @@ on:
   push:
     branches: [main, master]
   pull_request:
+  # 每日定时跑一遍完整链路。
+  # 为什么需要它：push/PR 只在有人提交时才跑，而依赖服务、镜像 tag、
+  # Flyway 迁移与外部数据的变化与提交无关——一次数周没人动的仓库，
+  # 门禁可能早就红了却没人知道。定时任务是发现"沉默失效"的唯一办法。
+  schedule:
+    - cron: '23 2 * * *'
   workflow_dispatch:
 
 jobs:
@@ -165,10 +171,20 @@ jobs:
           java-version: '21'
           distribution: 'temurin'
           cache: maven
+      # 先把三个依赖逐个探一遍。它们没起来时的报错通常是一句连接超时或
+      # Flyway 迁移失败，读的人还得自己推断是哪个依赖——这一步直接点名。
+      - name: Check integration dependencies are reachable
+        # 用 python3：这个 job 没有 setup-python，ubuntu runner 上只有 python3 一定存在
+        run: python3 scripts/integration_report.py --preflight
       - name: Run integration tests
         run: cd backend && ./mvnw -Pintegration-test test
         env:
           AML_RAG_RERANK_ENABLED: 'false'
+      # 失败时逐条列出失败的测试类，让 Actions 摘要能直接点到名字，
+      # 而不是把一屏 Maven 输出丢给人翻
+      - name: Summarize failed integration tests
+        if: ${{ failure() }}
+        run: python3 scripts/integration_report.py --failures
 
   # 端到端测试：后端 + 前端 + Playwright，验证核心用户流程
   e2e-test:
@@ -219,13 +235,23 @@ jobs:
           node-version: '22'
           cache: npm
           cache-dependency-path: frontend/package-lock.json
+      - name: Check integration dependencies are reachable
+        run: python3 scripts/integration_report.py --preflight
+      # 日志重定向到文件：后端起不来时，唯一能说明原因的东西就是它自己的输出。
+      # 之前直接 & 起进程、日志混在 job 输出里，出了问题只能从头翻。
       - name: Start backend
-        run: cd backend && ./mvnw spring-boot:run &
+        run: |
+          cd backend
+          nohup ./mvnw -B spring-boot:run > ../backend-e2e.log 2>&1 &
         env:
           SPRING_PROFILES_ACTIVE: test
           MYSQL_USER: aml
           MYSQL_PASSWORD: aml123456
           AML_RAG_RERANK_ENABLED: 'false'
+          # 强制 Mock 模型：E2E 不能依赖外网，也不能依赖真实模型的随机性。
+          # 本机若配了 DEEPSEEK_API_KEY，不显式指定就会真的去调外部模型——
+          # 测试会变慢、变贵，而且终态不再确定。
+          AML_LLM_ACTIVE_PROVIDER: mock
       - name: Wait for backend readiness
         run: |
           for i in $(seq 1 60); do
@@ -235,11 +261,25 @@ jobs:
             fi
             sleep 2
           done
-          echo "::error::后端未在超时时间内就绪"
+          echo "::error::后端未在超时时间内就绪，后端日志尾部："
+          tail -n 80 backend-e2e.log
           exit 1
       - name: Install frontend deps
+        if: always()
         run: cd frontend && npm ci
       - name: Install Playwright browsers
+        if: always()
         run: cd frontend && npx playwright install chromium --with-deps
       - name: Run E2E tests
         run: cd frontend && npx playwright test
+      # 失败时把后端日志、前端截图与 trace 一起留下——没有这些，"CI 挂了"只能靠猜
+      - name: Upload E2E diagnostics
+        if: ${{ failure() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-diagnostics
+          path: |
+            backend-e2e.log
+            frontend/test-results
+            frontend/playwright-report
+          if-no-files-found: warn

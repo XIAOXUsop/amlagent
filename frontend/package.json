@@ -13,6 +13,7 @@
     "preview": "vite preview",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
+    "test:json": "vitest run --reporter=json --outputFile=.reports/vitest.json",
     "test:e2e": "playwright test"
   },
   "dependencies": {

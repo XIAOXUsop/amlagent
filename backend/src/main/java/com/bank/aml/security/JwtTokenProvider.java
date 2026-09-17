@@ -12,6 +12,7 @@ import java.time.Instant;
 import java.util.Date;
 import javax.crypto.SecretKey;
 import org.springframework.stereotype.Component;
+import org.springframework.beans.factory.annotation.Autowired;
 
 /**
  * JWT 签发与校验。
@@ -25,6 +26,11 @@ public class JwtTokenProvider {
 
     private final Clock clock;
 
+    /**
+     * 必须有 @Autowired：本类还有一个给测试用的包级构造器。 有两个构造器且都没有标注时，Spring 会退回无参实例化并直接抛 "No default
+     * constructor found"——整个应用起不来。
+     */
+    @Autowired
     public JwtTokenProvider(AmlProperties properties, Clock clock) {
         this(properties.security().jwtSecret(), properties.security().jwtValidityHours(), clock);
     }

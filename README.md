@@ -79,7 +79,11 @@
 | DeepSeek 真实 Agent DEV（v2 → v5） | 原始风险准确率 **44.4% → 100%**；Guardrails 后 **77.8% → 100%**；高风险召回率 **40% → 100%**；无效输出 **2/9 → 0/9** | 9 条冻结合成 DEV（`PENDING_DOMAIN_REVIEW`）；2026-08-12/13 本地实测 |
 | v5 工具与证据覆盖 | 必需工具召回率 **100%**；法规 evidenceId 召回率 **100%**；端到端任务通过率 **66.7%**；strictPass **0**（5 次重复调用） | 5 次重复调用的汇总结果 |
 | 首轮工具与证据覆盖（v2） | 必需工具召回率 **94.4%**；法规 evidenceId 召回率 **77.8%** | 失败集中在隐藏法规关键词导致的无效重试，已通过 v5 工具契约修复 |
-| 当前客户 AI 小助确定性评测 | 70 条合成案例意图分类 **70/70**；15/15 攻击在模型前阻断；后端 242 项单测、22 项完整集成回归及 2 项助手安全增量、前端 15 项测试通过 | 2026-08-23 本机验证；新助手真实模型质量评测尚未执行，不宣称模型准确率 |
+| 当前客户 AI 小助确定性评测 | 70 条合成案例意图分类 **70/70**；15/15 攻击在模型前阻断 | 2026-08-23 本机验证；新助手真实模型质量评测尚未执行，不宣称模型准确率 |
+
+> 本表只放**评测结果**，不放测试条数——测试数字由脚本从真实产物统计，见
+> [自动化测试](#自动化测试)。两者混在一张表里，会让人分不清"跑过多少测试"
+> 和"测出来的效果如何"。整表最近一次复核：2026-08-23。
 
 > 规则回归结果只用于验证 Guardrails 和风险规则，不代表大模型准确率。Agent 数字来自 DeepSeek 对 9 条合成 DEV 的迭代基线，v5 指标为调优集结果（可能过拟合），需以冻结的隐藏 TEST 分片验证泛化能力；Agent 与 RAG 数据集标签仍待领域专家复核（`PENDING_DOMAIN_REVIEW`），因此不等同生产准确率。
 
@@ -128,34 +132,47 @@ $env:RUN_LIVE_AGENT_EVAL = "true"
 
 ## 快速启动
 
-### 1. 启动依赖（Docker）
+**一共三步，需要两个终端**——`docker-compose.yml` 里只有基础设施，没有后端与前端的镜像。
+所以不存在"一条命令起全栈"；下面就是实际要敲的东西。
+
+### 1. 启动依赖（终端 A，Docker）
 
 ```bash
 docker compose up -d
 ```
 
-启动三个容器：MySQL(3307)、PostgreSQL+pgvector(5433)、Redis(6379)。
-> 注：因本机 3306/5432 常被本机数据库占用，容器端口已避开，如需调整见 `docker-compose.yml`。
+启动三个容器（端口已避开本机常见的 3306/5432 占用）：
 
-### 2. 启动后端（8080）
+| 服务 | 主机端口 | 用途 |
+|---|---:|---|
+| MySQL 8 | 3307 | 工单、工作流、Flyway 迁移 |
+| PostgreSQL 16 + pgvector | 5433 | 法规向量检索 |
+| Redis 7 | 6379 | Outbox / 可靠任务队列 |
+
+确认三个都起来了再往下走：
+
+```bash
+docker compose ps          # 三个服务都应是 healthy
+```
+
+### 2. 启动后端（终端 B，8080）
 
 ```bash
 cd backend
-./mvnw spring-boot:run          # 默认 Mock 模型（无 API Key，可离线演示）
-./mvnw spring-boot:run -Dspring-boot.run.profiles=dev   # 启用真实 DeepSeek Key
+./mvnw spring-boot:run                                  # 默认 Mock 模型：不需要任何 API Key，可离线演示全流程
+./mvnw spring-boot:run -Dspring-boot.run.profiles=dev   # 改用真实 DeepSeek Key（需先设置 DEEPSEEK_API_KEY）
+```
+
+后端会一直占用终端 B，**不要关掉**。就绪判断：
+
+```bash
+curl -fsS http://localhost:8080/actuator/health
 ```
 
 > 项目内置 **Maven Wrapper（3.9.x）**，无需本机安装新版 Maven。
 > 真实 API Key 只通过 `DEEPSEEK_API_KEY` 环境变量注入；项目配置文件只保留占位符。
 
-### 3. 启动监控（可选）
-
-```bash
-docker compose up -d prometheus grafana
-# Prometheus: http://localhost:9090   Grafana: http://localhost:3000 (admin/admin)
-```
-
-### 4. 启动前端（5173）
+### 3. 启动前端（终端 C，5173）
 
 ```bash
 cd frontend
@@ -172,6 +189,27 @@ npm run dev
 | analyst | analyst123 | ANALYST（工单处理） |
 
 登录后：选择客户 → 创建预警工单 → 实时查看 Agent 工作流推进与尽调报告；HOLD 工单可进入"人工复核"页面处置。
+
+### 可选：监控面板
+
+```bash
+docker compose up -d prometheus grafana
+```
+
+Prometheus: http://localhost:9090 · Grafana: http://localhost:3000（admin / admin）
+
+### 停止与清理
+
+```bash
+# 停后端/前端：在终端 B、C 按 Ctrl+C
+
+docker compose stop            # 停容器，保留数据
+docker compose down            # 停并删除容器，数据卷保留（下次启动数据还在）
+docker compose down -v         # 连同数据卷一起删——MySQL/PGVector/Redis 数据全部清空
+```
+
+> `down -v` 之后下次启动会重新执行 Flyway 迁移、重新写入法规向量。
+> 想回到干净状态就用它，想保留演示数据就用 `down`。
 
 AI 小助仅在开发环境默认启用。ADMIN 可进入“客户管理 → 查看 → AI 小助”；生产环境必须显式设置
 `AML_ASSISTANT_ENABLED=true`，否则入口与接口保持关闭。它不能修改客户、工单、账户或审核状态，也不能跨客户比较。
@@ -392,18 +430,115 @@ docker-compose.yml        MySQL + PostgreSQL(pgvector) + Redis
 ## 自动化测试
 
 ```bash
-# 后端：当前 208 项单元测试（其中 1 项真实模型测试默认跳过）+ 22 项集成/E2E
-cd backend
-./mvnw test                        # 单元测试（不依赖 Docker）
-./mvnw -Pintegration-test test     # 集成测试（需本机 Docker 的 MySQL/Redis/pgvector）
+# 后端单元测试（不依赖 Docker；真实模型评测默认跳过）
+cd backend && ./mvnw test
 
-# 前端：Vitest 组件测试 + 生产构建
-cd frontend
-npm test                           # 组件测试（路由 + 共享状态常量）
-npm run build                      # vue-tsc 类型检查 + Vite 生产构建
+# 后端集成回归（需要本机 Docker 的 MySQL / Redis / pgvector）
+cd backend && ./mvnw -Pintegration-test test
+
+# 前端组件测试 + 类型检查 + 生产构建
+cd frontend && npm test
+cd frontend && npm run build
 ```
 
-> 集成测试使用独立 MySQL schema 与独立 Redis stream，避免和本地运行中的后端争抢 Outbox 任务；真实模型评测（`AgentEvalLiveTest`）默认不调用外部模型，真实 DEV/TEST 评测需显式配置模型 Key。
+**这一节不手写测试总数。** 需要数字时，用脚本从真实产物里读：
+
+```bash
+python scripts/test_summary.py              # 人类可读
+python scripts/test_summary.py --markdown   # 可直接贴进文档
+```
+
+脚本只读 `backend/target/surefire-reports/`（Surefire XML）与 `frontend/.reports/vitest.json`
+（由 `npm run test:json` 产出），并遵守三条：
+
+- **单元测试、集成测试、真实模型评测分栏**，不相加成一个模糊的"测试总数"——它们的运行条件完全不同；
+- 产物不存在时显示**未执行**，而不是 0。"没跑"和"跑了 0 项通过"是两件事，
+  把前者写成后者正是这类文档最容易骗人的地方；
+- 真实模型评测未运行时明确列出，不沿用上一次的结果。
+
+最近一次本机验证（2026-09-18，Windows 11 + JDK 21 + Node 22）：
+
+| 层 | 执行/总数 | 通过 | 失败 | 跳过 | 最近验证 |
+|---|---:|---:|---:|---:|---|
+| 后端单元测试（不含 `integration` 标签） | 548/549 | 548 | 0 | 1 | 2026-09-18 03:41 |
+| 后端集成回归（`-Pintegration-test`，需 MySQL/PGVector/Redis） | 43/43 | 24 | **19** | 0 | 2026-09-18 03:43 |
+| 前端组件测试 | 85/85 | 85 | 0 | 0 | 2026-09-18 03:38 |
+
+跳过的 1 项是 `AgentEvalLiveTest`——真实 DeepSeek 评测，需显式配置模型 Key 与
+`RUN_LIVE_AGENT_EVAL=true`；**未执行时不产生任何准确率数字，也不沿用旧结果**。
+
+> **集成回归当前是红的，19 项失败，这一条如实写在这里。** 它们不是"跑不起来"，
+> 而是断言与现状不符或彼此相互污染，逐类看是：
+> 退款台账的归属校验（5）、退款并发串行化（5）、预警范围来源版本不一致（3）、
+> 工作流等待终态超时（2）、PGVector 表名/迁移基线（2）、RAG 评测阈值（1）、
+> CSRF 用例期望 201 却断言 200（1）。
+>
+> 另有一条独立问题：`application-test.yml` 指向的 MySQL 库与开发库**是同一个**
+> （`aml_agent`），因此集成测试会读写本机开发数据，也解释了"来源版本不一致"这类
+> 依赖历史残留的失败——README 早先写的"独立 schema"与事实不符，已在此更正。
+> 修这一批属于单独一轮工作，本轮没有把状态改成"已通过"。
+
+> 集成回归与 Playwright E2E 在 CI 上执行（`.github/workflows/ci.yml`）。
+> 本机只跑了单元测试时，上面的命令会把这两层显示为"未执行"，而不是沿用旧数字。
+
+### 集成回归的失败要能定位到具体依赖
+
+集成测试基本是 `@SpringBootTest`，启动的是完整应用上下文，MySQL / PGVector / Redis 缺一不可。
+所以它们**不能**按依赖拆成三个 job（拆了每个 job 还是得把三个 service 都起一遍），
+真正需要分开的是"依赖没起来"和"测试断言失败"这两件事：
+
+```bash
+python scripts/integration_report.py --preflight          # 跑之前逐个探测三个依赖
+python scripts/integration_report.py --failures           # 跑完之后逐条列出失败的测试类
+```
+
+依赖没起来时，`--preflight` 会给出 `::error::集成测试依赖未就绪：MySQL, Redis` 这样的行，
+并在消息里写明该起哪个容器——而不是让人对着一条连接超时自己推断。
+
+### 端到端（Playwright）
+
+```bash
+cd frontend
+npx playwright test                 # 需要后端已在 8080 运行
+```
+
+`e2e/case-closure.spec.ts` 是主链路：登录 → 创建预警工单 → 等 Agent 定级 →
+核对风险评级与**证据链里的法规证据编号** → 由复核角色完成一次处置 → 回查处置记录与
+派出的补充尽调任务。它断言的是业务状态，不是"页面上有这个标题"。
+
+后端**必须**以 Mock 模型启动，否则终态不确定、还依赖外网：
+
+```bash
+cd backend && AML_LLM_ACTIVE_PROVIDER=mock ./mvnw spring-boot:run
+```
+
+> 用例串行执行（`workers: 1`）。这些用例共享服务端状态——同一个账号、同一个待复核队列；
+> 而登出接口会吊销该账号已签发的**全部** JWT，并行跑会让另一个用例的会话静默失效。
+
+## 持续集成
+
+`.github/workflows/ci.yml` 的 7 个 job：
+
+| job | 跑什么 | 什么时候 |
+|---|---|---|
+| Backend Quality Gate | 格式、单元测试、静态分析 | push / PR / 定时 |
+| Frontend Test & Build | 组件测试、lint、类型检查、生产构建 | push / PR / 定时 |
+| Integration Tests | 真实 MySQL / PGVector / Redis 上的迁移、队列与检索回归 | push / PR / 定时 |
+| Playwright E2E | 后端 + 前端 + 浏览器，跑核心业务闭环 | push / PR / 定时 |
+| Secret Scan / Dependency Scan / Python Quality Gate | 密钥、依赖漏洞、辅助脚本规范 | push / PR / 定时 |
+
+**为什么有定时任务**：push/PR 只在有人提交时才跑，而依赖镜像 tag、Flyway 迁移、
+外部依赖的变化与提交无关。一个几周没人动的仓库，门禁可能早就红了却没人知道——
+定时任务（每日 `23 2 * * *`）是发现这种"沉默失效"的唯一办法。
+
+### 三类失败信号要分清
+
+1. **依赖没就绪** → preflight 的 `::error::` 直接点名是 MySQL、PGVector 还是 Redis；
+2. **测试断言失败** → `--failures` 逐条列出失败的测试类；
+3. **应用起不来** → 后端日志落盘为 `backend-e2e.log`，随截图与 trace 一起作为
+   `e2e-diagnostics` 工件上传。
+
+这三类问题以前会混成一句"job failed"，而它们的处理方式完全不同。
 
 ## 性能压测与可靠性演示
 
