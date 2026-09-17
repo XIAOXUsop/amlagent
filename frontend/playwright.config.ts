@@ -12,6 +12,8 @@ import { defineConfig } from '@playwright/test'
  */
 export default defineConfig({
   testDir: './e2e',
+  // 预热：把 Vite 首次依赖预构建触发的整页重载挪到用例之外（详见 e2e/global-setup.ts）
+  globalSetup: './e2e/global-setup.ts',
   timeout: 30_000,
   expect: { timeout: 10_000 },
   outputDir: 'test-results',
