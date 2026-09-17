@@ -32,6 +32,13 @@ import com.bank.aml.security.UserAccount;
 import com.bank.aml.security.UserAccountRepository;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
+
+import static com.bank.aml.explanation.ExplanationJson.bool;
+import static com.bank.aml.explanation.ExplanationJson.dedupe;
+import static com.bank.aml.explanation.ExplanationJson.intList;
+import static com.bank.aml.explanation.ExplanationJson.parseEnum;
+import static com.bank.aml.explanation.ExplanationJson.stringList;
+import static com.bank.aml.explanation.ExplanationJson.text;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import java.math.BigDecimal;
@@ -2433,55 +2440,6 @@ public class ExplanationWorkspaceService implements ExplanationReadinessPort, Ex
             throw new IllegalArgumentException(field + " 必须为 SHA-256 十六进制");
         }
         return normalized;
-    }
-
-    private static String text(JsonNode node, String field) {
-        return text(node, field, "");
-    }
-
-    private static String text(JsonNode node, String field, String defaultValue) {
-        JsonNode value = node.get(field);
-        return value == null || value.isNull() ? defaultValue : value.asText(defaultValue).trim();
-    }
-
-    private static boolean bool(JsonNode node, String field) {
-        JsonNode value = node.get(field);
-        return value != null && value.asBoolean(false);
-    }
-
-    private static List<String> stringList(JsonNode node, String field) {
-        JsonNode value = node.get(field);
-        List<String> result = new ArrayList<>();
-        if (value != null && value.isArray()) {
-            for (JsonNode item : value) {
-                if (!item.isNull()) {
-                    result.add(item.asText().trim());
-                }
-            }
-        }
-        return result;
-    }
-
-    private static List<JsonNode> intList(JsonNode node, String field) {
-        JsonNode value = node.get(field);
-        List<JsonNode> result = new ArrayList<>();
-        if (value != null && value.isArray()) {
-            value.forEach(result::add);
-        }
-        return result;
-    }
-
-    private static <E extends Enum<E>> E parseEnum(Class<E> type, String value, String field) {
-        try {
-            return Enum.valueOf(type, value == null ? "" : value.trim().toUpperCase(Locale.ROOT));
-        }
-        catch (IllegalArgumentException e) {
-            throw new IllegalArgumentException(field + "不在允许范围内：" + value);
-        }
-    }
-
-    private static List<String> dedupe(List<String> values) {
-        return List.copyOf(new LinkedHashSet<>(values));
     }
 
     private static String upper(String value) {
