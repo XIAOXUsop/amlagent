@@ -184,11 +184,16 @@ jobs:
 
           if [ "$code" -eq 0 ]; then
             echo "依赖扫描通过"
+            # 数据是完整的，允许缓存（见下面 Save NVD data 的条件）
+            echo "verdict=pass" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
-          # 分类并打印对应的 ::error:: 注解；无论哪种原因，job 都必须红
-          python3 ../scripts/classify_dependency_scan.py dependency-scan.log
+          # 分类并打印对应的 ::error:: 注解；无论哪种原因，job 都必须红。
+          #
+          # `--github-output` 让判定结果同时进本步骤的 outputs——保存缓存的步骤靠它
+          # 区分「扫出漏洞」（数据可信，该存）与「压根没跑成」（数据不可信，不该存）。
+          python3 ../scripts/classify_dependency_scan.py dependency-scan.log --github-output "$GITHUB_OUTPUT"
           exit 1
       # 存缓存必须单独一步，且 `if: always()`。
       #
@@ -196,13 +201,31 @@ jobs:
       # 而 `actions/cache` 的后置保存默认只在成功时执行——于是缓存永远存不下来。
       # 这里用 `if: always()` 覆盖掉那个默认。
       #
-      # `cache-hit != 'true'` 表示当天那份还不存在（命中旧日期、或完全没命中），
-      # 这时才写。当天已有则跳过——因为 `actions/cache/save` 遇到已存在的 key
-      # 会直接失败，而那是**预期内的**，不是故障。
-      # `continue-on-error` 兜住另一种情况：两个 job 同时开始、都判定"当天不存在"，
-      # 抢着写同一个 key。缓存只是加速手段，写不进去不该让门禁变红。
+      # ⚠️ **但 `always()` 不等于"无条件存"**，这是踩过之后补的：
+      #
+      # 扫描因为数据源问题失败时，数据目录里是**没下完的**库，甚至残留着
+      # `odc.update.lock`。无条件存下去，下一个运行恢复它会在同一个地方再失败一次
+      # ——自己喂自己。实测过一次：job 日志里
+      #     Lock file found `…/odc.update.lock`
+      #     UpdateException: Unable to obtain an exclusive lock on the H2 database
+      #     NoDataException: No documents exist
+      # 而那一轮存下来的缓存只有 **23.2 MB**（正常是 114.9 MB）。
+      # 运行被**并发取消**时也一样：扫描步骤没跑完，数据同样不可信。
+      #
+      # 所以加第二个条件：只有 `verdict` 是 `pass`（扫描通过）或 `findings`
+      # （扫出漏洞，但**数据是好的**——漏洞判定本身可信）时才存。
+      # 判定由 `scripts/classify_dependency_scan.py --github-output` 产出。
+      # 取消掉的那次连 `verdict` 都写不出来，自然也落不到这两个值上。
+      #
+      # `cache-hit != 'true'` 是第三个条件：当天那份已存在就不写，
+      # 因为 `actions/cache/save` 遇到**已存在**的 key 会直接失败，而那是预期内的。
+      # `continue-on-error` 兜住同一天两个分支同时判定"当天不存在"、抢着写的竞态：
+      # 缓存只是加速手段，写不进去不该让门禁变红。
       - name: Save NVD data
-        if: always() && steps.nvd-restore.outputs.cache-hit != 'true'
+        if: >-
+          always()
+          && steps.nvd-restore.outputs.cache-hit != 'true'
+          && (steps.scan.outputs.verdict == 'pass' || steps.scan.outputs.verdict == 'findings')
         continue-on-error: true
         uses: actions/cache/save@v5
         with:

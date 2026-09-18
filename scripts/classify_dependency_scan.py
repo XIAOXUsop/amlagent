@@ -25,6 +25,27 @@
 「有漏洞」才是需要人立刻行动的那一个。
 
 用法：`python scripts/classify_dependency_scan.py <dependency-check 日志>`
+
+── 它还被缓存步骤用来判断「这份数据能不能存」 ──────────────────────
+
+CI 里 NVD 数据目录是要缓存的（见 `.github/workflows/ci.yml`）。但**它不能无条件存**：
+
+  · 扫描因为「数据源不可用」而失败时，那个目录里是**没下完的**数据，
+    甚至残留着 `odc.update.lock`。把它存进缓存，下一个运行恢复后会在
+    同一个地方再失败一次——自己喂自己。
+    实测过一次：job 日志里出现
+        Lock file found `…/odc.update.lock`
+        Existing update in progress; waiting for update to complete
+        UpdateException: Unable to obtain an exclusive lock on the H2 database
+        NoDataException: No documents exist
+    而那一轮存下来的缓存只有 **23.2 MB**（正常是 114.9 MB）。
+
+  · 运行被**取消**时（并发取消），扫描步骤根本没跑完，数据同样不可信。
+
+所以传 `--github-output <path>` 时，它会追加一行 `verdict=<kind>`；
+CI 的保存步骤只在 `verdict` 是 `pass`（扫描通过）或 `findings`（扫出漏洞，
+但**数据是好的**——漏洞判定是可信的）时才存。其余一律不存。
+"扫出漏洞"要存、"没跑成"不存，这个区分正是这个脚本存在的意义。
 """
 
 from __future__ import annotations
@@ -87,15 +108,41 @@ MESSAGES = {
     "unknown": UNKNOWN_MESSAGE,
 }
 
+# 允许把 NVD 数据目录写进缓存的判定结果。
+# `pass`（扫描通过）与 `findings`（扫出漏洞）都表示**这一次的数据是完整可用的**；
+# `data-source` / `unknown` 表示压根没跑成，数据不可信。
+CACHEABLE_VERDICTS = ("pass", "findings")
+
+
+def _append_github_output(path: str, verdict: str) -> None:
+    """把判定结果写进 GitHub Actions 的 $GITHUB_OUTPUT，供保存缓存的步骤判断。"""
+    with Path(path).open("a", encoding="utf-8") as handle:
+        handle.write(f"verdict={verdict}\n")
+
 
 def main(argv: list[str]) -> int:
-    if len(argv) != 2:
-        print("用法：classify_dependency_scan.py <dependency-check 日志>", file=sys.stderr)
+    args = argv[1:]
+    github_output: str | None = None
+    if "--github-output" in args:
+        index = args.index("--github-output")
+        if index + 1 >= len(args):
+            print("--github-output 需要一个路径参数", file=sys.stderr)
+            return 2
+        github_output = args[index + 1]
+        del args[index : index + 2]
+
+    if len(args) != 1:
+        print(
+            "用法：classify_dependency_scan.py <dependency-check 日志> [--github-output <path>]",
+            file=sys.stderr,
+        )
         return 2
 
-    path = Path(argv[1])
+    path = Path(args[0])
     if not path.is_file():
         # 日志不在（比如扫描根本没启动）：这属于未知失败，但要说清是哪种未知。
+        if github_output:
+            _append_github_output(github_output, "unknown")
         print("kind=unknown")
         print(
             f"::error::依赖扫描没有产出日志（扫描可能根本没启动）。期望的日志路径：{path}",
@@ -103,6 +150,8 @@ def main(argv: list[str]) -> int:
         return 0
 
     kind = classify(path.read_text(encoding="utf-8", errors="replace"))
+    if github_output:
+        _append_github_output(github_output, kind)
     # `kind=` 这一行是给测试与后续脚本读的，别改格式。
     print(f"kind={kind}")
     print(MESSAGES[kind])

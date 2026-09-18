@@ -621,6 +621,40 @@ CVE 库上，而那份数据一天之内不会变。缓存写错过一次，值�
 
 改之前那 6 条旧 `nvd-data-*`（689 MB）已手动回收，回收后 3506.9 MB / 16 条。
 
+**⚠️ 还有第三个坑，也是最阴的一个：坏掉的数据目录会被缓存传播下去。**
+
+`if: always()` 保证了这个 job「扫到漏洞也存缓存」。但 `always()` **不等于
+"无条件存"**——扫描因为数据源问题失败时，那个目录里是**没下完的库**，
+甚至还残留着上一轮被杀掉时留下的 `odc.update.lock`。把它存进缓存，下一个运行
+恢复它之后会在同一个地方再挂一次，而且看起来还是"依赖扫描又红了"。**自己喂自己。**
+
+这不是推演，是 2026-09-19 实际发生的一次：
+
+```
+[INFO] Lock file found `/home/runner/.m2/dependency-check-data/odc.update.lock`
+[INFO] Existing update in progress; waiting for update to complete
+[WARNING] Unable to update 1 or more Cached Web DataSource, using local data instead.
+[ERROR] Unable to continue dependency-check analysis.
+        UpdateException: Unable to obtain an exclusive lock on the H2 database to perform updates
+        NoDataException: No documents exist
+```
+
+两个信号对上了：那一轮存下来的缓存只有 **23.2 MB**（正常是 **114.9 MB**），
+而这次 job 跑了 **40 分钟**（21:39:14 → 22:19:45）——它是先下了一半、卡在锁上、
+最后整轮作废。**这一轮的结论里没有任何依赖漏洞信息**，它什么都没查出来。
+
+所以保存条件补了第二个：只有判定为 `pass`（扫描通过）或 `findings`
+（扫出漏洞，**但数据是好的**——漏洞判定本身可信）才存。
+判定由 `scripts/classify_dependency_scan.py --github-output` 写进步骤 output。
+**"扫出漏洞"要存、"没跑成"不存**，这个区分正是那个分类器存在的意义
+——它同时也是一个回归用例（`test_locked_database_writes_a_non_cacheable_verdict`，
+反向验证过：把 `data-source` 放进可缓存集合，该用例立刻变红）。
+运行被**并发取消**时也一样：扫描没跑完，`verdict` 根本写不出来，自然落不到那两个值上。
+
+顺带说明为什么"分段缓存"这件事值这么多笔墨：它带来的失效**看起来都像同一个东西**
+——「依赖扫描又红了」——而三种原因（真扫出漏洞 / 没跑成 / 缓存在喂坏数据）
+的处理方式完全不同。分不清就会去改错的地方，或者干脆把这个门禁关掉。
+
 ### 依赖安全
 
 扫描用 OWASP dependency-check，`CVSS ≥ 7` 阻断。**这一节记录当前已知状态，不粉饰。**
