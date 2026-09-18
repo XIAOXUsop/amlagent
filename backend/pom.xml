@@ -39,6 +39,28 @@
         <!-- 默认测试不依赖 Docker；integration-test profile 显式切换到集成/E2E。 -->
         <test.included-groups></test.included-groups>
         <test.excluded-groups>integration</test.excluded-groups>
+
+        <!--
+          ── 安全补丁：覆盖 Spring Boot 3.5.16 管理的版本 ──────────────────
+
+          做这件事的前提是先查过 NVD 的**受影响版本区间**，而不是看到扫描器报红就升。
+          以下是 2026-09-19 逐条查证的结果（`services.nvd.nist.gov`）：
+
+            CVE-2026-65905  tomcat 10.1.0 ≤ v < 10.1.58   → BOM 给的是 10.1.55，仍在区间内
+            CVE-2026-34479  log4j  2.7    ≤ v < 2.25.4    → BOM 给的是 2.24.3，仍在区间内
+
+          **10.1.58 从未发布**（仓库里 10.1.57 的下一个就是 10.1.59），所以取 10.1.60。
+          两个都是同 minor / 同主版本内的补丁级提升。
+
+          剩下两条**故意不覆盖**，理由记在这里免得以后有人重复尝试：
+            CVE-2026-47884  spring-framework 6.2.0 ≤ v < 6.2.20
+                            修复线 6.2.20 **尚未发布**（6.2.x 最新就是 BOM 带的 6.2.19），只能等上游
+            CVE-2026-53914  kotlin-stdlib ≤ v < 2.4.20
+                            它是**传递依赖**（runtime），且带着 kotlin-stdlib-jdk7 / jdk8——
+                            这两个 artifact 在 Kotlin 2.x 已不再发布，覆盖到 2.4.20 会直接打断依赖树
+        -->
+        <tomcat.version>10.1.60</tomcat.version>
+        <log4j2.version>2.25.4</log4j2.version>
     </properties>
 
     <dependencies>

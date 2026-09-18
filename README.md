@@ -573,16 +573,41 @@ cd backend && AML_LLM_ACTIVE_PROVIDER=mock ./mvnw spring-boot:run
 两者都不满足时如实报 `unknown`，而不是挑一个像样的理由。
 那次误判已固化成回归用例（`scripts/test_classify_dependency_scan.py`）。
 
-**已处理**：Spring Boot `3.5.13` → `3.5.16`（同 minor 补丁升级），把
-spring-framework 带到 `6.2.19`、spring-security 到 `6.5.11`、tomcat 到 `10.1.55`、
-jackson 到 `2.21.4`、netty 到 `4.1.135.Final`。
-升级后 **549 项后端测试全绿**（与升级前基线逐项一致）。
+**处理原则：先去 NVD 查受影响版本区间，再决定升不升。** 看到扫描器报红就升版本，
+和看到报红就关掉它一样不负责任——前者可能升了个没用的版本，后者会漏掉真的。
+下表是 2026-09-19 逐条查 `services.nvd.nist.gov` 的结果：
 
-**已知残留**：`log4j-api@2.24.3` 与 `kotlin-stdlib@1.9.25` 的告警未消除——
-这两个版本由 Spring Boot 3.5.x 的 BOM 固定，同 minor 内没有更新版本；
-另外 dependency-check 的 CPE 匹配存在误报可能（例如把 `jackson-databind` 匹配到
-`jackson-core` 的 CPE），逐条甄别需要 NVD 查询，**尚未做**。
-因此这个 job 目前仍然是红的——但它现在**红得说的对**。
+| CVE | 包 | 受影响区间 | 本仓库版本 | 结论 |
+|---|---|---|---|---|
+| 40971 / 40974 | spring-boot | `3.5.0 ≤ v < 3.5.14` | 3.5.13 → **3.5.16** | ✅ 已清 |
+| 34479 | log4j | `2.7 ≤ v < 2.25.4` | 2.24.3 → **2.25.4** | ✅ 已清（BOM 覆盖） |
+| 65905 | tomcat | `10.1.0 ≤ v < 10.1.58` | 10.1.53 → **10.1.60** | ✅ 已清（BOM 覆盖） |
+| 54512 | jackson-databind | `2.19.0 ≤ v < 2.21.4` | 2.21.2 → 2.21.4 | ✅ 已清 |
+| 47884 | spring-framework | `6.2.0 ≤ v < 6.2.20` | 6.2.19 | ⏳ 修复线未发布 |
+| 53914 | kotlin-stdlib | `≤ v < 2.4.20` | 1.9.25 | ⛔ 无法覆盖 |
+| 18022 | pgvector | 扩展 `≤ v < 0.8.6` | Java 客户端 0.1.6 | ⚠️ **误报** |
+
+做法：Spring Boot 升到 3.5.x 最新（3.5.16），另外两条用 BOM 属性覆盖到修复线以上
+（`tomcat.version` / `log4j2.version`）。升级与覆盖之后 **549 项后端测试全绿**，
+与改动前的基线逐项一致；并用 `dependency:list` 确认解析到的确实是新版本，
+而不是只改了 pom 文字。
+
+**两条没修的，原因各不相同，都不打算含糊过去**：
+
+- `CVE-2026-47884`（spring-framework）**修复线 6.2.20 尚未发布**——
+  6.2.x 在 Maven Central 上最新就是 BOM 带的 6.2.19。这道题只能等上游。
+- `CVE-2026-53914`（kotlin-stdlib）**不能靠版本覆盖解决**：它是传递依赖（runtime），
+  且带着 `kotlin-stdlib-jdk7` / `jdk8`，而这两个 artifact 在 Kotlin 2.x 已不再发布——
+  把版本提到修复线 2.4.20 会直接打断依赖树。要修得先让上游那个传递依赖换掉。
+
+**一条判为误报，附理由**：`CVE-2026-18022` 描述的是 **pgvector 扩展**（PostgreSQL 侧 C++/C）
+在 IVFFlat 索引构建中的整数回绕，而 dependency-check 报的是 `com.pgvector:pgvector`
+——**JDBC 客户端库**，它不构建索引，两者只是版本号恰好都落在 0.1.x。
+注意这条误报不覆盖部署侧：`docker-compose.yml` 里的 `pgvector/pgvector:pg16`
+是**浮动 tag**，实际扩展版本取决于拉取时间，那是另一个需要单独核对的点。
+
+因此这个 job 目前仍然是红的——但它现在红得**说的对**：
+剩下的每一条都能说清"为什么修不了"或"为什么是误报"。
 
 ## 性能压测与可靠性演示
 
