@@ -2,7 +2,7 @@
 
 日期：2026-09-08。基线：`9199924`。状态：计划，未实施。
 
-依据：[本轮再次验收报告](/D:/JCode/docs/reviews/explanation-v3-reacceptance-2026-09-08.md)。业务范围继续沿用 [代付专项 v3](/D:/JCode/docs/plans/third-party-goods-payment-verification-plan-v3-2026-09-08.md)，本轮不增加跨境、个人代付或新的自动判断模型。
+依据：[本轮再次验收报告](../reviews/explanation-v3-reacceptance-2026-09-08.md)。业务范围继续沿用 [代付专项 v3](third-party-goods-payment-verification-plan-v3-2026-09-08.md)，本轮不增加跨境、个人代付或新的自动判断模型。
 
 ## 1. 下一步的明确目标
 

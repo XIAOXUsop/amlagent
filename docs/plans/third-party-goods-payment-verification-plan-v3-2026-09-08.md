@@ -2,7 +2,7 @@
 
 日期：2026-09-08。状态：待实施；本文件不表示相关能力已交付。
 
-前置验收：[解释核验 v2 首批验收报告](/D:/JCode/docs/reviews/explanation-v2-acceptance-2026-09-08.md)。承接：[合理解释核验专项计划 v2](/D:/JCode/docs/plans/rapid-movement-explanation-verification-plan-v2-2026-09-07.md)。
+前置验收：[解释核验 v2 首批验收报告](../reviews/explanation-v2-acceptance-2026-09-08.md)。承接：[合理解释核验专项计划 v2](rapid-movement-explanation-verification-plan-v2-2026-09-07.md)。
 
 ## 1. 本轮要做成什么
 

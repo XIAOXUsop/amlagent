@@ -23,7 +23,7 @@
 
 ### A9-01：合并核验链后没有重新排序
 
-位置：[EvidenceAdmissibilityService.java:116](/D:/JCode/backend/src/main/java/com/bank/aml/explanation/EvidenceAdmissibilityService.java:116)。
+位置：[EvidenceAdmissibilityService.java:116](../../backend/src/main/java/com/bank/aml/explanation/EvidenceAdmissibilityService.java#L116)。
 
 代码先追加指定事实键的核验链，再追加 `subjectFactKey IS NULL` 的通用链，然后直接取整个列表最后一个元素。两个查询各自有排序，并不能保证拼接后的列表有序。因此只要存在通用核验，其最后一条就压过所有定向核验。
 
@@ -35,7 +35,7 @@
 
 ### A9-02：到期日被读取，但不参与授权有效性
 
-位置：[PaymentAuthorityFactService.java:73](/D:/JCode/backend/src/main/java/com/bank/aml/explanation/PaymentAuthorityFactService.java:73)、[ExplanationWorkspaceService.java:1612](/D:/JCode/backend/src/main/java/com/bank/aml/explanation/ExplanationWorkspaceService.java:1612)。
+位置：[PaymentAuthorityFactService.java:73](../../backend/src/main/java/com/bank/aml/explanation/PaymentAuthorityFactService.java#L73)、[ExplanationWorkspaceService.java:1612](../../backend/src/main/java/com/bank/aml/explanation/ExplanationWorkspaceService.java#L1612)。
 
 `AuthorityFact` 接收 effectiveTo，但 GRANTED 分支只检查 effectiveFrom 不晚于付款日。反例 AU-01：8 月 1 日生效、8 月 31 日到期、9 月 2 日付款，服务返回 VALID；将该序列写入完整集团代付草稿后，EXPLAINED 提交及最终排除校验均通过。
 
@@ -45,7 +45,7 @@
 
 ### A9-03：手工材料可以变成“银行已入账退款”
 
-位置：[RefundController.java:49](/D:/JCode/backend/src/main/java/com/bank/aml/controller/RefundController.java:49)、[RefundLedgerService.java:107](/D:/JCode/backend/src/main/java/com/bank/aml/refund/RefundLedgerService.java:107)。
+位置：[RefundController.java:49](../../backend/src/main/java/com/bank/aml/controller/RefundController.java#L49)、[RefundLedgerService.java:107](../../backend/src/main/java/com/bank/aml/refund/RefundLedgerService.java#L107)。
 
 控制器直接透传 sourceSystem/eventStatus；服务只校验状态枚举，并且 eventStatus 为空时默认 POSTED，没有核对来源返回的到账事实。前端允许选择“手工声明”和“已入账”，并默认 CORE_BANKING + POSTED。
 
@@ -55,7 +55,7 @@
 
 ### A9-04：金额账的原始金额可改写，资金分配不变式未执行
 
-位置：[RefundController.java:60](/D:/JCode/backend/src/main/java/com/bank/aml/controller/RefundController.java:60)、[RefundLedgerService.java:169](/D:/JCode/backend/src/main/java/com/bank/aml/refund/RefundLedgerService.java:169)、[RefundLedgerService.java:236](/D:/JCode/backend/src/main/java/com/bank/aml/refund/RefundLedgerService.java:236)。
+位置：[RefundController.java:60](../../backend/src/main/java/com/bank/aml/controller/RefundController.java#L60)、[RefundLedgerService.java:169](../../backend/src/main/java/com/bank/aml/refund/RefundLedgerService.java#L169)、[RefundLedgerService.java:236](../../backend/src/main/java/com/bank/aml/refund/RefundLedgerService.java#L236)。
 
 登记路径只保证“分配合计不大于本次退款金额”，不查询原付款是否存在、是否属于本案件、原分配余额或累计有效退款。ledger 接收调用者提供的 originalAmounts，按 transactionId 合并，原 allocationKey 没有用于额度保护。
 
@@ -69,7 +69,7 @@
 
 ### A9-05：退款新事实未进入最终复核的失效链
 
-位置：[RefundLedgerService.java:97](/D:/JCode/backend/src/main/java/com/bank/aml/refund/RefundLedgerService.java:97)、[ExplanationWorkspaceService.java:2105](/D:/JCode/backend/src/main/java/com/bank/aml/explanation/ExplanationWorkspaceService.java:2105)。
+位置：[RefundLedgerService.java:97](../../backend/src/main/java/com/bank/aml/refund/RefundLedgerService.java#L97)、[ExplanationWorkspaceService.java:2105](../../backend/src/main/java/com/bank/aml/explanation/ExplanationWorkspaceService.java#L2105)。
 
 register/reverse 虽取得案件锁，但没有推进事实版本、调用影响评估、登记问题/责任或使受影响采用关系失效。RefundAuthorityService 的评估目前只是由请求枚举驱动的只读结果；其影响评估没有接入实际登记和最终复核。
 
@@ -79,7 +79,7 @@ register/reverse 虽取得案件锁，但没有推进事实版本、调用影响
 
 ### A9-06：持久化 Claim 与采用判断存在两套状态
 
-位置：[ExplanationClaimService.java:64](/D:/JCode/backend/src/main/java/com/bank/aml/explanation/ExplanationClaimService.java:64)、[ExplanationWorkspaceService.java:169](/D:/JCode/backend/src/main/java/com/bank/aml/explanation/ExplanationWorkspaceService.java:169)。
+位置：[ExplanationClaimService.java:64](../../backend/src/main/java/com/bank/aml/explanation/ExplanationClaimService.java#L64)、[ExplanationWorkspaceService.java:169](../../backend/src/main/java/com/bank/aml/explanation/ExplanationWorkspaceService.java#L169)。
 
 新 `PUT /units/{unitId}/claims` 将 Claim 与链接落库，但不改变 caseFactsEpoch/当前提交、不登记矛盾问题。Workspace 只在展示时读取 ClaimService，集团代付可采用性仍主要读取 draft/payload 中的 claims。因此页面/API 持久化的事实状态与采用判断可以矛盾。
 
@@ -91,7 +91,7 @@ register/reverse 虽取得案件锁，但没有推进事实版本、调用影响
 
 ### A9-07：范围冻结强制要求缺少可达的生产入口
 
-位置：[ExplanationWorkspaceService.java:1852](/D:/JCode/backend/src/main/java/com/bank/aml/explanation/ExplanationWorkspaceService.java:1852)、[AlertScopeService.java:45](/D:/JCode/backend/src/main/java/com/bank/aml/investigation/AlertScopeService.java:45)。
+位置：[ExplanationWorkspaceService.java:1852](../../backend/src/main/java/com/bank/aml/explanation/ExplanationWorkspaceService.java#L1852)、[AlertScopeService.java:45](../../backend/src/main/java/com/bank/aml/investigation/AlertScopeService.java#L45)。
 
 现在没有冻结命中范围就拒绝 EXPLAINED，这个默认拒绝方向正确。但全量生产源码搜索中，freezeScope 只有定义，没有调用者；triggerTransactionIds 的写入仅在该服务及实体 setter，AlertController 的预警创建 DTO 也不接收对应来源字段。
 
@@ -101,7 +101,7 @@ register/reverse 虽取得案件锁，但没有推进事实版本、调用影响
 
 ### A9-08：同键更换收款账户不会产生冲突
 
-位置：[RefundLedgerService.java:281](/D:/JCode/backend/src/main/java/com/bank/aml/refund/RefundLedgerService.java:281)。
+位置：[RefundLedgerService.java:281](../../backend/src/main/java/com/bank/aml/refund/RefundLedgerService.java#L281)。
 
 payloadDigest 包含 payeeSubject，却遗漏 payeeAccountRef。使用同一来源键先登记 ACCT-P，再将账户改为 ACCT-D，服务返回 idempotentReplay=true，保留 ACCT-P。调用者会误以为新账户内容已被同一事件接受，账户差异也不会进入更正流程。
 
@@ -133,7 +133,7 @@ G4 表中“RF-06 全链”“RF-24 复核失败回滚”“RF-30 回退”等�
 | 真实基础设施集成 | 未重跑；本轮连接检查 Redis 6379、PGVector 5433 不可用 |
 | 浏览器 | 未执行本轮 E2E，未复用上轮 7/7 结果冒充本轮结果 |
 
-证据保留在 [本轮证据目录](/D:/JCode/.tmp/adversarial-20260909)：
+证据保留在 [本轮证据目录](../../.tmp/adversarial-20260909)：
 
 - backend-verify.log：当前提交默认测试及打包。
 - frontend-test.log、frontend-build.log：前端执行记录。

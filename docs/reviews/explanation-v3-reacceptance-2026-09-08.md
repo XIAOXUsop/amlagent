@@ -8,7 +8,7 @@
 
 上轮 A5-02、A5-03、A5-04、A5-08、A5-09 的主要修复路径已由代码与当前测试确认；A5-01、A5-05、A5-06、A5-07 仍有未闭合的业务条件或新回归。这里的“修复路径确认”限于单元/组件层，不包含真实数据库、并发或认证端到端验收。
 
-本次重点确认 **6 项 P1**：5 类服务/页面协作问题由 6 个针对性特征测试复现；另 1 项为代码与数据库非空约束直接冲突，未宣称已连接 MySQL 复现。暂不推进更多业务分支，下一步应集中完成 [v3 闭环补齐方案](/D:/JCode/docs/plans/explanation-v3-closure-plan-2026-09-08.md)。
+本次重点确认 **6 项 P1**：5 类服务/页面协作问题由 6 个针对性特征测试复现；另 1 项为代码与数据库非空约束直接冲突，未宣称已连接 MySQL 复现。暂不推进更多业务分支，下一步应集中完成 [v3 闭环补齐方案](../plans/explanation-v3-closure-plan-2026-09-08.md)。
 
 ## 2. 本轮实际验证
 
@@ -26,9 +26,9 @@
 
 证据文件：
 
-- [后端回归日志](/D:/JCode/.tmp/explanation-reacceptance-backend.log)
-- [前端回归日志](/D:/JCode/.tmp/explanation-reacceptance-frontend.log)、[构建日志](/D:/JCode/.tmp/explanation-reacceptance-build.log)
-- [本轮特征测试源码](/D:/JCode/.tmp/ExplanationReacceptanceProbeTest.java)、[执行日志](/D:/JCode/.tmp/explanation-reacceptance-probes.log)
+- [后端回归日志](../../.tmp/explanation-reacceptance-backend.log)
+- [前端回归日志](../../.tmp/explanation-reacceptance-frontend.log)、[构建日志](../../.tmp/explanation-reacceptance-build.log)
+- [本轮特征测试源码](../../.tmp/ExplanationReacceptanceProbeTest.java)、[执行日志](../../.tmp/explanation-reacceptance-probes.log)
 
 本次未修改业务实现。临时 probe 源码/class 在验证结束后移出正式测试目录，避免污染下一次默认测试数量。
 
@@ -52,7 +52,7 @@
 
 ### A6-01 [P1] 空材料和零核验事件仍能形成最终排除依据
 
-位置：[ExplanationWorkspaceService.java:1600](/D:/JCode/backend/src/main/java/com/bank/aml/explanation/ExplanationWorkspaceService.java:1600)、[同文件:2070](/D:/JCode/backend/src/main/java/com/bank/aml/explanation/ExplanationWorkspaceService.java:2070)。
+位置：[ExplanationWorkspaceService.java:1600](../../backend/src/main/java/com/bank/aml/explanation/ExplanationWorkspaceService.java#L1600)、[同文件:2070](../../backend/src/main/java/com/bank/aml/explanation/ExplanationWorkspaceService.java#L2070)。
 
 六问题只是遍历 artifactVersionIds；空数组不触发校验，EXPLAINED 分支也没有补充证据必要条件。persistEvidenceUses 在完全无引用时写一条 CONTEXT 占位记录，其注释声称“无引用的 EXPLAINED 已被拒绝”，与实际行为不符。
 
@@ -62,7 +62,7 @@
 
 ### A6-02 [P1] 代付授权可整体省略，也可用覆盖子集隐去未授权金额
 
-位置：[ExplanationWorkspaceService.java:1341](/D:/JCode/backend/src/main/java/com/bank/aml/explanation/ExplanationWorkspaceService.java:1341)、[同文件:1443](/D:/JCode/backend/src/main/java/com/bank/aml/explanation/ExplanationWorkspaceService.java:1443)。
+位置：[ExplanationWorkspaceService.java:1341](../../backend/src/main/java/com/bank/aml/explanation/ExplanationWorkspaceService.java#L1341)、[同文件:1443](../../backend/src/main/java/com/bank/aml/explanation/ExplanationWorkspaceService.java#L1443)。
 
 authority 对象、limitAmount 和 coveredTransactionIds 都是可选条件；只比较客户端声明的覆盖集合金额，没有要求它覆盖待解释的代付交易。C3/C4 的 SUPPORTED 声明不能补足缺失授权。
 
@@ -75,7 +75,7 @@ authority 对象、limitAmount 和 coveredTransactionIds 都是可选条件；�
 
 ### A6-03 [P1] 无任何持续任务的预付解释仍能通过最终门禁
 
-位置：[ExplanationWorkspaceService.java:1078](/D:/JCode/backend/src/main/java/com/bank/aml/explanation/ExplanationWorkspaceService.java:1078)、[同文件:1244](/D:/JCode/backend/src/main/java/com/bank/aml/explanation/ExplanationWorkspaceService.java:1244)。
+位置：[ExplanationWorkspaceService.java:1078](../../backend/src/main/java/com/bank/aml/explanation/ExplanationWorkspaceService.java#L1078)、[同文件:1244](../../backend/src/main/java/com/bank/aml/explanation/ExplanationWorkspaceService.java#L1244)。
 
 最终校验仍无条件传 `continuationArranged=true`；没有查询并校验每项 followupRequired 对应的真实任务。注释引用 validateObligationCoverage，但当前类并无该实现。
 
@@ -85,7 +85,7 @@ authority 对象、limitAmount 和 coveredTransactionIds 都是可选条件；�
 
 ### A6-04 [P1] 修复 token 顺序时使页面补充尽调路径回归
 
-位置：[ReviewService.java:107](/D:/JCode/backend/src/main/java/com/bank/aml/review/ReviewService.java:107)、[ReviewView.vue:224](/D:/JCode/frontend/src/views/ReviewView.vue:224)。
+位置：[ReviewService.java:107](../../backend/src/main/java/com/bank/aml/review/ReviewService.java#L107)、[ReviewView.vue:224](../../frontend/src/views/ReviewView.vue#L224)。
 
 后端现在对所有契约 2 的决定校验 token；前端对 REQUEST_ENHANCED_DUE_DILIGENCE 明确跳过取号，发送空 token。因此复核页发起补充尽调会先得到依据冲突，而不是创建任务。
 
@@ -95,7 +95,7 @@ authority 对象、limitAmount 和 coveredTransactionIds 都是可选条件；�
 
 ### A6-05 [P1] 核验从 CONFIRMED 变为 UNRESOLVED 后旧解释仍可采用
 
-位置：[ExplanationWorkspaceService.java:379](/D:/JCode/backend/src/main/java/com/bank/aml/explanation/ExplanationWorkspaceService.java:379)。
+位置：[ExplanationWorkspaceService.java:379](../../backend/src/main/java/com/bank/aml/explanation/ExplanationWorkspaceService.java#L379)。
 
 recordVerification 追加记录并推进 epoch，但只有 MISMATCH 产生完整性问题，UNRESOLVED 不使相关提交失效、不产生必须处理的问题；最终 readiness 也不重新检查采用核验的当前有效性。
 
@@ -105,7 +105,7 @@ recordVerification 追加记录并推进 epoch，但只有 MISMATCH 产生完整
 
 ### A6-06 [P1] 来源不可用写入 null 摘要，与 JPA/数据库非空约束冲突
 
-位置：[ExplanationWorkspaceService.java:340](/D:/JCode/backend/src/main/java/com/bank/aml/explanation/ExplanationWorkspaceService.java:340)、[EvidenceArtifactVersion.java:44](/D:/JCode/backend/src/main/java/com/bank/aml/explanation/EvidenceArtifactVersion.java:44)、[V27 迁移:38](/D:/JCode/backend/src/main/resources/db/migration/V27__rapid_goods_explanation.sql:38)。
+位置：[ExplanationWorkspaceService.java:340](../../backend/src/main/java/com/bank/aml/explanation/ExplanationWorkspaceService.java#L340)、[EvidenceArtifactVersion.java:44](../../backend/src/main/java/com/bank/aml/explanation/EvidenceArtifactVersion.java#L44)、[V27 迁移:38](../../backend/src/main/resources/db/migration/V27__rapid_goods_explanation.sql#L38)。
 
 首次获取 NOT_FOUND/UNAVAILABLE/FORBIDDEN 或缺适配器时，Service 设置 contentSha256=null 后保存；实体仍 `nullable=false`，表列仍 `CHAR(64) NOT NULL`。V28～V30 未修改该约束。因此按当前映射/表结构持久化会被拒绝，不能得到预期的“记录来源状态并生成问题”。Mockito 的 save 返回原对象掩盖了此错误。
 
@@ -117,4 +117,4 @@ recordVerification 追加记录并推进 epoch，但只有 MISMATCH 产生完整
 
 当前测试擅长验证“字段明确填写为坏值时拒绝”，对“关键字段被省略、只填部分集合、事实变化后重取 token、跨页面调用协议、真实持久化约束”的覆盖不足。下一轮应把删除字段、缩小范围、改变核验状态和真实事务写入作为必测输入变化。
 
-下一步不另开更大业务范围，先完成来源—授权—决定的一条真实路径，并通过隔离数据库验证。具体工作顺序、交付物、预计人日和放行条件见 [闭环补齐方案](/D:/JCode/docs/plans/explanation-v3-closure-plan-2026-09-08.md)。
+下一步不另开更大业务范围，先完成来源—授权—决定的一条真实路径，并通过隔离数据库验证。具体工作顺序、交付物、预计人日和放行条件见 [闭环补齐方案](../plans/explanation-v3-closure-plan-2026-09-08.md)。

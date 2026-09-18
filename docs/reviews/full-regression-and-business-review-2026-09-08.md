@@ -8,7 +8,7 @@
 
 ### FR-01 / P1：最新核验无法确认，重新提交仍可最终排除
 
-位置：[ExplanationWorkspaceService.java:1751](/D:/JCode/backend/src/main/java/com/bank/aml/explanation/ExplanationWorkspaceService.java:1751)。
+位置：[ExplanationWorkspaceService.java:1751](../../backend/src/main/java/com/bank/aml/explanation/ExplanationWorkspaceService.java#L1751)。
 
 现有修复能在追加 `UNRESOLVED` 核验事件时将被采用的旧提交置为 `STALE`，这一点有效。但重新提交只要求材料存在任意核验记录，没有验证最新有效事件是否仍支持该问题。
 
@@ -20,7 +20,7 @@
 
 ### FR-02 / P1：全部“不适用”可绕过证据要求
 
-位置：[ExplanationWorkspaceService.java:1698](/D:/JCode/backend/src/main/java/com/bank/aml/explanation/ExplanationWorkspaceService.java:1698)、[EXPLAINED 校验:1806](/D:/JCode/backend/src/main/java/com/bank/aml/explanation/ExplanationWorkspaceService.java:1806)。
+位置：[ExplanationWorkspaceService.java:1698](../../backend/src/main/java/com/bank/aml/explanation/ExplanationWorkspaceService.java#L1698)、[EXPLAINED 校验:1806](../../backend/src/main/java/com/bank/aml/explanation/ExplanationWorkspaceService.java#L1806)。
 
 本轮服务层反例使用普通已交付货款配方，把 Q1～Q6 全部设为 `NOT_APPLICABLE`，理由统一填写“本问题不适用”，删除所有材料引用，不抓取任何材料。提交成功并通过最终排除校验。探针：`probeAllNotApplicableCanExcludeWithoutAnyEvidence`。
 
@@ -30,7 +30,7 @@
 
 ### FR-03 / P1：跟进任务数量符合，业务义务仍可能没有承接
 
-位置：[ExplanationWorkspaceService.java:1138](/D:/JCode/backend/src/main/java/com/bank/aml/explanation/ExplanationWorkspaceService.java:1138)。
+位置：[ExplanationWorkspaceService.java:1138](../../backend/src/main/java/com/bank/aml/explanation/ExplanationWorkspaceService.java#L1138)。
 
 当前按 `followupRequired` 的提交遍历同案件 OPEN 持续核验任务，检查有效承办人、未来期限、至少 10 字的完成标准，并避免同一任务重复匹配；没有检查任务究竟绑定哪项交付义务。
 
@@ -42,7 +42,7 @@
 
 ### FR-04 / P1（验收有效性）：RAG 四路零召回也能 A/B 测试通过
 
-位置：[RagSecurityAndPipelineIntegrationTest.java:56](/D:/JCode/backend/src/test/java/com/bank/aml/evaluation/RagSecurityAndPipelineIntegrationTest.java:56)。
+位置：[RagSecurityAndPipelineIntegrationTest.java:56](../../backend/src/test/java/com/bank/aml/evaluation/RagSecurityAndPipelineIntegrationTest.java#L56)。
 
 完整集成首轮中，真实重排序模型不可用，A/B 用例正确失败。指定本机已有模型目录后，定向重跑该类 2 项测试，Maven 返回成功，但日志同时显示：
 
@@ -105,17 +105,17 @@ V1～V31 全链迁移及 Hibernate validate 在隔离 MySQL 通过；不可用�
 
 | 项目 | 代码证据/现状 | 业务含义与下一步 |
 |---|---|---|
-| 预警交易范围 | [requiredLegs:1443](/D:/JCode/backend/src/main/java/com/bank/aml/explanation/ExplanationWorkspaceService.java:1443) 取草稿 reviewedTransactionIds | 客户流水存在性不等于该预警命中全集；补 AlertScopePort 或等效服务器冻结范围，不能由调查者自选子集定义“全部” |
+| 预警交易范围 | [requiredLegs:1443](../../backend/src/main/java/com/bank/aml/explanation/ExplanationWorkspaceService.java#L1443) 取草稿 reviewedTransactionIds | 客户流水存在性不等于该预警命中全集；补 AlertScopePort 或等效服务器冻结范围，不能由调查者自选子集定义“全部” |
 | 核验与 Claim 绑定 | 实体和仓储存在；提交主要读草稿、按问题关联材料 | 仍缺具体事实→核验动作→版本支持关系；不能证明授权主体、期间、订单均独立核验 |
-| 复核预检/页面接续 | [ReviewService:63](/D:/JCode/backend/src/main/java/com/bank/aml/review/ReviewService.java:63)、[ReviewView:225](/D:/JCode/frontend/src/views/ReviewView.vue:225) | 预检有只读差异，但 readiness 取当前状态；页面在预检前已按当前状态阻断，未提交接续计划，合法“确认并接续”仍缺完整交互 |
-| 复核来源链 | [ReviewService:209](/D:/JCode/backend/src/main/java/com/bank/aml/review/ReviewService.java:209) 传入 originReviewId=null | 接续任务难以精确追溯是哪次决定承接；补事务内关联和失败注入回滚 |
-| 历史档案 | [CaseDossierService:238](/D:/JCode/backend/src/main/java/com/bank/aml/dossier/CaseDossierService.java:238) 使用 draftJson，currentOutcome=null，只取最近 basis | 草稿变化与当时已采用的解释混在一起；导出应绑定 reviewId 和不可变提交，而非把当前草稿展示为历史决定依据 |
+| 复核预检/页面接续 | [ReviewService:63](../../backend/src/main/java/com/bank/aml/review/ReviewService.java#L63)、[ReviewView:225](../../frontend/src/views/ReviewView.vue#L225) | 预检有只读差异，但 readiness 取当前状态；页面在预检前已按当前状态阻断，未提交接续计划，合法“确认并接续”仍缺完整交互 |
+| 复核来源链 | [ReviewService:209](../../backend/src/main/java/com/bank/aml/review/ReviewService.java#L209) 传入 originReviewId=null | 接续任务难以精确追溯是哪次决定承接；补事务内关联和失败注入回滚 |
+| 历史档案 | [CaseDossierService:238](../../backend/src/main/java/com/bank/aml/dossier/CaseDossierService.java#L238) 使用 draftJson，currentOutcome=null，只取最近 basis | 草稿变化与当时已采用的解释混在一起；导出应绑定 reviewId 和不可变提交，而非把当前草稿展示为历史决定依据 |
 | 证据原文 | EvidenceArtifactVersion.contentLocation 已定义，当前解释链未见赋值写入 | 摘要不能替代当时的原文；在真实来源变化后须能恢复已采用版本及定位 |
 | 退款业务 | Q6 文案已询问退款、冲正、撤销；现有主配方没有独立退款处置/金额分配闭环 | 文本问到退款不等于能把新退款关联到旧代付及旧结论；这是下一代聚焦点 |
 
 ## 4. 证据位置与复现口径
 
-全部路径位于 [本轮证据目录](/D:/JCode/.tmp/full-regression-20260908)。关键文件：
+全部路径位于 [本轮证据目录](../../.tmp/full-regression-20260908)。关键文件：
 
 | 文件 | 内容 |
 |---|---|
@@ -142,4 +142,4 @@ V1～V31 全链迁移及 Hibernate validate 在隔离 MySQL 通过；不可用�
 
 先将 FR-01～03 的特征探针反转为“错误输入必须拒绝”的正式回归，连同正向补核验/有效例外/正确义务绑定的成功样例落入真实库与页面测试；FR-04 增加实质指标和实际执行门禁。
 
-下一代聚焦 **已交付集团代付后的部分退货退款复核**，用新事件检验旧解释能否继续适用，并精确回答剩余 12 万退给了谁、为什么、依据哪份授权、谁负责查完。详见 [下一代详细计划书](/D:/JCode/docs/plans/group-payment-lifecycle-iteration-plan-v4-2026-09-08.md)。
+下一代聚焦 **已交付集团代付后的部分退货退款复核**，用新事件检验旧解释能否继续适用，并精确回答剩余 12 万退给了谁、为什么、依据哪份授权、谁负责查完。详见 [下一代详细计划书](../plans/group-payment-lifecycle-iteration-plan-v4-2026-09-08.md)。

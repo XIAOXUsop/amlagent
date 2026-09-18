@@ -27,11 +27,11 @@
 
 本地证据：
 
-- [后端基线日志](/D:/JCode/.tmp/explanation-acceptance-20260908-backend.log)
-- [工作区复现日志](/D:/JCode/.tmp/explanation-probes-execution-20260908.log)
-- [EDD 复现日志](/D:/JCode/.tmp/edd-probes-execution-20260908.log)
-- [工作区复现源码](/D:/JCode/.tmp/ExplanationAcceptanceProbeTest.java)
-- [EDD 复现源码](/D:/JCode/.tmp/EddAcceptanceProbeTest.java)
+- [后端基线日志](../../.tmp/explanation-acceptance-20260908-backend.log)
+- [工作区复现日志](../../.tmp/explanation-probes-execution-20260908.log)
+- [EDD 复现日志](../../.tmp/edd-probes-execution-20260908.log)
+- [工作区复现源码](../../.tmp/ExplanationAcceptanceProbeTest.java)
+- [EDD 复现源码](../../.tmp/EddAcceptanceProbeTest.java)
 
 复现运行条件：Java 21、本地缓存 Maven 3.9.9、`.tmp/review-maven-settings.xml`。将相应 probe 源码恢复到其包对应测试目录，编译后可使用 `-Dtest=ExplanationAcceptanceProbeTest#probe*` 或 `-Dtest=EddAcceptanceProbeTest#probe*` 选择执行。修复时必须把特征断言改为业务期望的拒绝、失效或冲突断言。
 
@@ -45,7 +45,7 @@
 
 ### A5-01 [P1] 材料与交易事实仍由调用方自证，空证据也可以形成排除依据
 
-位置：[ExplanationWorkspaceService.java:242](/D:/JCode/backend/src/main/java/com/bank/aml/explanation/ExplanationWorkspaceService.java:242)、[同文件:794](/D:/JCode/backend/src/main/java/com/bank/aml/explanation/ExplanationWorkspaceService.java:794)。
+位置：[ExplanationWorkspaceService.java:242](../../backend/src/main/java/com/bank/aml/explanation/ExplanationWorkspaceService.java#L242)、[同文件:794](../../backend/src/main/java/com/bank/aml/explanation/ExplanationWorkspaceService.java#L794)。
 
 `captureEvidence` 接受调用方提交的 `contentSha256`，没有获取来源内容，直接设置 RESOLVED；调用方再提交同一个 claimedSha256 即得到 MATCH。来源系统白名单只能限制名称，不能证明记录存在。六问题允许空 artifactVersionIds；有引用时只排除 MISMATCH，没有要求可用来源、可定位事实及满足该事实用途的核验记录。范围对账比较的也是调用方自行声明的交易 ID、金额和分配，VerificationBasisRepository 尚未参与读写。
 
@@ -55,7 +55,7 @@
 
 ### A5-02 [P1] NOT_SATISFIED 未阻断 EXPLAINED
 
-位置：[ExplanationWorkspaceService.java:892](/D:/JCode/backend/src/main/java/com/bank/aml/explanation/ExplanationWorkspaceService.java:892)、[同文件:961](/D:/JCode/backend/src/main/java/com/bank/aml/explanation/ExplanationWorkspaceService.java:961)。
+位置：[ExplanationWorkspaceService.java:892](../../backend/src/main/java/com/bank/aml/explanation/ExplanationWorkspaceService.java#L892)、[同文件:961](../../backend/src/main/java/com/bank/aml/explanation/ExplanationWorkspaceService.java#L961)。
 
 代码只把 UNKNOWN 转成 criticalUnknown；EXPLAINED 分支只检查 unknown/openCritical，没有验证六问题全部为允许的 SATISFIED 或具有适用依据的 NOT_APPLICABLE。
 
@@ -65,7 +65,7 @@
 
 ### A5-03 [P1] 案件级待分派关键材料不阻断最终排除
 
-位置：[ExplanationWorkspaceService.java:703](/D:/JCode/backend/src/main/java/com/bank/aml/explanation/ExplanationWorkspaceService.java:703)、[同文件:733](/D:/JCode/backend/src/main/java/com/bank/aml/explanation/ExplanationWorkspaceService.java:733)。
+位置：[ExplanationWorkspaceService.java:703](../../backend/src/main/java/com/bank/aml/explanation/ExplanationWorkspaceService.java#L703)、[同文件:733](../../backend/src/main/java/com/bank/aml/explanation/ExplanationWorkspaceService.java#L733)。
 
 抓取材料创建 unitId=null 的 FACT_UNASSIGNED / DECISION_CRITICAL 问题；就绪评估只检查案件完整性问题和绑定单元的关键问题，没有处理这种案件级待分派事项。
 
@@ -75,7 +75,7 @@
 
 ### A5-04 [P1] 问题降级的“独立复核人”可以由分析员编造
 
-位置：[ExplanationWorkspaceService.java:589](/D:/JCode/backend/src/main/java/com/bank/aml/explanation/ExplanationWorkspaceService.java:589)；请求由 [ExplanationController.java](/D:/JCode/backend/src/main/java/com/bank/aml/controller/ExplanationController.java) 的分析员/管理员接口接收。
+位置：[ExplanationWorkspaceService.java:589](../../backend/src/main/java/com/bank/aml/explanation/ExplanationWorkspaceService.java#L589)；请求由 [ExplanationController.java](../../backend/src/main/java/com/bank/aml/controller/ExplanationController.java) 的分析员/管理员接口接收。
 
 只校验 confirmedBy 非空且不同于 actor，没有真实复核人的认证动作、角色与启用状态核对。
 
@@ -85,7 +85,7 @@
 
 ### A5-05 [P1] 提交没有记录材料反向引用，来源变化无法使采用提交失效
 
-位置：[ExplanationWorkspaceService.java:452](/D:/JCode/backend/src/main/java/com/bank/aml/explanation/ExplanationWorkspaceService.java:452)、[同文件:352](/D:/JCode/backend/src/main/java/com/bank/aml/explanation/ExplanationWorkspaceService.java:352)。
+位置：[ExplanationWorkspaceService.java:452](../../backend/src/main/java/com/bank/aml/explanation/ExplanationWorkspaceService.java#L452)、[同文件:352](../../backend/src/main/java/com/bank/aml/explanation/ExplanationWorkspaceService.java#L352)。
 
 submitUnit 收集材料引用后未写 explanation_evidence_use；markArtifactSuperseded 依赖该表反查。当前回归甚至断言 evidenceUses.save 从未调用。同一来源再次 capture 还总是返回已有版本，来源内容改变也不产生 v2。
 
@@ -95,7 +95,7 @@ submitUnit 收集材料引用后未写 explanation_evidence_use；markArtifactSu
 
 ### A5-06 [P1] 最终复核没有重新评估交期，并无条件认为跟进已安排
 
-位置：[ExplanationWorkspaceService.java:631](/D:/JCode/backend/src/main/java/com/bank/aml/explanation/ExplanationWorkspaceService.java:631)、[同文件:928](/D:/JCode/backend/src/main/java/com/bank/aml/explanation/ExplanationWorkspaceService.java:928)。
+位置：[ExplanationWorkspaceService.java:631](../../backend/src/main/java/com/bank/aml/explanation/ExplanationWorkspaceService.java#L631)、[同文件:928](../../backend/src/main/java/com/bank/aml/explanation/ExplanationWorkspaceService.java#L928)。
 
 交期只在单元提交时计算；最终复核读取冻结布尔值。validateReadyForReview 无条件传 continuationArranged=true，没有按单元核实持续任务是否真实存在、是否覆盖该义务。
 
@@ -105,7 +105,7 @@ submitUnit 收集材料引用后未写 explanation_evidence_use；markArtifactSu
 
 ### A5-07 [P1] EDD 接续缺少逐项对应，最终调用顺序还会使有效令牌失效
 
-位置：[EnhancedDueDiligenceService.java:148](/D:/JCode/backend/src/main/java/com/bank/aml/review/EnhancedDueDiligenceService.java:148)、[ReviewService.java:105](/D:/JCode/backend/src/main/java/com/bank/aml/review/ReviewService.java:105)。
+位置：[EnhancedDueDiligenceService.java:148](../../backend/src/main/java/com/bank/aml/review/EnhancedDueDiligenceService.java#L148)、[ReviewService.java:105](../../backend/src/main/java/com/bank/aml/review/ReviewService.java#L105)。
 
 复现：案件有两个 OPEN 决策支持任务，提交 originRequestId=999 的无关接续计划，两项原任务都被 CANCELLED。代码未核实原任务归属、逐条问题绑定或义务覆盖，遍历取消的是全部 OPEN 决策支持任务。completionStandard 只做字数验证并写长度审计，未专门保存其完整值；调用方可以不把它重复写进 issueBindingsJson。
 
@@ -115,7 +115,7 @@ submitUnit 收集材料引用后未写 explanation_evidence_use；markArtifactSu
 
 ### A5-08 [P1] EDD 完成接口忽略版本，并允许材料提交人自行完成
 
-位置：[EnhancedDueDiligenceService.java:304](/D:/JCode/backend/src/main/java/com/bank/aml/review/EnhancedDueDiligenceService.java:304)。
+位置：[EnhancedDueDiligenceService.java:304](../../backend/src/main/java/com/bank/aml/review/EnhancedDueDiligenceService.java#L304)。
 
 expectedRevision 只用于审计键，没有与当前版本比较；也未比较 resolvedBy 与 respondedBy/实质贡献人。角色权限不能避免有两种操作权限的 ADMIN 自审。
 
@@ -125,7 +125,7 @@ expectedRevision 只用于审计键，没有与当前版本比较；也未比较
 
 ### A5-09 [P2] 工作区草稿按页面共享，跨单元编辑会带入其他预警内容
 
-位置：[ExplanationWorkspace.vue:26](/D:/JCode/frontend/src/views/ExplanationWorkspace.vue:26)、[同文件:60](/D:/JCode/frontend/src/views/ExplanationWorkspace.vue:60)、[同文件:77](/D:/JCode/frontend/src/views/ExplanationWorkspace.vue:77)。
+位置：[ExplanationWorkspace.vue:26](../../frontend/src/views/ExplanationWorkspace.vue#L26)、[同文件:60](../../frontend/src/views/ExplanationWorkspace.vue#L60)、[同文件:77](../../frontend/src/views/ExplanationWorkspace.vue#L77)。
 
 只有一个 draftText，所有单元的编辑与保存共用；打开 B 单元会显示此前 A 的内容。UnitView 又不返回服务器草稿，刷新后无法从现有工作区响应恢复已保存内容。用户可能把 A 的分析保存到 B，后端又缺少权威交易范围校验，影响进一步放大。
 
@@ -139,4 +139,4 @@ expectedRevision 只用于审计键，没有与当前版本比较；也未比较
 
 ## 6. 下一步
 
-先按 A5-01～A5-09 修复并把复现改成防回归测试，再进入 [第三方代付解释核验详细计划 v3](/D:/JCode/docs/plans/third-party-goods-payment-verification-plan-v3-2026-09-08.md)。该计划将基础补齐与新增业务价值分别设定验收关口，避免再次把对象、接口和测试数量当成业务闭环成果。
+先按 A5-01～A5-09 修复并把复现改成防回归测试，再进入 [第三方代付解释核验详细计划 v3](../plans/third-party-goods-payment-verification-plan-v3-2026-09-08.md)。该计划将基础补齐与新增业务价值分别设定验收关口，避免再次把对象、接口和测试数量当成业务闭环成果。

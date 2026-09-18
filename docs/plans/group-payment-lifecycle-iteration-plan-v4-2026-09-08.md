@@ -2,7 +2,7 @@
 
 日期：2026-09-08。代码基线：`7ad1ff5`。状态：**方案，尚未实施**。v4 是本计划迭代编号，不表示已将系统 `investigationContractVersion` 改为 4。
 
-依据：[本轮全量回归报告](/D:/JCode/docs/reviews/full-regression-and-business-review-2026-09-08.md)、[原代付专项 v3 计划](/D:/JCode/docs/plans/third-party-goods-payment-verification-plan-v3-2026-09-08.md) 和当前实现。旧闭环计划中已完成的迁移、摘要约束、token 修复和数据库幂等不重复列为新功能；未完成的事实采用、范围冻结和义务绑定作为前置条件。
+依据：[本轮全量回归报告](../reviews/full-regression-and-business-review-2026-09-08.md)、[原代付专项 v3 计划](third-party-goods-payment-verification-plan-v3-2026-09-08.md) 和当前实现。旧闭环计划中已完成的迁移、摘要约束、token 修复和数据库幂等不重复列为新功能；未完成的事实采用、范围冻结和义务绑定作为前置条件。
 
 ## 1. 本轮只深挖一个业务问题
 
