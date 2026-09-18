@@ -110,11 +110,20 @@ jobs:
           cache: maven
       # ── NVD 数据缓存 ──────────────────────────────────────────────
       #
-      # 没有 NVD_API_KEY 时这个 job 要跑 **2 小时**，而实测（CI 日志
-      # `Total time: 02:03 h`）几乎全花在下载与更新 NVD 的 CVE 库上。
+      # 没有 NVD_API_KEY 时这个 job 实测跑 **22–26 分钟**（早先一次限流严重时到过
+      # `Total time: 02:03 h`），时间几乎全花在下载与更新 NVD 的 CVE 库上。
       # 那份数据一天之内不会变，每个 commit 都从头下一遍是纯浪费。
       #
-      # 缓存之后：命中的运行只做增量更新，未命中的第一次照旧慢。
+      # ⚠️ **取缓存（restore）与存缓存（save）必须拆成两步**，这是踩过之后改的：
+      #
+      # 原先只写了一个 `actions/cache@v4`。它的保存发生在**后置步骤**，而后置步骤
+      # 默认只在前面所有步骤成功时才跑——可这个 job 恰恰是「扫到漏洞就 exit 1」，
+      # 于是**缓存永远存不下来**：只有在扫描通过时才写入，而那正是不需要缓存的场合。
+      # 实测证据：job 的步骤列表里 `Post Cache NVD data` 是 `completed/skipped`，
+      # 仓库的缓存列表里也**根本没有 nvd-data-\* 条目**（13 条全是 setup-java 的）。
+      #
+      # 所以取用 `actions/cache/restore`，存在扫描之后单独一步、带 `if: always()`。
+      #
       # `key` 里带 `run_id` 是为了让**每次运行都写一份新缓存**（数据每天在变，
       # 固定 key 会永远命中第一份、反而让数据停在过去），
       # `restore-keys` 让下一次运行接到最近的那一份。
@@ -123,8 +132,8 @@ jobs:
       # 不显式写的话它取 Maven 本地仓库下的插件默认位置——那样缓存路径就成了
       # 对第三方默认值的推断，插件升级改了默认值就会静默失配（缓存永远不命中，
       # 而没人会注意到）。显式写出来，两个路径才是同一件事。
-      - name: Cache NVD data
-        uses: actions/cache@v4
+      - name: Restore NVD data
+        uses: actions/cache/restore@v4
         with:
           path: ~/.m2/dependency-check-data
           key: nvd-data-${{ github.run_id }}
@@ -169,6 +178,17 @@ jobs:
           # 分类并打印对应的 ::error:: 注解；无论哪种原因，job 都必须红
           python3 ../scripts/classify_dependency_scan.py dependency-scan.log
           exit 1
+      # 存缓存必须单独一步，且 `if: always()`。
+      #
+      # 理由见上面 Restore NVD data 的注释：这个 job 恰恰是「扫到漏洞就失败」，
+      # 而 `actions/cache` 的后置保存默认只在成功时执行——于是缓存永远存不下来。
+      # 这里用 `if: always()` 覆盖掉那个默认。
+      - name: Save NVD data
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: ~/.m2/dependency-check-data
+          key: nvd-data-${{ github.run_id }}
       - name: Upload dependency scan report
         if: ${{ failure() }}
         uses: actions/upload-artifact@v4
