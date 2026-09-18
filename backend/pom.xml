@@ -103,9 +103,26 @@
     </properties>
 
     <!--
-      opennlp-tools 不在 Spring Boot 的 BOM 里，只能用 dependencyManagement 显式锁版本。
-      CVE-2026-82617 是 CVSS 10.0（`RegexNameFinder` 的正则回溯），
-      受影响区间 2.0.0 ≤ v < 2.5.12，上游传递依赖给的是 2.5.9。
+      两个包不在 Spring Boot 的 BOM 里，只能用 dependencyManagement 显式锁版本。
+
+      · opennlp-tools：CVE-2026-82617 是 CVSS 10.0（`RegexNameFinder` 的正则回溯），
+        受影响区间 2.0.0 ≤ v < 2.5.12，上游传递依赖（flyway-database-postgresql）给的是 2.5.9。
+
+      · swagger-ui（webjar）：springdoc 2.8.14 带的是 5.30.1，**它内嵌的 DOMPurify 是 3.2.6**，
+        命中 CVE-2026-65898（`setConfig()` 配 `uponSanitizeAttribute` 钩子时不克隆
+        ALLOWED_ATTR 白名单，钩子因此能永久改写共享白名单；修复线 3.4.11）。
+        5.32.11 内嵌的是 **DOMPurify 3.4.12**，即修复版。
+
+        这条是**真升级，不是豁免**。升级前实测确认了 compat：两版的
+        `index.html` 与 `swagger-initializer.js` **逐字节相同**（各 734 / 539 字节），
+        而这两个正是 springdoc 的 SwaggerIndexPageTransformer 唯一会改写的东西；
+        同时 springdoc 的 class 文件里搜不到任何硬编码的 `5.30.1`
+        （webjar 路径由 Spring 的 WebJarsResourceResolver 从 jar 内的
+        `META-INF/maven/org.webjars/swagger-ui/pom.properties` 动态解析）。
+
+        另记：即便不升级，这条 CVE 在本工程里也不可触达——实测两版 swagger-ui
+        的 bundle 里 `DOMPurify.setConfig(...)` **一次调用都没有**，只有它自己的定义。
+        但「不可触达」要靠人读源码判断、且会随版本漂移；升一个 webjar 更省事，也更结实。
     -->
     <dependencyManagement>
         <dependencies>
@@ -113,6 +130,11 @@
                 <groupId>org.apache.opennlp</groupId>
                 <artifactId>opennlp-tools</artifactId>
                 <version>2.5.12</version>
+            </dependency>
+            <dependency>
+                <groupId>org.webjars</groupId>
+                <artifactId>swagger-ui</artifactId>
+                <version>5.32.11</version>
             </dependency>
         </dependencies>
     </dependencyManagement>
@@ -166,7 +188,41 @@
             <groupId>io.micrometer</groupId>
             <artifactId>micrometer-registry-prometheus</artifactId>
         </dependency>
-        <!-- 分布式追踪：Micrometer Tracing 桥接到 OpenTelemetry，并导出 OTLP -->
+        <!--
+          分布式追踪：Micrometer Tracing 桥接到 OpenTelemetry，并导出 OTLP。
+
+          ⚠️ 这里**换掉了 OTLP 的 okhttp 发送器**，改用纯 JDK 的。
+          原因不是 okhttp 本身有问题，是它拖进来的一整条子树：
+
+              opentelemetry-exporter-otlp
+                └─ exporter-sender-okhttp → okhttp → okio → kotlin-stdlib(-jdk7/-jdk8)
+
+          `kotlin-stdlib` 在本工程里是**纯粹的陪嫁**（本项目零 Kotlin 代码），
+          但它在依赖漏洞扫描里占了两条，其中 CVE-2026-53914 是 9.8：
+
+            CVE-2026-53914  描述是"Kotlin 构建缓存元数据的不安全反序列化"——
+                            受影响的是编译器 / Gradle 插件，不是运行时 stdlib。
+                            但 NVD 只有一个笼统的 cpe:2.3:a:jetbrains:kotlin，
+                            dependency-check 就把 stdlib 这个 jar 配了上去。
+            CVE-2020-29582  **NVD 自己的区间与描述矛盾**：描述写"before 1.4.21"
+                            即 1.4.21 已修，CPE 区间却写成 `[, 2.1.0)`，
+                            于是 1.9.25 被卷进去——本工程远在修复线之后。
+
+          两条都可以写成豁免，但那等于在门禁上贴两张"这次不算"。把发送器换成
+          `opentelemetry-exporter-sender-jdk`（只依赖 exporter-common + sdk-common，
+          **不带 okhttp / okio / Kotlin**）是同一件事的结构性解法：
+          依赖树里不再有那个 jar，也就不需要任何豁免。
+
+          两者通过 `META-INF/services/io.opentelemetry.exporter.internal.http.HttpSenderProvider`
+          注册，是可互换的实现（已比对过两个 jar 的 services 文件）。
+
+          ⚠️ **代价要说清楚**：`sender-jdk` 只注册 HttpSenderProvider，
+          没有 GrpcSenderProvider（okhttp 那个两个都注册）。所以换掉之后
+          **只能走 OTLP/HTTP**（4318），不能配 `management.otlp.tracing.transport=grpc`。
+          这在本工程是可以接受的：Spring Boot 的 OTLP 导出器默认就是 http/protobuf，
+          且 application.yml 默认根本不导出（见那里的说明）。
+          将来若真需要 gRPC，把 okhttp 发送器加回来即可，但要连带接受上面两条告警。
+        -->
         <dependency>
             <groupId>io.micrometer</groupId>
             <artifactId>micrometer-tracing-bridge-otel</artifactId>
@@ -174,6 +230,16 @@
         <dependency>
             <groupId>io.opentelemetry</groupId>
             <artifactId>opentelemetry-exporter-otlp</artifactId>
+            <exclusions>
+                <exclusion>
+                    <groupId>io.opentelemetry</groupId>
+                    <artifactId>opentelemetry-exporter-sender-okhttp</artifactId>
+                </exclusion>
+            </exclusions>
+        </dependency>
+        <dependency>
+            <groupId>io.opentelemetry</groupId>
+            <artifactId>opentelemetry-exporter-sender-jdk</artifactId>
         </dependency>
 
         <!-- 安全：Spring Security + JWT -->

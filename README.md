@@ -483,11 +483,11 @@ python scripts/test_summary.py --markdown   # 可直接贴进文档
   把前者写成后者正是这类文档最容易骗人的地方；
 - 真实模型评测未运行时明确列出，不沿用上一次的结果。
 
-最近一次本机验证（2026-09-18，Windows 11 + JDK 21 + Node 22）：
+最近一次本机验证（2026-09-19，Windows 11 + JDK 21 + Node 22）：
 
 | 层 | 执行/总数 | 通过 | 失败 | 跳过 | 最近验证 |
 |---|---:|---:|---:|---:|---|
-| 后端单元测试（不含 `integration` 标签） | 548/549 | 548 | 0 | 1 | 2026-09-18 13:36 |
+| 后端单元测试（不含 `integration` 标签） | 549/550 | 549 | 0 | 1 | 2026-09-19 05:27 |
 | 后端集成回归（`-Pintegration-test`，需 MySQL/PGVector/Redis） | 44/44 | 44 | 0 | 0 | 2026-09-18 13:48 |
 | 前端组件测试 | 85/85 | 85 | 0 | 0 | 2026-09-18 13:38 |
 | Playwright E2E（需后端 + 前端，Mock 模型） | 8/8 | 8 | 0 | 0 | 2026-09-18 05:10 |
@@ -570,7 +570,7 @@ cd backend && AML_LLM_ACTIVE_PROVIDER=mock ./mvnw spring-boot:run
 外部依赖的变化与提交无关。一个几周没人动的仓库，门禁可能早就红了却没人知道——
 定时任务（每日 `23 2 * * *`）是发现这种"沉默失效"的唯一办法。
 
-### 三类失败信号要分清
+### 四类失败信号要分清
 
 1. **依赖没就绪** → preflight 的 `::error::` 直接点名是 MySQL、PGVector 还是 Redis；
 2. **测试断言失败** → `--failures` 逐条列出失败的测试类；
@@ -581,6 +581,22 @@ cd backend && AML_LLM_ACTIVE_PROVIDER=mock ./mvnw spring-boot:run
    配置 `NVD_API_KEY` 可解决限流；没有它时这一步可能常态化失败。
 
 这几类问题以前会混成一句"job failed"，而它们的处理方式完全不同。
+
+**NVD 数据缓存**：没有 API Key 时这个 job 实测要跑 22–26 分钟，时间几乎全花在下载
+CVE 库上，而那份数据一天之内不会变。缓存写错过一次，值得单独记：
+
+原先只写了一个 `actions/cache@v4`，而它的保存在**后置步骤**、默认只在前面所有步骤
+成功时才执行——可这个 job 恰恰是"扫到漏洞就 `exit 1`"。于是缓存**永远存不下来**：
+只在扫描通过时写入，而那正是不需要缓存的场合。证据是 job 步骤列表里
+`Post Cache NVD data` 显示 `completed/skipped`，仓库缓存列表里也**根本没有
+`nvd-data-*` 条目**（13 条全是 setup-java 的）。
+
+现在拆成 `actions/cache/restore` + 扫描之后单独一步 `actions/cache/save` 且带
+`if: always()`。`key` 里带 `run_id` 让每次运行都写一份新缓存（数据每天在变，
+固定 key 会永远命中最旧的那份、反而让数据停在过去），`restore-keys` 让下一次
+接到最近的一份。`-DdataDirectory` 是**显式指定**的，与缓存 path 必须一致——
+不显式写就会取插件在本地仓库下的默认位置，那样缓存路径就成了对第三方默认值的推断，
+插件升级改了默认值就会静默失配（缓存永远不命中，而没人会注意到）。
 
 ### 依赖安全
 
@@ -601,54 +617,138 @@ cd backend && AML_LLM_ACTIVE_PROVIDER=mock ./mvnw spring-boot:run
 
 **处理原则：先去 NVD 查受影响版本区间，再决定升不升。** 看到扫描器报红就升版本，
 和看到报红就关掉它一样不负责任——前者可能升了个没用的版本，后者会漏掉真的。
-下表是 2026-09-19 逐条查 `services.nvd.nist.gov` 的**受影响版本区间**，
-再拿它对照本仓库实际解析到的版本得出的。**先查区间再决定升不升**——
-看到扫描器报红就升、和看到报红就关掉它一样不负责任。
+下面两张表来自逐条查 `services.nvd.nist.gov/rest/json/cves/2.0?cveId=…` 的
+`configurations[].nodes[].cpeMatch[]`，再对照本工程 `dependency:list` 实际解析到的版本。
+
+**第一轮（2026-09-18，扫描首次真正跑出结果时暴露的）**
 
 | CVE | 包 | 受影响区间 | 本仓库版本 | 结论 |
 |---|---|---|---|---|
 | 40971 / 40974 | spring-boot | `3.5.0 ≤ v < 3.5.14` | 3.5.13 → **3.5.16** | ✅ 已清 |
 | 54512 | jackson-databind | `2.19.0 ≤ v < 2.21.4` | 2.21.2 → 2.21.4 | ✅ 已清 |
-| 65905 | tomcat | `10.1.0 ≤ v < 10.1.58` | 10.1.53 → **10.1.60** | ✅ 已清（BOM 属性覆盖） |
-| 34479 | log4j | `2.7 ≤ v < 2.25.4` | 2.24.3 → **2.25.4** | ✅ 已清（BOM 属性覆盖） |
-| 54291 | postgresql (JDBC) | `42.7.4 ≤ v < 42.7.12` | 42.7.11 → **42.7.12** | ✅ 已清（BOM 属性覆盖） |
-| 82617 | opennlp-tools | `2.0.0 ≤ v < 2.5.12` | 2.5.9 → **2.5.12** | ✅ 已清（dependencyManagement） |
-| 47884 | spring-framework | `6.2.0 ≤ v < 6.2.20` | 6.2.19 | ⏳ 修复线未发布 |
-| 59270 | spring-security | `6.5.0 ≤ v < 6.5.12` | 6.5.11 | ⏳ 修复线未发布 |
-| 53914 | kotlin-stdlib | `≤ v < 2.4.20` | 1.9.25 | ⛔ 无法覆盖 |
-| 18022 | pgvector | 扩展 `≤ v < 0.8.6` | Java 客户端 0.1.6 | ⚠️ **误报** |
-| 60586 / 60623 | mysql-connector-j | NVD 无版本区间可查 | 9.7.0 | ❓ 无法判定 |
+| 65905 | tomcat | `10.1.0 ≤ v < 10.1.58` | 10.1.53 → **10.1.60** | ✅ 已清 |
+| 34479 | log4j | `2.7 ≤ v < 2.25.4` | 2.24.3 → 2.25.4 | ✅ 已清 |
+| 54291 | postgresql (JDBC) | `42.7.4 ≤ v < 42.7.12` | 42.7.11 → **42.7.12** | ✅ 已清 |
+| 82617 | opennlp-tools | `2.0.0 ≤ v < 2.5.12` | 2.5.9 → **2.5.12** | ✅ 已清 |
 
-清掉的方式分三种，按「上游是否管这个包」选：
+**第二轮（2026-09-19，清完上一批之后新浮出来的）**
 
-- **Spring Boot BOM 管的**（tomcat / log4j / postgresql）→ 覆盖它的 BOM 属性
-- **BOM 不管的**（opennlp，来自 flyway 的传递依赖）→ 只能靠 `dependencyManagement` 显式锁版本
-- **Spring Boot 版本本身**（spring-boot / jackson）→ 直接升到 3.5.x 最新
+| CVE | 包 | 受影响区间 | 本仓库版本 | 结论 |
+|---|---|---|---|---|
+| 89044 等 **22 条** | netty | `4.1.133 ≤ v < 4.1.138`；其余 21 条落在 `4.1.0 ≤ v < 4.1.136` | 4.1.135 → **4.1.138.Final** | ✅ 已清 |
+| 54515 | jackson-databind | `2.19.0 ≤ v < 2.21.5` | 2.21.4 → **2.21.5** | ✅ 已清 |
+| 49844 | log4j | `2.13.1 ≤ v < 2.25.5` | 2.25.4 → **2.25.5** | ✅ 已清 |
+| 48924 | commons-lang3 | `3.0 ≤ v < 3.18.0` | 3.17.0 → **3.18.0** | ✅ 已清 |
+| 65898 | swagger-ui 内嵌的 DOMPurify | `v < 3.4.11` | 3.2.6 → **3.4.12** | ✅ 已清 |
+| 53914 / 29582 | kotlin-stdlib | `v < 2.4.20` | 1.9.25 | ✅ 已清（**移除依赖，不是升版本**） |
+
+netty 那 22 条合起来是**一个动作**：NVD 对 netty 只登记了一个笼统的
+`cpe:2.3:a:netty:netty`，于是每条公告都会同时命中 `netty-transport` / `netty-codec` /
+`netty-handler` 一串模块，而其中不少公告讲的其实是一个具体模块
+（例如 `CVE-2026-62380` 说的是 `netty-codec-socks` 的 SOCKS4/SOCKS5 编码器）。
+这里不去逐条论证"哪个模块算不算"——**4.1.138.Final 一次覆盖全部 22 条**，
+比写 22 条豁免干净得多。
+
+清掉的方式按「上游是否管这个包」分四种：
+
+- **Spring Boot BOM 管的** → 覆盖它的属性：`tomcat.version`、`log4j2.version`、
+  `postgresql.version`、`netty.version`、`jackson-bom.version`、`commons-lang3.version`
+- **BOM 不管的** → `dependencyManagement` 显式锁：`opennlp-tools`（来自 flyway 的传递依赖）、
+  `org.webjars:swagger-ui`（来自 springdoc）
+- **Spring Boot 版本本身** → 直接升到 3.5.x 最新
+- **能连根拔掉的** → 移除拉它进来的那个依赖，而不是压它的版本（kotlin-stdlib，见下）
+
+取的版本都是**修复线，不是最新版**：log4j 有 2.26.x、jackson 有 2.21.6，
+但它们不是任何一条公告的要求，跨 minor 升级徒增风险。log4j 从 2.25.4 又挪到 2.25.5，
+是因为新公告 `CVE-2026-49844` 的修复线正是 2.25.5——**不是**因为"有更新的就用最新的"。
 
 **验证方式**：每一轮改完都跑 CI 同款命令 `./mvnw verify -Dgroups='!integration'`，
-**549 项测试全绿且与改动前基线逐项一致**；再用 `dependency:list` 确认解析到的
+**550 项测试全绿且与改动前基线逐项一致**；再用 `dependency:list` 确认解析到的
 确实是新版本，而不是只改了 pom 文字。**「清掉了」这件事不是靠推断，
 是靠下一次扫描的输出里那些包不再出现。**
 
-**三条没修的，原因各不相同，都不打算含糊过去**：
+**没修的：修复线尚未发布，只能等上游。** 22 条，逐条记在 `backend/pom.xml` 的注释里，
+附各自要求的版本号——上游一发布就能照着加属性：
 
-- `CVE-2026-47884`（spring-framework）与 `CVE-2026-59270`（spring-security）
-  **修复线都尚未发布**——6.2.20 / 6.5.12 在 Maven Central 上都不存在，
-  该线最新就是 BOM 带的那两个版本。只能等上游。
-- `CVE-2026-53914`（kotlin-stdlib）**不能靠版本覆盖解决**：它是传递依赖（runtime），
-  且带着 `kotlin-stdlib-jdk7` / `jdk8`，而这两个 artifact 在 Kotlin 2.x 已不再发布——
-  把版本提到修复线 2.4.20 会直接打断依赖树。要修得先让上游那个传递依赖换掉。
-- `CVE-2026-60586 / 60623`（mysql-connector-j）**查不到受影响区间**：
-  Oracle 的公告没有进 NVD 的 CPE 版本范围，所以无法判定 9.7.0 是否在里。
-  记为「无法判定」而不是「已清」或「误报」——不猜。
+| 包 | 分支区间 | 修复线 | 现状 |
+|---|---|---|---|
+| spring-framework | `6.2.0 ≤ v < 6.2.20`（59313/59314 写作 `≤ 6.2.19`） | 6.2.20 | 6.2.x 在 Central 上最新就是 6.2.19 |
+| spring-security | `6.5.0 ≤ v < 6.5.12` | 6.5.12 | 6.5.x 最新就是 6.5.11 |
+| spring-data-jpa | `3.5.0 ≤ v < 3.5.14` | 3.5.14 | 3.5.x 最新就是 3.5.13 |
 
-**一条判为误报，附理由**：`CVE-2026-18022` 描述的是 **pgvector 扩展**（PostgreSQL 侧 C/C++）
-在 IVFFlat 索引构建中的整数回绕，而 dependency-check 报的是 `com.pgvector:pgvector`
-——**JDBC 客户端库**，它不构建索引，两者只是版本号恰好都落在 0.1.x。
-注意这条误报不覆盖部署侧：`docker-compose.yml` 里的 pgvector **已从浮动 tag
-`pg16` 钉到 `0.8.6-pg16`**（两者是同一个 digest，已在 Docker Hub 核对），
-所以「这个部署的扩展版本不在受影响区间内」现在是**可断言**的，而不是取决于拉取时间。
-实测本机运行的容器里扩展版本正是 `0.8.6`。
+明细：spring-framework 17 条（47883–47893、59280–59283、59313、59314）、
+spring-security 4 条（47841、47842、59270、59276）、spring-data-jpa 1 条（47834）。
+跨到 7.x / 4.x 能绕开，但那不是补丁级升级，不在这个门禁的处置范围内。
+
+`mysql-connector-j` 是另一种情形：**Oracle 说了受影响范围，却没有可取的修复版本**。
+公告原文写的是"受影响版本 9.7.0–9.7.1"，可 9.7.1 在 Maven Central 上**根本不存在**
+（9.x 最新就是 9.7.0），9.7.2 也没有。退回 9.6.0 理论上不在受影响范围，
+但那是一次功能降级；而 Oracle 的 CPU 通常在下个季度给修复版。
+**先如实记录，不降级也不豁免。**（`CVE-2026-60586` 7.7 / `CVE-2026-60623` 7.1）
+
+**两条判为误报，依据是 NVD 原文里的 `target_sw`，不是"看着不像"**：
+
+- `CVE-2026-18022` 报的是 `com.pgvector:pgvector:0.1.6`，NVD 的 CPE 却是
+  `cpe:2.3:a:pgvector_project:pgvector:*:*:*:*:*:postgresql:*`——**`target_sw` 是
+  `postgresql`**，指的是 PostgreSQL 侧的 C 扩展；描述写的是"IVFFlat 索引构建中的整数回绕"，
+  末尾还有一句 **"Only 32-bit systems are affected"**。被扫到的那个是 **JDBC 客户端库**
+  （Java，不建索引、不做整数回绕运算），两者只是版本号恰好都落在 0.1.x 才被配上。
+  这条误报**不覆盖部署侧**：`docker-compose.yml` 里的 pgvector 已从浮动 tag
+  `pg16` 钉到 `0.8.6-pg16`（两者是同一个 digest，已在 Docker Hub 核对），
+  所以「这个部署的扩展版本不在受影响区间内」现在是**可断言**的，
+  而不是取决于拉取时间；实测本机运行的容器里扩展版本正是 `0.8.6`。
+- `CVE-2026-54285` 报的是 `io.opentelemetry:opentelemetry-api:1.49.0`，NVD 的 CPE 是
+  `cpe:2.3:a:opentelemetry:opentelemetry:*:*:*:*:*:node.js:*`——**`target_sw` 是
+  `node.js`**；描述开头就写着"opentelemetry-**js** is the OpenTelemetry **JavaScript**
+  Client"，讲的是 `@opentelemetry/core` 里 `W3CBaggagePropagator.extract()` 不限制入站
+  baggage 头的大小。被扫到的是 **Java** 实现，两个生态共用一个 vendor:product 名字。
+
+这两条**没有写进豁免文件**。理由是：豁免会把判断依据挪进一个评审时没人会打开的
+XML 里，而这一节存在的意义正是让这个 job 红得**说的对**——红着，但每一条都能当场
+说清为什么。反正 spring 那 22 条本来就会让它红，豁免这两条换不来一个绿的构建，
+只会少掉两行解释。
+
+**kotlin-stdlib 是「移除依赖」而不是「升版本」，代价写在明处。**
+它在本工程里是纯陪嫁——零 Kotlin 代码——由 OTLP 的 okhttp 发送器拖进来
+（`exporter-sender-okhttp → okhttp → okio → kotlin-stdlib(-jdk7/-jdk8)`），占了两条告警：
+
+- `CVE-2026-53914`（NVD 9.8）描述的是**Kotlin 构建缓存元数据的不安全反序列化**，
+  受影响的是编译器 / Gradle 插件；但 NVD 只有一个笼统的 `cpe:2.3:a:jetbrains:kotlin`，
+  dependency-check 就把运行时 stdlib 这个 jar 配了上去。
+- `CVE-2020-29582` 是 **NVD 自己的区间与描述矛盾**：描述写"before 1.4.21"（即 1.4.21 已修），
+  CPE 区间却写成 `v < 2.1.0`，于是 1.9.25 被卷进来——本工程远在修复线之后。
+
+两条都能写成豁免，但把发送器换成 `opentelemetry-exporter-sender-jdk`
+（只依赖 `exporter-common` + `sdk-common`，**不带 okhttp / okio / Kotlin**）
+是同一件事的**结构性解法**：依赖树里不再有那个 jar，也就不需要任何豁免。
+
+> ⚠️ **代价**：`sender-jdk` 只注册 `HttpSenderProvider`，没有 `GrpcSenderProvider`
+> （okhttp 那个两个都注册）。所以换掉之后**只能走 OTLP/HTTP（4318）**，
+> 不能配 `management.otlp.tracing.transport=grpc`。本工程可以接受：Spring Boot 的
+> OTLP 导出器默认就是 http/protobuf，且 `application.yml` 默认根本不导出。
+> 这一点已写进 `application.yml` 的注释，免得运维照别处的 gRPC 例子配。
+
+这一层此前**零测试覆盖**（默认不导出，测试碰不到它）。新增的 `OtlpExportSmokeTest`
+起了个本地 HTTP 接收端，真的导出一个 span，断言对方收到含该 span 的 OTLP/protobuf 报文，
+并钉住"必须用 JDK 发送器"。**两条反向验证都做过**：拿掉发送器 → 测试报
+`No HttpSenderProvider found on classpath`；把 okhttp 发送器放回来 → 守卫断言失败。
+
+**`swagger-ui` 里的 DOMPurify 是真修掉的，不是豁免。** springdoc 2.8.14 带的
+`org.webjars:swagger-ui:5.30.1` 内嵌 DOMPurify **3.2.6**，命中 `CVE-2026-65898`
+（修复线 3.4.11）；5.32.11 内嵌的是 **3.4.12**。升级前先确认了兼容性：
+两版的 `index.html` 与 `swagger-initializer.js` **逐字节相同**（各 734 / 539 字节），
+而这两个正是 springdoc 的 `SwaggerIndexPageTransformer` 唯一会改写的东西；
+springdoc 的 class 文件里也搜不到任何硬编码的 `5.30.1`（webjar 路径由 Spring 的
+`WebJarsResourceResolver` 从 jar 内的 `pom.properties` 动态解析）。
+
+验证是**观测出来的，不是推断的**：真的把后端起起来，
+`curl /swagger-ui/swagger-ui-bundle.js` 拿到的 1.5 MB 内容里 `DOMPurify.version`
+是 **3.4.12**；同时 `/swagger-ui/index.html` 与 `/v3/api-docs/swagger-config` 都 200。
+
+> 顺带记一个 dependency-check 自身的毛病：这条它按 **V3.1 的 7.2** 阻断，
+> 但打印出来的分数是 **V4.0 的 5.1**——**注解里写的分数不是它实际用来判断的那个**。
+> 这与本项目在 mcp-sentinel 里修过的同类问题是同一个形态（注解报阈值而非实际分级），
+> 只不过这次在第三方插件里，只能记录、改不了。
 
 监控那两个也从 `latest` 钉成了具体版本（prometheus `v3.13.2`、grafana `13.1.3`）——
 `latest` 会跨大版本跳，与 `mysql:8.0` / `redis:7` 那种「大版本内浮动」不是一回事，
