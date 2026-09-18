@@ -11,6 +11,20 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
+    # ⚠️ 已知不可合并的一个：`typescript` 6 → 7。
+    #
+    # 2026-09-19 实测过（装上再跑四项门禁），它会同时打红两个地方：
+    #
+    #   npm run lint   → Error: typescript-eslint does not support TS 7.0.
+    #                    它的 peer 要求是 `typescript >=4.8.4 <6.1.0`
+    #   npm run build  → ERR_PACKAGE_PATH_NOT_EXPORTED: Package subpath './lib/tsc'
+    #                    is not defined by "exports"（vue-tsc 3.3.8 用不了 TS 7）
+    #
+    # （`npm test` 反而是绿的——vitest 不经过 tsc。只跑测试会以为可以合。）
+    #
+    # **这里故意不加 `ignore`**：一旦 typescript-eslint 与 vue-tsc 支持了 TS 7，
+    # 就该让 Dependabot 照常提出来。加一条 ignore 等于把它变成一道
+    # 「得有人记得拆掉」的墙，而没有人会记得。
 
   - package-ecosystem: github-actions
     directory: /
