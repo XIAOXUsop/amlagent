@@ -74,12 +74,14 @@
             spring-framework   6.2.0 ≤ v ≤ 6.2.19 → 修复 6.2.20，**未发布**
                                CVE-2026-47883/47884/47885/47886/47887/47888/
                                47889/47890/47891/47892/47893、59280/59281/
-                               59282/59283、59313、59314 —— 共 17 条
+                               59282/59283、59313、59314 —— 共 17 条，
+                               其中 12 条 ≥7 分，是构建变红的直接原因
                                实测 6.2.x 在 Central 上最新就是 6.2.19
             spring-security    6.5.0 ≤ v ≤ 6.5.11 → 修复 6.5.12，**未发布**
-                               CVE-2026-47841/47842/59270/59276 —— 共 4 条
+                               CVE-2026-47841/47842/59270/59276 —— 共 4 条，其中 2 条阻断
             spring-data-jpa    3.5.13 落在区间内   → 修复 3.5.14，**未发布**
-                               CVE-2026-47834；3.5.x 最新就是 3.5.13
+                               CVE-2026-47834(4.8)——**低于阈值 7，不阻断**，
+                               3.5.x 最新就是 3.5.13
             mysql-connector-j  9.7.0              → **不存在可取的修复版本**
                                Oracle 公告写明"受影响版本 9.7.0–9.7.1"，
                                但 9.7.1 在 Central 上根本不存在（9.x 最新就是 9.7.0），
@@ -111,17 +113,22 @@
       · swagger-ui（webjar）：springdoc 2.8.14 带的是 5.30.1，**它内嵌的 DOMPurify 是 3.2.6**，
         命中 CVE-2026-65898（`setConfig()` 配 `uponSanitizeAttribute` 钩子时不克隆
         ALLOWED_ATTR 白名单，钩子因此能永久改写共享白名单；修复线 3.4.11）。
-        5.32.11 内嵌的是 **DOMPurify 3.4.12**，即修复版。
 
-        这条是**真升级，不是豁免**。升级前实测确认了 compat：两版的
+        取 **5.32.15**——它是这个 webjar 的**最新版**，内嵌 **DOMPurify 3.4.13**。
+        之所以不是停在修复 65898 的 3.4.12：升到 3.4.12 之后扫描立刻报出下一条
+        CVE-2026-75838（DOMPurify < 3.4.13，IN_PLACE 净化时元素移除钩子未能中和
+        已脱离文档的子树，导致净化完成后后代元素上的事件处理器仍会执行）。
+        3.4.13 同时覆盖这两条。
+
+        这条是**真升级，不是豁免**。升级前实测确认了 compat：5.30.1 与 5.32.11 的
         `index.html` 与 `swagger-initializer.js` **逐字节相同**（各 734 / 539 字节），
-        而这两个正是 springdoc 的 SwaggerIndexPageTransformer 唯一会改写的东西；
-        同时 springdoc 的 class 文件里搜不到任何硬编码的 `5.30.1`
-        （webjar 路径由 Spring 的 WebJarsResourceResolver 从 jar 内的
-        `META-INF/maven/org.webjars/swagger-ui/pom.properties` 动态解析）。
+        5.32.15 与 5.32.11 也相同——而这两个正是 springdoc 的
+        SwaggerIndexPageTransformer 唯一会改写的东西；同时 springdoc 的 class 文件里
+        搜不到任何硬编码的 `5.30.1`（webjar 路径由 Spring 的 WebJarsResourceResolver
+        从 jar 内的 `META-INF/maven/org.webjars/swagger-ui/pom.properties` 动态解析）。
 
-        另记：即便不升级，这条 CVE 在本工程里也不可触达——实测两版 swagger-ui
-        的 bundle 里 `DOMPurify.setConfig(...)` **一次调用都没有**，只有它自己的定义。
+        另记：即便不升级，65898 在本工程里也不可触达——实测两版 swagger-ui 的 bundle 里
+        `DOMPurify.setConfig(...)` **一次调用都没有**，只有它自己的定义。
         但「不可触达」要靠人读源码判断、且会随版本漂移；升一个 webjar 更省事，也更结实。
     -->
     <dependencyManagement>
@@ -134,7 +141,7 @@
             <dependency>
                 <groupId>org.webjars</groupId>
                 <artifactId>swagger-ui</artifactId>
-                <version>5.32.11</version>
+                <version>5.32.15</version>
             </dependency>
         </dependencies>
     </dependencyManagement>

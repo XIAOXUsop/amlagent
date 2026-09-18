@@ -639,7 +639,7 @@ CVE 库上，而那份数据一天之内不会变。缓存写错过一次，值�
 | 54515 | jackson-databind | `2.19.0 ≤ v < 2.21.5` | 2.21.4 → **2.21.5** | ✅ 已清 |
 | 49844 | log4j | `2.13.1 ≤ v < 2.25.5` | 2.25.4 → **2.25.5** | ✅ 已清 |
 | 48924 | commons-lang3 | `3.0 ≤ v < 3.18.0` | 3.17.0 → **3.18.0** | ✅ 已清 |
-| 65898 | swagger-ui 内嵌的 DOMPurify | `v < 3.4.11` | 3.2.6 → **3.4.12** | ✅ 已清 |
+| 65898、75838 | swagger-ui 内嵌的 DOMPurify | `v < 3.4.11` / `v < 3.4.13` | 3.2.6 → **3.4.13** | ✅ 已清 |
 | 53914 / 29582 | kotlin-stdlib | `v < 2.4.20` | 1.9.25 | ✅ 已清（**移除依赖，不是升版本**） |
 
 netty 那 22 条合起来是**一个动作**：NVD 对 netty 只登记了一个笼统的
@@ -667,18 +667,24 @@ netty 那 22 条合起来是**一个动作**：NVD 对 netty 只登记了一个�
 确实是新版本，而不是只改了 pom 文字。**「清掉了」这件事不是靠推断，
 是靠下一次扫描的输出里那些包不再出现。**
 
-**没修的：修复线尚未发布，只能等上游。** 22 条，逐条记在 `backend/pom.xml` 的注释里，
-附各自要求的版本号——上游一发布就能照着加属性：
+**没修的：修复线尚未发布，只能等上游。** 上面那些清完之后，扫描仍然阻断 **16 条**。
+逐条记在 `backend/pom.xml` 的注释里，附各自要求的版本号——上游一发布就能照着加属性：
 
-| 包 | 分支区间 | 修复线 | 现状 |
-|---|---|---|---|
-| spring-framework | `6.2.0 ≤ v < 6.2.20`（59313/59314 写作 `≤ 6.2.19`） | 6.2.20 | 6.2.x 在 Central 上最新就是 6.2.19 |
-| spring-security | `6.5.0 ≤ v < 6.5.12` | 6.5.12 | 6.5.x 最新就是 6.5.11 |
-| spring-data-jpa | `3.5.0 ≤ v < 3.5.14` | 3.5.14 | 3.5.x 最新就是 3.5.13 |
+| 包 | 分支区间 | 修复线 | 现状 | 阻断 |
+|---|---|---|---|---|
+| spring-framework | `6.2.0 ≤ v < 6.2.20`（59313/59314 写作 `≤ 6.2.19`） | 6.2.20 | 6.2.x 在 Central 上最新就是 6.2.19 | 12 |
+| spring-security | `6.5.0 ≤ v < 6.5.12` | 6.5.12 | 6.5.x 最新就是 6.5.11 | 2 |
+| mysql-connector-j | 见下 | — | Oracle 尚未给出可取的修复版 | 2 |
 
-明细：spring-framework 17 条（47883–47893、59280–59283、59313、59314）、
-spring-security 4 条（47841、47842、59270、59276）、spring-data-jpa 1 条（47834）。
+spring-framework 阻断的是 47884、47885、47886、47888、47889、47890、47891、
+47892、47893、59282、59283、59313。另有 **8 条分数低于阻断阈值 7**、不阻断但同样
+被扫出：spring-framework 的 47883 / 47887 / 59280 / 59281 / 59314、spring-security 的
+47842 / 59276、spring-data-jpa 的 47834 —— 它们同样等着上游，也一并记在 pom 注释里。
 跨到 7.x / 4.x 能绕开，但那不是补丁级升级，不在这个门禁的处置范围内。
+
+> 这几条数目不是估的：从 CI 的 `dependency-scan.log` 产物里按
+> `[ERROR] One or more dependencies were identified with vulnerabilities that have a
+> CVSS score greater than or equal to '7.0'` 那一段逐条数出来的。
 
 `mysql-connector-j` 是另一种情形：**Oracle 说了受影响范围，却没有可取的修复版本**。
 公告原文写的是"受影响版本 9.7.0–9.7.1"，可 9.7.1 在 Maven Central 上**根本不存在**
@@ -705,7 +711,7 @@ spring-security 4 条（47841、47842、59270、59276）、spring-data-jpa 1 条
 
 这两条**没有写进豁免文件**。理由是：豁免会把判断依据挪进一个评审时没人会打开的
 XML 里，而这一节存在的意义正是让这个 job 红得**说的对**——红着，但每一条都能当场
-说清为什么。反正 spring 那 22 条本来就会让它红，豁免这两条换不来一个绿的构建，
+说清为什么。反正 spring 那 16 条本来就会让它红，豁免这两条换不来一个绿的构建，
 只会少掉两行解释。
 
 **kotlin-stdlib 是「移除依赖」而不是「升版本」，代价写在明处。**
@@ -735,15 +741,23 @@ XML 里，而这一节存在的意义正是让这个 job 红得**说的对**—�
 
 **`swagger-ui` 里的 DOMPurify 是真修掉的，不是豁免。** springdoc 2.8.14 带的
 `org.webjars:swagger-ui:5.30.1` 内嵌 DOMPurify **3.2.6**，命中 `CVE-2026-65898`
-（修复线 3.4.11）；5.32.11 内嵌的是 **3.4.12**。升级前先确认了兼容性：
-两版的 `index.html` 与 `swagger-initializer.js` **逐字节相同**（各 734 / 539 字节），
-而这两个正是 springdoc 的 `SwaggerIndexPageTransformer` 唯一会改写的东西；
-springdoc 的 class 文件里也搜不到任何硬编码的 `5.30.1`（webjar 路径由 Spring 的
-`WebJarsResourceResolver` 从 jar 内的 `pom.properties` 动态解析）。
+（修复线 3.4.11）。升到 webjar 的最新版 **5.32.15**，它内嵌 **DOMPurify 3.4.13**。
+
+这里有个值得记的往返：**先只升到 5.32.11（内嵌 3.4.12），扫描立刻报出下一条**
+`CVE-2026-75838`（DOMPurify < 3.4.13，IN_PLACE 净化时元素移除钩子未能中和已脱离
+文档的子树，净化完成后后代元素上的事件处理器仍会执行）。这条分数是 5.1、
+**低于阻断阈值**，所以它不会让 job 红——只会安静地留在报告里。最后还是取 5.32.15
+（同时也是该 webjar 的最新版），两条一起清。
+
+升级前先确认了兼容性：5.30.1 / 5.32.11 / 5.32.15 三个版本的 `index.html` 与
+`swagger-initializer.js` **逐字节相同**（各 734 / 539 字节），而这两个正是 springdoc 的
+`SwaggerIndexPageTransformer` 唯一会改写的东西；springdoc 的 class 文件里也搜不到
+任何硬编码的 `5.30.1`（webjar 路径由 Spring 的 `WebJarsResourceResolver` 从 jar 内的
+`pom.properties` 动态解析）。
 
 验证是**观测出来的，不是推断的**：真的把后端起起来，
 `curl /swagger-ui/swagger-ui-bundle.js` 拿到的 1.5 MB 内容里 `DOMPurify.version`
-是 **3.4.12**；同时 `/swagger-ui/index.html` 与 `/v3/api-docs/swagger-config` 都 200。
+是 **3.4.13**；同时 `/swagger-ui/index.html` 与 `/v3/api-docs/swagger-config` 都 200。
 
 > 顺带记一个 dependency-check 自身的毛病：这条它按 **V3.1 的 7.2** 阻断，
 > 但打印出来的分数是 **V4.0 的 5.1**——**注解里写的分数不是它实际用来判断的那个**。
