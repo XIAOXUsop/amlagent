@@ -124,19 +124,31 @@ jobs:
       #
       # 所以取用 `actions/cache/restore`，存在扫描之后单独一步、带 `if: always()`。
       #
-      # `key` 里带 `run_id` 是为了让**每次运行都写一份新缓存**（数据每天在变，
-      # 固定 key 会永远命中第一份、反而让数据停在过去），
-      # `restore-keys` 让下一次运行接到最近的那一份。
+      # `key` 按**天**算，不是按 run_id。
+      #
+      # 一开始用的是 `nvd-data-${{ github.run_id }}`（想法是"每次运行都写一份新的，
+      # 免得固定 key 让数据停在过去"）。但那样**每次 CI 都新写一份 115 MB**——
+      # 实测：一天 20 次 CI 之后仓库缓存已经到 **4081 MB / 10240 MB（39.9%）**，
+      # 而里面 5 条 nvd-data 就占了 575 MB。再跑几天它就会把 setup-java / node
+      # 那些真正让 CI 变快的缓存挤出去（LRU 淘汰是全局的）。
+      #
+      # NVD 数据一天只变一次，按天做 key 正好：当天第一次运行把它写下来，
+      # 之后当天所有运行都命中同一份。老的那几份没人再读，会被 GitHub 的
+      # 「7 天未被访问即回收」自然清掉，稳态大约 7 份 ≈ 800 MB。
       #
       # ⚠️ `dataDirectory` 在下一步里是**显式指定**的，与这里的 path 必须一致。
       # 不显式写的话它取 Maven 本地仓库下的插件默认位置——那样缓存路径就成了
       # 对第三方默认值的推断，插件升级改了默认值就会静默失配（缓存永远不命中，
       # 而没人会注意到）。显式写出来，两个路径才是同一件事。
+      - name: Compute NVD cache key
+        id: nvd-key
+        run: echo "key=nvd-data-$(date -u +%Y-%m-%d)" >> "$GITHUB_OUTPUT"
       - name: Restore NVD data
+        id: nvd-restore
         uses: actions/cache/restore@v4
         with:
           path: ~/.m2/dependency-check-data
-          key: nvd-data-${{ github.run_id }}
+          key: ${{ steps.nvd-key.outputs.key }}
           restore-keys: |
             nvd-data-
       # 扫描结果写到文件：失败时得能分清是"你的依赖有漏洞"还是"漏洞库没拉到"。
@@ -183,12 +195,19 @@ jobs:
       # 理由见上面 Restore NVD data 的注释：这个 job 恰恰是「扫到漏洞就失败」，
       # 而 `actions/cache` 的后置保存默认只在成功时执行——于是缓存永远存不下来。
       # 这里用 `if: always()` 覆盖掉那个默认。
+      #
+      # `cache-hit != 'true'` 表示当天那份还不存在（命中旧日期、或完全没命中），
+      # 这时才写。当天已有则跳过——因为 `actions/cache/save` 遇到已存在的 key
+      # 会直接失败，而那是**预期内的**，不是故障。
+      # `continue-on-error` 兜住另一种情况：两个 job 同时开始、都判定"当天不存在"，
+      # 抢着写同一个 key。缓存只是加速手段，写不进去不该让门禁变红。
       - name: Save NVD data
-        if: always()
+        if: always() && steps.nvd-restore.outputs.cache-hit != 'true'
+        continue-on-error: true
         uses: actions/cache/save@v4
         with:
           path: ~/.m2/dependency-check-data
-          key: nvd-data-${{ github.run_id }}
+          key: ${{ steps.nvd-key.outputs.key }}
       - name: Upload dependency scan report
         if: ${{ failure() }}
         uses: actions/upload-artifact@v4
