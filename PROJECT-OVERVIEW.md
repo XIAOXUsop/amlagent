@@ -1,7 +1,7 @@
 # 商业银行智能反洗钱（AML）高风险客户尽调 Agent — 项目文档
 
 > 文档目的：完整梳理本项目的内容模块、技术架构与核心设计，并配套面试问答与源码导读，便于复盘与面试准备。
-> 技术栈：Spring Boot 3.5.13 / Java 21 / LangChain4j 1.18.1 / MySQL / PostgreSQL(pgvector) / Redis / Redisson / Vue 3 / Element Plus
+> 技术栈：Spring Boot 3.5.16 / Java 21 / LangChain4j 1.18.1 / MySQL / PostgreSQL(pgvector) / Redis / Redisson / Vue 3 / Element Plus
 
 ---
 
@@ -16,7 +16,7 @@
 | 层 | 技术 |
 |---|---|
 | 语言 | Java 21 |
-| 后端框架 | Spring Boot 3.5.13、Spring Security、Spring Data JPA |
+| 后端框架 | Spring Boot 3.5.16、Spring Security、Spring Data JPA |
 | AI 编排 | LangChain4j 1.18.1（AiServices、Tool calling、结构化输出、流式） |
 | LLM 提供商 | 多提供商可切换：DeepSeek(openai-compatible) / OpenAI / Qwen / Anthropic / 本地 Mock |
 | Embedding / Reranker | all-MiniLM-L6-v2（384维） / bge-reranker-base（ONNX） |
