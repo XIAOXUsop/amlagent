@@ -31,3 +31,26 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
+    # 这里钉的版本是**按 `runs.using` 挑出来的「能跑在 node24 上的最低 major」**，
+    # 不是随手取最新。2026-09-19 逐个大版本查过各自的 action.yml：
+    #
+    #   checkout         v4=node20  v6=node24  v7=node24
+    #   setup-java       v4=node20  v5=node24  v6=node24
+    #   setup-node       v4=node20  v5=node24  v7=node24
+    #   upload-artifact  v4=node20  v5=node20  v6=node24  v7=node24
+    #                                                       ↑ v5 仍然是 node20
+    #   cache            v4=node20  v5=node24  v6=node24
+    #
+    # `upload-artifact@v5` 仍是 node20 这一点值得记：凭「v4 旧了那就升 v5」
+    # 会升完发现告警还在。
+    #
+    # **Dependabot 现在提的下一跳（v5→v6、v6→v7…）不是必须的**：当前这几个
+    # 已经跑在 node24 上，Node 20 的弃用告警已经消失；也逐个看过 release，
+    # 这些新 major 的发布说明里没有安全条目——有安全字样的那几个版本
+    # （cache v5.0.3/v5.0.4、upload-artifact v3.2.2）都**低于**当前用的版本，
+    # 也就是说那些修复已经在里面了。
+    #
+    # 于是这 5 个 PR 会一直占着配额，直到有人决定升。**这是可接受的**：
+    # 真正的安全网是仓库的 dependabot alerts 与 security updates 两个开关
+    # （都已开），它们与这里的版本更新是相互独立的路径，
+    # 不会因为配额被占满而失效。
