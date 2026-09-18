@@ -700,6 +700,29 @@ CVE 库上，而那份数据一天之内不会变。缓存写错过一次，值�
 > 开启前后都核过 `GET /repos/…/vulnerability-alerts`），它负责能映射的那些；
 > 剩下只有 SCA 扫描看得见。同理 `CVE-2026-65898` 映射的是 `npm:dompurify`，
 > Dependabot 永远不会对 `swagger-ui` jar 里内嵌的那份 JS 告警。
+>
+> **还有第二个原因，而且更根本**：GitHub 的依赖图对 Maven 是**静态解析**的，
+> 解析不出跨模块的属性继承，也解析不出 BOM 管理的版本。实测本仓库的
+> `GET /repos/…/dependency-graph/sbom`：**33 个 Maven 坐标里有 17 个没有 `versionInfo`**
+> （`spring-boot-starter-*` / `micrometer-*` 这些由 Boot BOM 管的全在内）。
+> **Dependabot 拿不到版本号，就无法与公告的版本区间比对，于是静默放过。**
+>
+> 同族仓库放在一起看，这个差别非常干净：
+>
+> | 仓库 | Maven 坐标 | 其中无版本号 | Dependabot 告警 |
+> |---|---:|---:|---:|
+> | mcp-sentinel（单模块，版本写在同一份 pom 里） | 5 | **0** | 拿到过 5 条 |
+> | ctxpress（多模块，属性定义在父 pom） | 8 | 2 | 0 条 |
+> | desensitize-spring-boot-starter（Boot BOM 管版本） | 7 | 5 | 0 条 |
+> | amlagent（Boot BOM 管版本） | 33 | **17** | 0 条 |
+>
+> **唯一拿到过告警的，正是唯一一个解析得出全部版本的仓库。** 顺着这条查下去还发现：
+> ctxpress 里那个 `jackson-databind:2.19.0`——与 mcp-sentinel 那 5 条告警命中的是
+> **同一个版本**——从来没有被任何告警报出来过，已单独修掉。
+>
+> 这件事本仓库修不了（除非把版本号从属性/BOM 里抠出来写死，那是拿可维护性换可见性）。
+> 所以结论不是"改用 Dependabot 就行"，而是：**在这个工作区里，Dependabot 的 Maven
+> 覆盖是打折的，而这个扫描不是。**
 
 **2026-09-18：分类器把"真发现漏洞"误报成"只是限流"。** 扫描其实跑完了，也真的扫出了
 一批高危依赖（`opennlp-tools@2.5.9` 10.0、`kotlin-stdlib@1.9.25` 9.8、
