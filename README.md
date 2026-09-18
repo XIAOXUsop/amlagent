@@ -602,6 +602,25 @@ CVE 库上，而那份数据一天之内不会变。缓存写错过一次，值�
 
 扫描用 OWASP dependency-check，`CVSS ≥ 7` 阻断。**这一节记录当前已知状态，不粉饰。**
 
+> **有了 Dependabot 为什么还要跑这个扫描？** 因为 Dependabot 只能对**公告里映射到了
+> 具体包坐标**的漏洞告警，而 NVD 收录的一批 Java 公告在 GitHub 公告库里**只有 CVE 记录、
+> 没有 ecosystem 映射**。实测（`GET /advisories?cve_id=…`）：
+>
+> | CVE | GitHub 公告 | `vulnerabilities`（生态映射） | Dependabot |
+> |---|---|---|---|
+> | 2026-47884 spring-framework | GHSA-pc63-qcmh-9cmg（critical） | `[]` 空 | ❌ 看不见 |
+> | 2026-59270 spring-security | GHSA-rhjh-84m4-5qg7（critical） | `[]` 空 | ❌ 看不见 |
+> | 2026-18022 pgvector | GHSA-87hg-xjfg-qh5r（high） | `[]` 空 | ❌ 看不见 |
+> | 2026-60586 mysql-connector-j | GHSA-7p69-9748-7pc9（high） | `[]` 空 | ❌ 看不见 |
+> | 2026-54512 jackson-databind | GHSA-j3rv-43j4-c7qm | `maven:com.fasterxml.jackson.core:jackson-databind` | ✅ 能 |
+> | 2026-65898 DOMPurify | GHSA-cmwh-pvxp-8882 | `npm:dompurify`（**不是** Java webjar） | ❌ 看不见 |
+>
+> 所以本仓库的 Dependabot 页面**现在是 0 条告警**，而这个扫描同时报出 16 条阻断——
+> 两者不是"谁更准"，是**覆盖面不同**。Dependabot 是本仓库主动打开的（8 个仓库都开了，
+> 开启前后都核过 `GET /repos/…/vulnerability-alerts`），它负责能映射的那些；
+> 剩下只有 SCA 扫描看得见。同理 `CVE-2026-65898` 映射的是 `npm:dompurify`，
+> Dependabot 永远不会对 `swagger-ui` jar 里内嵌的那份 JS 告警。
+
 **2026-09-18：分类器把"真发现漏洞"误报成"只是限流"。** 扫描其实跑完了，也真的扫出了
 一批高危依赖（`opennlp-tools@2.5.9` 10.0、`kotlin-stdlib@1.9.25` 9.8、
 `spring-core@6.2.17` 9.8、`tomcat-embed-core@10.1.53` 9.8 …），
