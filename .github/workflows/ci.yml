@@ -3,6 +3,19 @@ name: CI
 permissions:
   contents: read
 
+# 同一分支上的**推送**会互相取消：只有最新一次提交的结论有意义。
+#
+# 加这条的直接原因：连推三次之后，CI 里同时排着三个完整运行——每个都要跑一遍
+# 30 分钟的依赖扫描、集成测试与 Playwright E2E，而前两次的结论在第三次推送后
+# 已经没人会看了。纯文档提交也一样排队，那是白烧的额度与延迟。
+#
+# `github.event_name` 放进 group，是为了让**定时任务不被推送取消**：
+# 它跑的是「与提交无关的外部变化」（镜像 tag、Flyway 迁移、外部依赖），
+# 被一次推送取消等于把一个独立信号源关掉——而那恰恰是它存在的理由。
+concurrency:
+  group: ci-${{ github.ref }}-${{ github.event_name }}
+  cancel-in-progress: true
+
 on:
   push:
     branches: [main, master]
