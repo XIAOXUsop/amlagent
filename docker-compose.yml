@@ -22,7 +22,22 @@ services:
       retries: 5
 
   pgvector:
-    image: pgvector/pgvector:pg16
+    # 版本化 tag，不用浮动的 `pg16`。
+    #
+    # 两个理由，第二个是本仓库真正在意的：
+    #
+    # 一、**可复现**。浮动 tag 的含义是「拉取时的最新版」——同一份 compose 文件
+    #     在这个月和下个月得到不同的扩展版本，而评测结果落盘、数据集冻结标识
+    #     这些做法都在追求「同一输入同一结果」，数据库扩展版本不该是个变量。
+    #
+    # 二、**安全**。CVE-2026-18022 的受影响区间是 pgvector 扩展 < 0.8.6
+    #     （IVFFlat 索引构建的整数回绕）。浮动 tag 拉到什么取决于拉取时间，
+    #     钉在 0.8.6 之后才说得清「这个部署不在受影响区间内」。
+    #
+    # `0.8.6-pg16` 与当前的 `pg16` 是**同一个 digest**（均为 sha256:ccc6e83d6e35e…，
+    # 已在 Docker Hub 上核对），所以这次改动不改变当前行为——
+    # 它只是把「碰巧拉到的是最新版」变成「明确就是这一版」。
+    image: pgvector/pgvector:0.8.6-pg16
     container_name: aml-pgvector
     restart: unless-stopped
     environment:
@@ -56,6 +71,17 @@ services:
       retries: 5
 
   prometheus:
+    # ⚠️ 监控这两个镜像用的是 `latest`，是**故意留着没钉**，不是没注意。
+    #
+    # 钉版本更正确（理由同上面 pgvector），但钉之前得先确认那个具体版本 tag 存在，
+    # 而本机没有 Docker、无法拉取验证——猜一个 tag 的后果是 `docker compose up`
+    # 直接失败，比浮动 tag 更糟。所以这里如实标注，而不是改成一个没验过的值。
+    #
+    # 要钉的话：先 `docker pull docker.m.daocloud.io/prom/prometheus:latest`，
+    # 用 `docker image inspect` 读出实际版本，再换成那个版本化的 tag。
+    #
+    # 影响面仅限可观测性，不影响后端与前端的主流程。
+    #
     # 国内网络使用镜像加速前缀，如拉取失败可改回 prom/prometheus
     image: docker.m.daocloud.io/prom/prometheus:latest
     container_name: aml-prometheus

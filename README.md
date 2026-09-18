@@ -603,8 +603,11 @@ cd backend && AML_LLM_ACTIVE_PROVIDER=mock ./mvnw spring-boot:run
 **一条判为误报，附理由**：`CVE-2026-18022` 描述的是 **pgvector 扩展**（PostgreSQL 侧 C++/C）
 在 IVFFlat 索引构建中的整数回绕，而 dependency-check 报的是 `com.pgvector:pgvector`
 ——**JDBC 客户端库**，它不构建索引，两者只是版本号恰好都落在 0.1.x。
-注意这条误报不覆盖部署侧：`docker-compose.yml` 里的 `pgvector/pgvector:pg16`
-是**浮动 tag**，实际扩展版本取决于拉取时间，那是另一个需要单独核对的点。
+注意这条误报不覆盖部署侧：`docker-compose.yml` 里的 pgvector **已从浮动 tag
+`pg16` 钉到 `0.8.6-pg16`**（两者是同一个 digest，已在 Docker Hub 核对），
+所以「这个部署的扩展版本不在受影响区间内」现在是**可断言**的，而不是取决于拉取时间。
+监控用的 `prom/prometheus:latest` 与 `grafana/grafana:latest` 仍是浮动 tag——
+本机没有 Docker、无法确认对应版本再钉，已在该文件里如实标注并写了钉法。
 
 因此这个 job 目前仍然是红的——但它现在红得**说的对**：
 剩下的每一条都能说清"为什么修不了"或"为什么是误报"。
