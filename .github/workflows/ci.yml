@@ -95,6 +95,28 @@ jobs:
           java-version: '21'
           distribution: 'temurin'
           cache: maven
+      # ── NVD 数据缓存 ──────────────────────────────────────────────
+      #
+      # 没有 NVD_API_KEY 时这个 job 要跑 **2 小时**，而实测（CI 日志
+      # `Total time: 02:03 h`）几乎全花在下载与更新 NVD 的 CVE 库上。
+      # 那份数据一天之内不会变，每个 commit 都从头下一遍是纯浪费。
+      #
+      # 缓存之后：命中的运行只做增量更新，未命中的第一次照旧慢。
+      # `key` 里带 `run_id` 是为了让**每次运行都写一份新缓存**（数据每天在变，
+      # 固定 key 会永远命中第一份、反而让数据停在过去），
+      # `restore-keys` 让下一次运行接到最近的那一份。
+      #
+      # ⚠️ `dataDirectory` 在下一步里是**显式指定**的，与这里的 path 必须一致。
+      # 不显式写的话它取 Maven 本地仓库下的插件默认位置——那样缓存路径就成了
+      # 对第三方默认值的推断，插件升级改了默认值就会静默失配（缓存永远不命中，
+      # 而没人会注意到）。显式写出来，两个路径才是同一件事。
+      - name: Cache NVD data
+        uses: actions/cache@v4
+        with:
+          path: ~/.m2/dependency-check-data
+          key: nvd-data-${{ github.run_id }}
+          restore-keys: |
+            nvd-data-
       # 扫描结果写到文件：失败时得能分清是"你的依赖有漏洞"还是"漏洞库没拉到"。
       #
       # 这个 job 原先一直是红的，而原因是后者——NVD 数据源在没有 API Key 时会被
@@ -114,7 +136,8 @@ jobs:
         env:
           NVD_API_KEY: ${{ secrets.NVD_API_KEY }}
         run: |
-          args=(-DfailBuildOnCVSS=7)
+          # 与上面 Cache NVD data 的 path 必须一致
+          args=(-DfailBuildOnCVSS=7 "-DdataDirectory=$HOME/.m2/dependency-check-data")
           if [ -n "$NVD_API_KEY" ]; then
             args+=("-DnvdApiKey=$NVD_API_KEY")
           else
