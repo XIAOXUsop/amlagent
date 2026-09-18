@@ -785,6 +785,42 @@ spring-framework 阻断的是 47884、47885、47886、47888、47889、47890、47
 > `[ERROR] One or more dependencies were identified with vulnerabilities that have a
 > CVSS score greater than or equal to '7.0'` 那一段逐条数出来的。
 
+**补一条 2026-09-19 查证的路：这些「修复线未发布」在 3.5.x 线上确实无解，
+但在 Spring Boot 4.x 线上是好的。** 对比两个 BOM 的属性
+（`spring-boot-dependencies` 的 pom，直接拉的）：
+
+| | Spring Boot 3.5.16（现在用的） | Spring Boot 4.1.1 |
+|---|---|---|
+| spring-framework | 6.2.19 | **7.0.9** |
+| spring-security | 6.5.11 | **7.1.1** |
+| tomcat | 10.1.55 | 11.0.24 |
+| netty | 4.1.135.Final | 4.2.17.Final |
+| jackson-bom | 2.21.4 | **3.1.5**（Jackson 3，换成了 `tools.jackson.*` 另一套坐标） |
+| spring-data-bom | 2025.0.13 | 2026.0.1 |
+
+拿这两组版本去逐条比对上面那 16 条的受影响区间（**脚本算的，不是肉眼看**）：
+
+```
+spring-framework 6.2.19（现在）  → 12/12 仍在区间内
+spring-framework 7.0.9（Boot 4） →  0/12 ✓
+spring-security  6.5.11（现在）  →  2/2 仍在区间内
+spring-security  7.1.1（Boot 4） →  0/2  ✓
+```
+
+**即 Boot 4.1.1 能清掉 16 条里的 14 条**，只剩 `mysql-connector-j` 那 2 条
+（Boot 4.1.1 带的仍是 9.7.0，而它没有可取的修复版）。
+
+所以这个门禁「红着不动」的真正原因**不是修不了，是唯一的路是一次大版本迁移**：
+Boot 3.5 → 4.x 会带上 Jakarta EE 11 / Tomcat 11 / Spring Security 7 /
+Jackson 3（连 artifact 坐标都换了一套），不是能靠属性覆盖解决的补丁级升级。
+**该不该走这一步是项目决策，不是门禁能决定的**——但至少「为什么红」和
+「怎么才能不红」现在都有据可查，而不是一句"等上游"。
+
+> 附带说明：Dependabot 早就开了 PR #12 提议 3.5.16 → 4.1.1，只是无人处理。
+> 它当时的本体是对的，但 diff 里把本文件上面那段注释的正文也一并"改写"了
+> （把「3.5.16 而非 3.5.13」替换成「4.1.1 而非 3.5.13」）——**合并会污染注释**，
+> 所以那个 PR 不能直接合。
+
 `mysql-connector-j` 是另一种情形：**Oracle 说了受影响范围，却没有可取的修复版本**。
 公告原文写的是"受影响版本 9.7.0–9.7.1"，可 9.7.1 在 Maven Central 上**根本不存在**
 （9.x 最新就是 9.7.0），9.7.2 也没有。退回 9.6.0 理论上不在受影响范围，
