@@ -556,6 +556,34 @@ cd backend && AML_LLM_ACTIVE_PROVIDER=mock ./mvnw spring-boot:run
 
 这几类问题以前会混成一句"job failed"，而它们的处理方式完全不同。
 
+### 依赖安全
+
+扫描用 OWASP dependency-check，`CVSS ≥ 7` 阻断。**这一节记录当前已知状态，不粉饰。**
+
+**2026-09-18：分类器把"真发现漏洞"误报成"只是限流"。** 扫描其实跑完了，也真的扫出了
+一批高危依赖（`opennlp-tools@2.5.9` 10.0、`kotlin-stdlib@1.9.25` 9.8、
+`spring-core@6.2.17` 9.8、`tomcat-embed-core@10.1.53` 9.8 …），
+但 CI 打出来的却是"这不是发现依赖漏洞，而是这一次检查根本没跑成"——
+**正好把安全门禁说成可以忽略**。根因是判定模式里有个裸的 `429`（本意 HTTP 429 限流），
+它匹配到了 `[INFO] Completed processing batch 59/198 (30%) in 429ms`，一个处理耗时。
+
+修法：分类逻辑抽到 `scripts/classify_dependency_scan.py`，**先判"有没有真发现"**
+（`One or more dependencies were identified with vulnerabilities` 只在真扫到东西时打印），
+再判数据源；`429` 现在必须与 `NVD` / `HTTP` / `status` 同行才算限流；
+两者都不满足时如实报 `unknown`，而不是挑一个像样的理由。
+那次误判已固化成回归用例（`scripts/test_classify_dependency_scan.py`）。
+
+**已处理**：Spring Boot `3.5.13` → `3.5.16`（同 minor 补丁升级），把
+spring-framework 带到 `6.2.19`、spring-security 到 `6.5.11`、tomcat 到 `10.1.55`、
+jackson 到 `2.21.4`、netty 到 `4.1.135.Final`。
+升级后 **549 项后端测试全绿**（与升级前基线逐项一致）。
+
+**已知残留**：`log4j-api@2.24.3` 与 `kotlin-stdlib@1.9.25` 的告警未消除——
+这两个版本由 Spring Boot 3.5.x 的 BOM 固定，同 minor 内没有更新版本；
+另外 dependency-check 的 CPE 匹配存在误报可能（例如把 `jackson-databind` 匹配到
+`jackson-core` 的 CPE），逐条甄别需要 NVD 查询，**尚未做**。
+因此这个 job 目前仍然是红的——但它现在**红得说的对**。
+
 ## 性能压测与可靠性演示
 
 ### 压测（benchmark/load_test.py）

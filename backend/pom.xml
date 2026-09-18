@@ -7,7 +7,15 @@
     <parent>
         <groupId>org.springframework.boot</groupId>
         <artifactId>spring-boot-starter-parent</artifactId>
-        <version>3.5.13</version>
+        <!--
+          3.5.16 而非 3.5.13：依赖漏洞扫描标记了 spring-framework 6.2.17 /
+          spring-security 6.5.9 / tomcat 10.1.53 / jackson 2.21.2 / netty 4.1.132
+          这几个版本，而 3.5.16 把它们分别带到 6.2.19 / 6.5.11 / 10.1.55 /
+          2.21.4 / 4.1.135。**同 minor 内的补丁升级**，API 面不变，
+          是清这类告警风险最低的一步。
+          升级依据与验证过程记在仓库 README 的「依赖安全」一节。
+        -->
+        <version>3.5.16</version>
         <relativePath/>
     </parent>
 
