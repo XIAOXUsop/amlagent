@@ -601,32 +601,48 @@ cd backend && AML_LLM_ACTIVE_PROVIDER=mock ./mvnw spring-boot:run
 
 **处理原则：先去 NVD 查受影响版本区间，再决定升不升。** 看到扫描器报红就升版本，
 和看到报红就关掉它一样不负责任——前者可能升了个没用的版本，后者会漏掉真的。
-下表是 2026-09-19 逐条查 `services.nvd.nist.gov` 的结果：
+下表是 2026-09-19 逐条查 `services.nvd.nist.gov` 的**受影响版本区间**，
+再拿它对照本仓库实际解析到的版本得出的。**先查区间再决定升不升**——
+看到扫描器报红就升、和看到报红就关掉它一样不负责任。
 
 | CVE | 包 | 受影响区间 | 本仓库版本 | 结论 |
 |---|---|---|---|---|
 | 40971 / 40974 | spring-boot | `3.5.0 ≤ v < 3.5.14` | 3.5.13 → **3.5.16** | ✅ 已清 |
-| 34479 | log4j | `2.7 ≤ v < 2.25.4` | 2.24.3 → **2.25.4** | ✅ 已清（BOM 覆盖） |
-| 65905 | tomcat | `10.1.0 ≤ v < 10.1.58` | 10.1.53 → **10.1.60** | ✅ 已清（BOM 覆盖） |
 | 54512 | jackson-databind | `2.19.0 ≤ v < 2.21.4` | 2.21.2 → 2.21.4 | ✅ 已清 |
+| 65905 | tomcat | `10.1.0 ≤ v < 10.1.58` | 10.1.53 → **10.1.60** | ✅ 已清（BOM 属性覆盖） |
+| 34479 | log4j | `2.7 ≤ v < 2.25.4` | 2.24.3 → **2.25.4** | ✅ 已清（BOM 属性覆盖） |
+| 54291 | postgresql (JDBC) | `42.7.4 ≤ v < 42.7.12` | 42.7.11 → **42.7.12** | ✅ 已清（BOM 属性覆盖） |
+| 82617 | opennlp-tools | `2.0.0 ≤ v < 2.5.12` | 2.5.9 → **2.5.12** | ✅ 已清（dependencyManagement） |
 | 47884 | spring-framework | `6.2.0 ≤ v < 6.2.20` | 6.2.19 | ⏳ 修复线未发布 |
+| 59270 | spring-security | `6.5.0 ≤ v < 6.5.12` | 6.5.11 | ⏳ 修复线未发布 |
 | 53914 | kotlin-stdlib | `≤ v < 2.4.20` | 1.9.25 | ⛔ 无法覆盖 |
 | 18022 | pgvector | 扩展 `≤ v < 0.8.6` | Java 客户端 0.1.6 | ⚠️ **误报** |
+| 60586 / 60623 | mysql-connector-j | NVD 无版本区间可查 | 9.7.0 | ❓ 无法判定 |
 
-做法：Spring Boot 升到 3.5.x 最新（3.5.16），另外两条用 BOM 属性覆盖到修复线以上
-（`tomcat.version` / `log4j2.version`）。升级与覆盖之后 **549 项后端测试全绿**，
-与改动前的基线逐项一致；并用 `dependency:list` 确认解析到的确实是新版本，
-而不是只改了 pom 文字。
+清掉的方式分三种，按「上游是否管这个包」选：
 
-**两条没修的，原因各不相同，都不打算含糊过去**：
+- **Spring Boot BOM 管的**（tomcat / log4j / postgresql）→ 覆盖它的 BOM 属性
+- **BOM 不管的**（opennlp，来自 flyway 的传递依赖）→ 只能靠 `dependencyManagement` 显式锁版本
+- **Spring Boot 版本本身**（spring-boot / jackson）→ 直接升到 3.5.x 最新
 
-- `CVE-2026-47884`（spring-framework）**修复线 6.2.20 尚未发布**——
-  6.2.x 在 Maven Central 上最新就是 BOM 带的 6.2.19。这道题只能等上游。
+**验证方式**：每一轮改完都跑 CI 同款命令 `./mvnw verify -Dgroups='!integration'`，
+**549 项测试全绿且与改动前基线逐项一致**；再用 `dependency:list` 确认解析到的
+确实是新版本，而不是只改了 pom 文字。**「清掉了」这件事不是靠推断，
+是靠下一次扫描的输出里那些包不再出现。**
+
+**三条没修的，原因各不相同，都不打算含糊过去**：
+
+- `CVE-2026-47884`（spring-framework）与 `CVE-2026-59270`（spring-security）
+  **修复线都尚未发布**——6.2.20 / 6.5.12 在 Maven Central 上都不存在，
+  该线最新就是 BOM 带的那两个版本。只能等上游。
 - `CVE-2026-53914`（kotlin-stdlib）**不能靠版本覆盖解决**：它是传递依赖（runtime），
   且带着 `kotlin-stdlib-jdk7` / `jdk8`，而这两个 artifact 在 Kotlin 2.x 已不再发布——
   把版本提到修复线 2.4.20 会直接打断依赖树。要修得先让上游那个传递依赖换掉。
+- `CVE-2026-60586 / 60623`（mysql-connector-j）**查不到受影响区间**：
+  Oracle 的公告没有进 NVD 的 CPE 版本范围，所以无法判定 9.7.0 是否在里。
+  记为「无法判定」而不是「已清」或「误报」——不猜。
 
-**一条判为误报，附理由**：`CVE-2026-18022` 描述的是 **pgvector 扩展**（PostgreSQL 侧 C++/C）
+**一条判为误报，附理由**：`CVE-2026-18022` 描述的是 **pgvector 扩展**（PostgreSQL 侧 C/C++）
 在 IVFFlat 索引构建中的整数回绕，而 dependency-check 报的是 `com.pgvector:pgvector`
 ——**JDBC 客户端库**，它不构建索引，两者只是版本号恰好都落在 0.1.x。
 注意这条误报不覆盖部署侧：`docker-compose.yml` 里的 pgvector **已从浮动 tag
