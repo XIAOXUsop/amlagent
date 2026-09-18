@@ -101,6 +101,13 @@ jobs:
       # 严格限流，dependency-check 拉不全数据就整体失败，报一堆
       # "Failed to process CVE-…"。看起来像发现了上百个漏洞，实际一个都没分析出来。
       # 两种原因都该让 job 红（门禁没生效本身就是问题），但必须能一眼分开。
+      #
+      # ⚠️ 分类逻辑在 `scripts/classify_dependency_scan.py`，**不要挪回 shell 里**。
+      # 它原先就是一段内联 grep，模式里有个裸的 `429`（本意 HTTP 429 限流），
+      # 结果匹配到 `[INFO] Completed processing batch 59/198 (30%) in 429ms`
+      # ——一个处理耗时——于是 2026-09-18 那次「真扫出 CVSS 9.8 漏洞」
+      # 被报成「只是限流，不是漏洞」，把安全门禁说成可以忽略。
+      # 抽成脚本是为了让那次误判成为回归用例（`scripts/test_classify_dependency_scan.py`）。
       - name: Scan Maven dependencies
         id: scan
         working-directory: backend
@@ -123,12 +130,8 @@ jobs:
             exit 0
           fi
 
-          # 分类：是数据源问题，还是真的扫出了高危依赖
-          if grep -qE "Failed to process CVE-|Unable to continue dependency-check analysis|Error updating the NVD|NVD returned|429" dependency-scan.log; then
-            echo "::error::依赖扫描未能完成：漏洞库数据源不可用（多半是 NVD 限流）。这**不是**发现依赖漏洞，而是这一次检查根本没跑成。配置 NVD_API_KEY 可解决。"
-          else
-            echo "::error::依赖扫描发现达到 CVSS 7 的依赖漏洞，见下方输出与报告产物"
-          fi
+          # 分类并打印对应的 ::error:: 注解；无论哪种原因，job 都必须红
+          python3 ../scripts/classify_dependency_scan.py dependency-scan.log
           exit 1
       - name: Upload dependency scan report
         if: ${{ failure() }}
@@ -158,6 +161,11 @@ jobs:
         run: ruff check benchmark scripts
       - name: Run benchmark protocol tests
         run: python -m unittest discover -s benchmark -p 'test_*.py'
+      - name: Run script unit tests
+        # 依赖扫描的分类器在这里被测试。它曾经把「真发现漏洞」误报成
+        # 「数据源挂了」，回归用例在 scripts/test_classify_dependency_scan.py。
+        working-directory: scripts
+        run: python -m unittest discover -s . -p 'test_*.py'
       - name: Check repository text conventions
         run: python scripts/check_text_conventions.py
 
