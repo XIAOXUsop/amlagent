@@ -44,32 +44,62 @@
           ── 安全补丁：覆盖上游 BOM 管理的版本 ──────────────────────────
 
           做这件事的前提是先查过 NVD 的**受影响版本区间**，而不是看到扫描器报红就升。
-          以下是 2026-09-19 逐条查证的结果（`services.nvd.nist.gov`）：
+          区间逐条取自 `services.nvd.nist.gov/rest/json/cves/2.0?cveId=…` 的
+          `configurations[].nodes[].cpeMatch[]`（2026-09-19 查证）。
 
-            CVE-2026-65905  tomcat     10.1.0 ≤ v < 10.1.58  → BOM 给的 10.1.55 仍在区间内
-            CVE-2026-34479  log4j      2.7    ≤ v < 2.25.4   → BOM 给的 2.24.3 仍在区间内
-            CVE-2026-54291  postgresql 42.7.4 ≤ v < 42.7.12  → BOM 给的 42.7.11 仍在区间内
-            CVE-2026-82617  opennlp    2.0.0  ≤ v < 2.5.12   → 上游传递依赖给的 2.5.9 仍在区间内
+          下表左边是 Spring Boot 3.5.16 的 BOM 值，右边是本工程的取值：
+
+            tomcat        10.1.55 → 10.1.60     CVE-2026-65905   [10.1.0, 10.1.58)
+            log4j2        2.24.3  → 2.25.5      CVE-2026-34479   [2.7, 2.25.4)
+                                                CVE-2026-49844   [2.25.0, 2.25.5)
+            postgresql    42.7.11 → 42.7.12     CVE-2026-54291   [42.7.4, 42.7.12)
+            netty         4.1.135 → 4.1.138     CVE-2026-89044   [4.1.133, 4.1.138)
+                                                + 21 条落在 [4.1.0, 4.1.136)
+            jackson-bom   2.21.4  → 2.21.5      CVE-2026-54515   [2.21.0, 2.21.5)
+            commons-lang3 3.17.0  → 3.18.0      CVE-2025-48924   [3.0, 3.18.0)
+
+          取的都是**修复线**，不是"最新版"：log4j 有更新的 2.26.x、jackson 有 2.21.6，
+          但它们不是任何一条公告的要求，跨 minor 升级徒增风险。
 
           **tomcat 10.1.58 从未发布**（仓库里 10.1.57 的下一个就是 10.1.59），
-          所以取 10.1.60；其余取各自修复线。都是补丁级提升。
+          所以取 10.1.60。全是补丁级提升，API 面不变。
 
-          其中 opennlp **不在 Spring Boot 的 BOM 里**（它来自 flyway-database-postgresql
-          的传递依赖），所以只能靠下面的 dependencyManagement 显式锁版本；
-          其余三个走 BOM 属性。
+          opennlp **不在 Spring Boot 的 BOM 里**（它来自 flyway-database-postgresql
+          的传递依赖），只能靠下面的 dependencyManagement 显式锁版本。
 
-          下面两条**故意不覆盖**，理由记在这里免得以后有人重复尝试：
-            CVE-2026-47884  spring-framework 6.2.0 ≤ v < 6.2.20
-                            修复线 6.2.20 **尚未发布**（6.2.x 最新就是 BOM 带的 6.2.19）
-            CVE-2026-59270  spring-security  6.5.0 ≤ v < 6.5.12
-                            修复线 6.5.12 **同样尚未发布**（6.5.x 最新就是 6.5.11）
-            CVE-2026-53914  kotlin-stdlib ≤ v < 2.4.20
-                            它是**传递依赖**（runtime），且带着 kotlin-stdlib-jdk7 / jdk8——
-                            这两个 artifact 在 Kotlin 2.x 已不再发布，覆盖到 2.4.20 会直接打断依赖树
+          ── 故意不覆盖的：修复版本尚未发布 ────────────────────────────
+          记在这里免得以后有人重复尝试。每条的修复版一旦出现在 Central，
+          把对应属性加进来即可（与上表同一种做法）：
+
+            spring-framework   6.2.0 ≤ v ≤ 6.2.19 → 修复 6.2.20，**未发布**
+                               CVE-2026-47883/47884/47885/47886/47887/47888/
+                               47889/47890/47891/47892/47893、59280/59281/
+                               59282/59283、59313、59314 —— 共 17 条
+                               实测 6.2.x 在 Central 上最新就是 6.2.19
+            spring-security    6.5.0 ≤ v ≤ 6.5.11 → 修复 6.5.12，**未发布**
+                               CVE-2026-47841/47842/59270/59276 —— 共 4 条
+            spring-data-jpa    3.5.13 落在区间内   → 修复 3.5.14，**未发布**
+                               CVE-2026-47834；3.5.x 最新就是 3.5.13
+            mysql-connector-j  9.7.0              → **不存在可取的修复版本**
+                               Oracle 公告写明"受影响版本 9.7.0–9.7.1"，
+                               但 9.7.1 在 Central 上根本不存在（9.x 最新就是 9.7.0），
+                               9.7.2 也没有。退回 9.6.0 理论上不在受影响范围，
+                               但那是一次功能降级，而 Oracle 的 CPU 通常在下个季度给出修复版——
+                               先如实记录，不降级。
+                               CVE-2026-60586(7.7) / CVE-2026-60623(7.1)
+
+          ── 一处曾写错、现已纠正的说明 ────────────────────────────────
+          本注释早先写着：「kotlin-stdlib-jdk7 / jdk8 在 Kotlin 2.x 已不再发布，
+          覆盖到 2.4.20 会直接打断依赖树」。**这句是错的**——查 Central 的
+          maven-metadata，这两个 artifact 的 release 就是 2.4.20，一直在发。
+          处理方式见 README「依赖安全」一节。
         -->
         <tomcat.version>10.1.60</tomcat.version>
-        <log4j2.version>2.25.4</log4j2.version>
+        <log4j2.version>2.25.5</log4j2.version>
         <postgresql.version>42.7.12</postgresql.version>
+        <netty.version>4.1.138.Final</netty.version>
+        <jackson-bom.version>2.21.5</jackson-bom.version>
+        <commons-lang3.version>3.18.0</commons-lang3.version>
     </properties>
 
     <!--
