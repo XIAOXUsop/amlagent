@@ -655,6 +655,29 @@ CVE 库上，而那份数据一天之内不会变。缓存写错过一次，值�
 ——「依赖扫描又红了」——而三种原因（真扫出漏洞 / 没跑成 / 缓存在喂坏数据）
 的处理方式完全不同。分不清就会去改错的地方，或者干脆把这个门禁关掉。
 
+**⚠️ 最后一条，也是最该记住的一条：这份缓存不会自举。**
+上面那些守卫让缓存"不会存坏的"，但缓存**空了之后也长不回来**——因为从零建库这一步
+本身就过不去。实测（2026-09-19，我把 6 份旧缓存回收之后）：
+
+```
+[WARNING] An NVD API Key was not provided - it is highly recommended to use an NVD API key
+[INFO] NVD API has 395,446 records in this update
+[WARNING] NVD API request failures are occurring; retrying request for the 31st time
+[ERROR] Error updating the NVD Data
+    Caused by: NvdApiException: NVD Returned Status Code: 429
+```
+
+**39 万条记录**，匿名访问被限流，重试 31 次后放弃——整轮 **4 分 37 秒**结束，
+一个依赖都没检查。也就是说：**这个 job 能不能工作，取决于 `NVD_API_KEY` 有没有配**，
+缓存只是让配了之后的每一次运行便宜（62 秒）。此前的 114.9 MB 缓存是更早某次
+侥幸下完留下的，删掉就没有了——这次是我亲手删的，代价就是下一轮直接没跑成。
+
+密钥是免费的（<https://nvd.nist.gov/developers/request-an-api-key>），
+加为仓库 secret `NVD_API_KEY` 即可。**没有它时这一步不成其为门禁**：
+它红，但红的不是"发现了漏洞"。分类器现在会把这两种 `data-source` 分开说
+（没配密钥 / 配了还失败），因为把它们说成一句会把人引到错误的排查方向
+——回归用例 `test_keyed_log_does_not_blame_a_missing_key`。
+
 ### 依赖安全
 
 扫描用 OWASP dependency-check，`CVSS ≥ 7` 阻断。**这一节记录当前已知状态，不粉饰。**

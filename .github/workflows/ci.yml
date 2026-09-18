@@ -175,7 +175,7 @@ jobs:
           if [ -n "$NVD_API_KEY" ]; then
             args+=("-DnvdApiKey=$NVD_API_KEY")
           else
-            echo "::notice::未配置 NVD_API_KEY：漏洞库更新会被限流，本步可能因为拉不到数据而失败"
+            echo "::warning::未配置 NVD_API_KEY：漏洞库有 39 万余条记录，匿名访问会被限流，本步很可能根本跑不成（这跟「扫出漏洞」是两回事）。密钥免费：https://nvd.nist.gov/developers/request-an-api-key"
           fi
           set +e
           ./mvnw org.owasp:dependency-check-maven:12.2.2:check "${args[@]}" 2>&1 | tee dependency-scan.log

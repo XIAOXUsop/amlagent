@@ -16,7 +16,13 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from classify_dependency_scan import CACHEABLE_VERDICTS, MESSAGES, classify, main
+from classify_dependency_scan import (
+    CACHEABLE_VERDICTS,
+    MESSAGES,
+    classify,
+    main,
+    message_for,
+)
 
 # 真实日志的节选：耗时里带 429，同时确实扫出了高危依赖。
 # 旧实现把它判成 data-source，这正是事故本身。
@@ -62,6 +68,17 @@ LOCKED_DATASOURCE_LOG = """\
 [INFO] BUILD FAILURE
 """
 
+# 真实日志（2026-09-19）：没配 NVD_API_KEY 时**从零**下载漏洞库的完整形态。
+# 39 万条记录、匿名访问被限流、重试 31 次后放弃。这一轮 4 分 37 秒就结束了。
+NO_KEY_RATE_LIMIT_LOG = """\
+[WARNING] An NVD API Key was not provided - it is highly recommended to use an NVD API key as the update can take a VERY long time without an API Key
+[INFO] NVD API has 395,446 records in this update
+[WARNING] NVD API request failures are occurring; retrying request for the 31st time
+[ERROR] Error updating the NVD Data
+org.owasp.dependencycheck.data.update.exception.UpdateException: Error updating the NVD Data
+    Caused by: io.github.jeremylong.openvulnerability.client.nvd.NvdApiException: NVD Returned Status Code: 429
+"""
+
 
 class ClassifyTests(unittest.TestCase):
     def test_real_incident_is_classified_as_findings(self) -> None:
@@ -94,6 +111,10 @@ class ClassifyTests(unittest.TestCase):
     def test_locked_database_is_data_source_not_findings(self) -> None:
         """残留更新锁导致「没跑成」，不得被当成「扫出漏洞」。"""
         self.assertEqual(classify(LOCKED_DATASOURCE_LOG), "data-source")
+
+    def test_no_key_rate_limit_is_data_source(self) -> None:
+        """匿名访问下不完那 39 万条记录——这是「没跑成」，不是「扫过了没问题」。"""
+        self.assertEqual(classify(NO_KEY_RATE_LIMIT_LOG), "data-source")
 
 
 class CacheVerdictTests(unittest.TestCase):
@@ -163,6 +184,29 @@ class CacheVerdictTests(unittest.TestCase):
             main(["classify_dependency_scan.py", "x.log", "--github-output"]),
             2,
         )
+
+
+class MessageTests(unittest.TestCase):
+    """`data-source` 要分两种说法：没配密钥 / 配了还失败。处理方式完全不同。"""
+
+    def test_no_key_log_tells_you_to_get_a_key(self) -> None:
+        message = message_for("data-source", NO_KEY_RATE_LIMIT_LOG)
+        self.assertIn("NVD_API_KEY", message)
+        self.assertIn("nvd.nist.gov/developers/request-an-api-key", message)
+
+    def test_keyed_log_does_not_blame_a_missing_key(self) -> None:
+        """密钥明明配了，还说「去申请一个」会把人引到错误的排查方向。"""
+        message = message_for("data-source", RATE_LIMITED_LOG)
+        self.assertNotIn("/request-an-api-key", message)
+
+    def test_other_kinds_fall_through_to_the_plain_message(self) -> None:
+        self.assertEqual(message_for("findings", NO_KEY_RATE_LIMIT_LOG), MESSAGES["findings"])
+        self.assertEqual(message_for("unknown", RATE_LIMITED_LOG), MESSAGES["unknown"])
+
+    def test_every_message_says_this_run_checked_nothing(self) -> None:
+        """数据源失败最容易被误读成「扫过了，没问题」——两种说法都要堵住。"""
+        for log in (NO_KEY_RATE_LIMIT_LOG, RATE_LIMITED_LOG):
+            self.assertIn("没有检查任何依赖", message_for("data-source", log))
 
 
 if __name__ == "__main__":
