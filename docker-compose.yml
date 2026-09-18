@@ -1,5 +1,13 @@
 services:
   mysql:
+    # `mysql:8.0` 与下面 redis 的 `redis:7` 是**故意保留的「大版本内浮动」**，
+    # 不是漏钉：它们只会在同一个大版本里拿到补丁版（实测当前分别是
+    # 8.0.46 与 7.4.10），很多人正是为了自动获得安全补丁才这么写。
+    #
+    # 与上面 pgvector / prometheus / grafana 的区别在于**浮动范围**：
+    # 那三个要么会跨大版本（`latest`），要么牵涉到具体的 CVE 修复线
+    # （pgvector 的 < 0.8.6），所以必须钉死；而 8.0 / 7 的浮动是可控的。
+    # 判断依据是「浮动会带来什么后果」，不是「有没有写死数字」。
     image: mysql:8.0
     container_name: aml-mysql
     restart: unless-stopped
@@ -71,19 +79,20 @@ services:
       retries: 5
 
   prometheus:
-    # ⚠️ 监控这两个镜像用的是 `latest`，是**故意留着没钉**，不是没注意。
+    # 钉住版本，不用 `latest`。
     #
-    # 钉版本更正确（理由同上面 pgvector），但钉之前得先确认那个具体版本 tag 存在，
-    # 而本机没有 Docker、无法拉取验证——猜一个 tag 的后果是 `docker compose up`
-    # 直接失败，比浮动 tag 更糟。所以这里如实标注，而不是改成一个没验过的值。
+    # `latest` 与 `mysql:8.0` / `redis:7` 那种「大版本内浮动」不是一回事：
+    # 后两者只在同一个大版本里拿补丁（很多人是**故意**这么写的），
+    # 而 `latest` 会**跨大版本跳**——同一份 compose 文件这个月起 3.x、
+    # 下个月可能起 4.x，配置与仪表盘的兼容性都跟着变。
     #
-    # 要钉的话：先 `docker pull docker.m.daocloud.io/prom/prometheus:latest`，
-    # 用 `docker image inspect` 读出实际版本，再换成那个版本化的 tag。
-    #
-    # 影响面仅限可观测性，不影响后端与前端的主流程。
+    # 实测（2026-09-19，本机 `docker exec` 读实际版本）：
+    #   运行中的 `latest` 是 prometheus 3.13.2
+    #   而 `v3.13.2` 与它**是同一个 digest**（sha256:508729e0…）
+    # 所以这次只是把「碰巧拉到的是最新版」变成「明确就是这一版」，行为不变。
     #
     # 国内网络使用镜像加速前缀，如拉取失败可改回 prom/prometheus
-    image: docker.m.daocloud.io/prom/prometheus:latest
+    image: docker.m.daocloud.io/prom/prometheus:v3.13.2
     container_name: aml-prometheus
     restart: unless-stopped
     ports:
@@ -94,7 +103,9 @@ services:
       - '--config.file=/etc/prometheus/prometheus.yml'
 
   grafana:
-    image: docker.m.daocloud.io/grafana/grafana:latest
+    # 同 prometheus：`latest` 会跨大版本跳，钉住。
+    # 实测运行中的 `latest` 是 13.1.3，与 `13.1.3` 是同一个 digest（sha256:ab5cb380…）。
+    image: docker.m.daocloud.io/grafana/grafana:13.1.3
     container_name: aml-grafana
     restart: unless-stopped
     ports:

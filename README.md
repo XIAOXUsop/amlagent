@@ -606,8 +606,11 @@ cd backend && AML_LLM_ACTIVE_PROVIDER=mock ./mvnw spring-boot:run
 注意这条误报不覆盖部署侧：`docker-compose.yml` 里的 pgvector **已从浮动 tag
 `pg16` 钉到 `0.8.6-pg16`**（两者是同一个 digest，已在 Docker Hub 核对），
 所以「这个部署的扩展版本不在受影响区间内」现在是**可断言**的，而不是取决于拉取时间。
-监控用的 `prom/prometheus:latest` 与 `grafana/grafana:latest` 仍是浮动 tag——
-本机没有 Docker、无法确认对应版本再钉，已在该文件里如实标注并写了钉法。
+实测本机运行的容器里扩展版本正是 `0.8.6`。
+
+监控那两个也从 `latest` 钉成了具体版本（prometheus `v3.13.2`、grafana `13.1.3`）——
+`latest` 会跨大版本跳，与 `mysql:8.0` / `redis:7` 那种「大版本内浮动」不是一回事，
+后者是故意保留的。
 
 因此这个 job 目前仍然是红的——但它现在红得**说的对**：
 剩下的每一条都能说清"为什么修不了"或"为什么是误报"。
