@@ -139,10 +139,18 @@ WHERE id=:id AND status IN (:eligible) AND execution_version=:expectedVersion
 **回答**：Worker 执行抛可重试异常 → `RETRY_WAIT` + 指数退避（5s/15s/45s）→ `RetryScheduler` 到期重新置 PENDING 并重新入队；重试超限 `maxRetry` → 死信（独立 deadStream）+ 工单 FAILED，管理员可重放。不可重试异常（如客户不存在）直接 FAILED 转人工。
 
 ### Q14. Redis 连接中断后消费者停了，怎么恢复？（讲你最近加固的）
-**回答**：`StreamHealthMonitor` 每 10s 探测 `probeLag()`：
+**回答**：`StreamHealthMonitor` 每 **15s** 探测 `probeLag()`（`aml.queue.health-probe-seconds`，
+代码默认 15、`application.yml` 里也是 `${AML_QUEUE_HEALTH_PROBE_SECONDS:15}`；
+首轮探测另有 `health-initial-delay-seconds` = 5s 的初始延迟）：
 - 连接失败 → 立即重建消费者容器。
 - lag 持续超阈值 → 先告警（连续异常抑制瞬断误报），超恢复阈值强制重建。
 - 用 `StreamConsumptionTracker` 的 ACK 计数判定"stream 有积压但消费者不推进"=停摆。
+
+> 2026-09-19 更正：这里原写「每 10s」。核过源码与配置，**它从引入那天起就是 15**，
+> 不是后来改的——`git log -S "healthProbeSeconds = 10"` 指不到任何一次改动，
+> 引入它的那个提交（`3d0f256 feat(messaging): Redis Streams 消费者连接恢复与健康告警加固`）
+> 写的就是 15。另外上一问里的退避「5s/15s/45s」是对的
+> （`WorkflowMessageHandler#backoffSeconds`，`base * 3^(retry-1)`）。
 真实场景：Docker 重启后消费者停摆、151 条消息堆积不消费；加固后自动重建容器消费恢复。
 
 ---

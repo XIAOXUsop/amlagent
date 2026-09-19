@@ -63,7 +63,23 @@ public class QueueProperties {
     @Max(60_000)
     private long consumerPollTimeoutMs = 300;
 
-    /** 重试指数退避基数（秒）：delay = base * 2^retry */
+    /**
+     * 重试指数退避基数（秒）。
+     *
+     * <p>
+     * <b>⚠️ 两条重试路径共用这个基数，但公式不同</b>，别只看属性名就假定一种：
+     *
+     * <ul>
+     * <li><b>Outbox 发布重试</b>（{@code OutboxPublisher}）：{@code base * 2^retry}， 指数由
+     * {@link #retryBackoffExponentCap} 封顶 → <b>5s / 10s / 20s / 40s …</b></li>
+     * <li><b>工单处理重试</b>（{@code WorkflowMessageHandler#backoffSeconds}）：
+     * {@code base * 3^(retry-1)}，由 {@link #maxRetry} 封顶（默认 3）→ <b>5s / 15s / 45s</b></li>
+     * </ul>
+     *
+     * <p>
+     * 此前这里只写了 {@code delay = base * 2^retry}，把第二条路径漏了—— 而 {@code INTERVIEW.md}
+     * 里写的「指数退避（5s/15s/45s）」说的正是第二条。 两处都没错，错的只是这个注释只描述了一半。2026-09-19 核对时补全。
+     */
     @Min(1)
     private int retryBackoffSeconds = 5;
 
