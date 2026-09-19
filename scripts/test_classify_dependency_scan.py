@@ -213,6 +213,93 @@ class MessageTests(unittest.TestCase):
             self.assertIn("没有检查任何依赖", message_for("data-source", log))
 
 
+class OutputEncodingTests(unittest.TestCase):
+    """输出必须能在 GBK 终端里打出来。
+
+    **事故**（2026-09-19）：`FINDINGS_MESSAGE` 里用了「警告三角」emoji
+    （U+26A0 + U+FE0F），在没有 `PYTHONIOENCODING=utf-8` 的 Windows 默认终端下，
+    打印它直接抛 `UnicodeEncodeError: 'gbk' codec can't encode character '\\u26a0'`。
+    讽刺的是：**只有在真的扫出漏洞时才会走到那句话**——也就是说，
+    最该被人看到的结论，恰好是被一个编码错误顶掉的那一个。
+
+    （这里不写出那个字符本身：写进来会让「扫全文件找不可编码字符」的检查
+      在文档里命中它，产生一条假告警。）
+
+    这里**不测「某个字符还在不在」**，而是把所有消息路径都塞进一个 GBK 输出流里跑一遍。
+    前者防不住下一条消息再引入一个别的符号；后者对新消息自动生效。
+    """
+
+    class _GbkStream(io.TextIOBase):
+        """把写进来的内容按 GBK 编码——编不出就抛，跟真实终端一样。"""
+
+        def __init__(self) -> None:
+            self._buffer = bytearray()
+
+        def write(self, text: str) -> int:
+            self._buffer += text.encode("gbk")  # 编不出就在这里抛
+            return len(text)
+
+        def flush(self) -> None:  # pragma: no cover - 只为接口完整
+            pass
+
+        def decoded(self) -> str:
+            return self._buffer.decode("gbk")
+
+    def _run_into_gbk(self, log_text: str) -> str:
+        with tempfile.TemporaryDirectory() as tmp:
+            log = Path(tmp) / "dependency-scan.log"
+            log.write_text(log_text, encoding="utf-8")
+            stream = self._GbkStream()
+            with contextlib.redirect_stdout(stream):
+                self.assertEqual(main(["classify_dependency_scan.py", str(log)]), 0)
+            return stream.decoded()
+
+    def test_findings_message_survives_gbk(self) -> None:
+        """**这条是本次事故的回归用例**：真扫出漏洞时那句注解必须打得出来。"""
+        out = self._run_into_gbk(REAL_INCIDENT_LOG)  # 不抛就算过
+        self.assertIn("kind=findings", out)
+        self.assertIn("[warning]", out)
+        self.assertTrue(out.startswith("kind=") or "::error::" in out)
+
+    def test_every_message_kind_survives_gbk(self) -> None:
+        """三种判定各自的消息都过一遍——防止下一条消息再引入别的符号。"""
+        for label, log_text in (
+            ("findings", REAL_INCIDENT_LOG),
+            ("data-source（没密钥）", NO_KEY_RATE_LIMIT_LOG),
+            ("data-source（配了密钥）", RATE_LIMITED_LOG),
+            ("unknown", UNKNOWN_LOG),
+        ):
+            with self.subTest(kind=label):
+                self._run_into_gbk(log_text)  # 抛了就红
+
+    def test_actions_annotation_format_is_preserved(self) -> None:
+        """换成 ASCII 不能把 GitHub Actions 的注解锁头也改掉。
+
+        `::error::` 是 Actions 识别的命令前缀；消息正文里出现 `[warning]` 只是文字，
+        不会被当成注解——但如果哪天把前缀也改成非 ASCII，注解会静默失效。
+        """
+        for message in MESSAGES.values():
+            self.assertTrue(message.startswith("::error::"), message[:40])
+
+    def test_no_message_contains_symbols_gbk_cannot_encode(self) -> None:
+        """消息里的字符都必须能被 GBK 编码——与终端一致的门槛，一次堵死同类问题。
+
+        中文字符合法（GBK 编得出），被挡的是 ASCII 之外的各类符号与 emoji。
+        """
+        for kind, message in MESSAGES.items():
+            with self.subTest(kind=kind):
+                bad = sorted({c for c in message if not _encodable_in_gbk(c)})
+                self.assertEqual(bad, [], f"{kind} 的消息里有 GBK 编不出的字符: {bad}")
+
+
+def _encodable_in_gbk(ch: str) -> bool:
+    try:
+        ch.encode("gbk")
+        return True
+    except UnicodeEncodeError:
+        return False
+
+
 # 节选自 2026-09-19 的真实 job 日志（apply 之后同一份格式）。
 # 关键在于它**同时**含同一个依赖的两种形态：
 #   · 上半部分的 `Identified` 行——只有 CVE 号、**没有分数**，不是阻断项

@@ -72,7 +72,13 @@ RATE_LIMIT_CONTEXT = ("NVD", "HTTP", "status", "Too Many Requests")
 FINDINGS_MESSAGE = (
     "::error::依赖扫描发现达到 CVSS 阈值的依赖漏洞——这是**真的**，不是工具故障。"
     "请查看报告产物（dependency-check-report.html / dependency-scan.log）。"
-    "⚠️ 但**不要看到红就升版本**：本仓库有一批阻断项的修复版本上游**还没发布**，"
+    # 这一行曾用「警告三角」emoji 开头（U+26A0 + U+FE0F），但那是 GBK 编不出的字符——
+    # 在没有 `PYTHONIOENCODING=utf-8` 的 Windows 默认终端下，打印这句会直接
+    # 抛 UnicodeEncodeError，**把「扫出漏洞」这条最该被看到的结论变成一次崩溃**。
+    # 换成纯 ASCII 的 `[warning]`，语义一样、编码不再是变量。
+    # （这里故意不写出那个字符本身：一旦写进来，任何「扫全文件找不可编码字符」的
+    #   检查都会在注释里命中它，产生一条假的告警。）
+    "[warning] 但**不要看到红就升版本**：本仓库有一批阻断项的修复版本上游**还没发布**，"
     "逐条依据与处理原则写在 README「依赖安全」一节和 `backend/pom.xml` 的注释里。"
     "先查受影响区间再决定升不升，也不要为了让它变绿而随手加豁免。"
 )
