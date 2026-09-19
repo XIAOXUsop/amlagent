@@ -24,15 +24,15 @@ npm run dev          # http://localhost:5173
 
 ## 命令
 
-| 命令 | 作用 |
-|---|---|
-| `npm run dev` | 开发服务器（端口 5173，见上） |
-| `npm run build` | `vue-tsc -b && vite build`——**类型检查是构建的一部分**，类型不过就构建不出来 |
-| `npm run lint` | ESLint，带 `--max-warnings=0`：**警告也算失败** |
-| `npm run format:check` | Prettier 检查（`npm run format` 写回） |
-| `npm test` | Vitest 单元测试，全部离线，不依赖后端 |
-| `npm run test:json` | 同上，结果写到 `.reports/vitest.json` |
-| `npm run test:e2e` | Playwright 端到端；它自己会 `npm run dev` 起前端（`reuseExistingServer: true`），但**后端与基础设施得先跑着** |
+| 命令                   | 作用                                                                                                          |
+| ---------------------- | ------------------------------------------------------------------------------------------------------------- |
+| `npm run dev`          | 开发服务器（端口 5173，见上）                                                                                 |
+| `npm run build`        | `vue-tsc -b && vite build`——**类型检查是构建的一部分**，类型不过就构建不出来                                  |
+| `npm run lint`         | ESLint，带 `--max-warnings=0`：**警告也算失败**                                                               |
+| `npm run format:check` | Prettier 检查（`npm run format` 写回）                                                                        |
+| `npm test`             | Vitest 单元测试，全部离线，不依赖后端                                                                         |
+| `npm run test:json`    | 同上，结果写到 `.reports/vitest.json`                                                                         |
+| `npm run test:e2e`     | Playwright 端到端；它自己会 `npm run dev` 起前端（`reuseExistingServer: true`），但**后端与基础设施得先跑着** |
 
 > ⚠️ `test:json` 的输出路径不是随便定的：根目录的 `scripts/test_summary.py` 读的就是
 > `frontend/.reports/vitest.json`，用来统计前端那一栏的测试数。改这个路径会让统计脚本
