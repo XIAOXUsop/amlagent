@@ -487,10 +487,17 @@ python scripts/test_summary.py --markdown   # 可直接贴进文档
 
 | 层 | 执行/总数 | 通过 | 失败 | 跳过 | 最近验证 |
 |---|---:|---:|---:|---:|---|
-| 后端单元测试（不含 `integration` 标签） | 549/550 | 549 | 0 | 1 | 2026-09-19 05:27 |
-| 后端集成回归（`-Pintegration-test`，需 MySQL/PGVector/Redis） | 44/44 | 44 | 0 | 0 | 2026-09-18 13:48 |
-| 前端组件测试 | 85/85 | 85 | 0 | 0 | 2026-09-18 13:38 |
-| Playwright E2E（需后端 + 前端，Mock 模型） | 8/8 | 8 | 0 | 0 | 2026-09-18 05:10 |
+| 后端单元测试（不含 `integration` 标签） | 575/576 | 575 | 0 | 1 | 2026-09-19 13:56 |
+| 后端集成回归（`-Pintegration-test`，需 MySQL/PGVector/Redis） | 44/44 | 44 | 0 | 0 | 2026-09-19 14:17 |
+| 前端组件测试 | 85/85 | 85 | 0 | 0 | 2026-09-19 07:40 |
+| Playwright E2E（需后端 + 前端，Mock 模型） | 8/8 | 8 | 0 | 0 | CI 最近一次运行 |
+
+> 前 3 行的数字由 `python scripts/test_summary.py --markdown` 直接产出，它**只读真实执行产物**
+> （Surefire XML / Vitest JSON），不读人写的数。第 4 行由 `npx playwright test --list` 给出条数、
+> 由 CI 的 `Playwright E2E` job 给出通过与否。
+>
+> ⚠️ 这张表此前写的是「549/550」，而真实值是 **575/576**——差了 26 项，
+> 说明加测试时没改文档。**别手抄这张表**，跑一遍上面那条命令。
 
 跳过的 1 项是 `AgentEvalLiveTest`——真实 DeepSeek 评测，需显式配置模型 Key 与
 `RUN_LIVE_AGENT_EVAL=true`；**未执行时不产生任何准确率数字，也不沿用旧结果**。
@@ -792,7 +799,8 @@ netty 那 22 条合起来是**一个动作**：NVD 对 netty 只登记了一个�
 是因为新公告 `CVE-2026-49844` 的修复线正是 2.25.5——**不是**因为"有更新的就用最新的"。
 
 **验证方式**：每一轮改完都跑 CI 同款命令 `./mvnw verify -Dgroups='!integration'`，
-**550 项测试全绿且与改动前基线逐项一致**；再用 `dependency:list` 确认解析到的
+**当时是 550 项全绿且与改动前基线逐项一致**（写这句时的数；当前值见上面的测试表，
+跑 `python scripts/test_summary.py` 取）；再用 `dependency:list` 确认解析到的
 确实是新版本，而不是只改了 pom 文字。**「清掉了」这件事不是靠推断，
 是靠下一次扫描的输出里那些包不再出现。**
 

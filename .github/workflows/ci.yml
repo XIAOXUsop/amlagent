@@ -49,6 +49,17 @@ jobs:
           name: backend-jacoco-report
           path: backend/target/site/jacoco
           if-no-files-found: error
+      # Surefire XML 单独传一份，给下面的 readme-numbers job 用：
+      # README 那张测试表里的数字就是从这些 XML 读出来的，「文档说的」要能对着
+      # 「真实产物」验，而不是对着另一个手抄的地方验。
+      # 只传本 job 真实产出的那一份——集成回归的 XML 在 `integration-test` job 里，
+      # 那份由它自己上传（这里带上会因找不到文件而 error）。
+      - name: Upload backend surefire reports
+        uses: actions/upload-artifact@v6
+        with:
+          name: backend-surefire-reports
+          path: backend/target/surefire-reports/TEST-*.xml
+          if-no-files-found: error
 
   # 敏感信息扫描：检查 API Key / 私钥 / 硬编码密钥是否意外提交
   security-scan:
@@ -92,6 +103,17 @@ jobs:
         with:
           name: frontend-coverage-report
           path: frontend/coverage
+          if-no-files-found: error
+      # Vitest 的 JSON 产物，理由同上：README 的前端那一行是从它读出来的。
+      # 注意要用 `test:json` 而不是 `test:coverage` 产的那个位置——
+      # `.reports/vitest.json` 是 `test_summary.py` 写死要读的路径。
+      - name: Produce machine-readable test report
+        run: cd frontend && npm run test:json
+      - name: Upload frontend vitest report
+        uses: actions/upload-artifact@v6
+        with:
+          name: frontend-vitest-report
+          path: frontend/.reports/vitest.json
           if-no-files-found: error
       - name: Audit production dependencies
         run: cd frontend && npm audit --omit=dev --audit-level=high --registry=https://registry.npmjs.org
@@ -281,6 +303,45 @@ jobs:
       - name: Check repository text conventions
         run: python scripts/check_text_conventions.py
 
+  # README 里那张「最近一次本机验证」表，数字是手抄的——2026-09-19 发现它写着
+  # 「549/550」而真实值是 575/576，差了 26 项，是加测试时忘了改文档。
+  #
+  # 单独一个 job，因为三层数字来自三个不同的 job：后端单测在 `unit-test`、
+  # 集成回归在 `integration-test`、前端在 `frontend-build`。放在其中任何一个里
+  # 都只能看到三分之一——而**看不到的层会被跳过**，跳过就等于没检查。
+  # 所以这里把三份产物都取回来再比。
+  #
+  # ⚠️ 脚本在「一层都没比对成」时会**报错退出**，不是静默通过：
+  #    用空集证明合格，正是这类检查最常见的死法（本仓库已经栽过两次）。
+  readme-numbers:
+    name: README Test Numbers
+    runs-on: ubuntu-latest
+    needs: [unit-test, integration-test, frontend-build]
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.13'
+
+      - name: Download backend unit test reports
+        uses: actions/download-artifact@v6
+        with:
+          name: backend-surefire-reports
+          path: backend/target/surefire-reports
+      - name: Download backend integration test reports
+        uses: actions/download-artifact@v6
+        with:
+          name: backend-integration-surefire-reports
+          path: backend/target/surefire-reports-integration
+      - name: Download frontend vitest report
+        uses: actions/download-artifact@v6
+        with:
+          name: frontend-vitest-report
+          path: frontend/.reports
+
+      - name: README 的测试数字与实测一致
+        run: python scripts/check_readme_test_numbers.py
+
   # 集成测试：每次变更都在隔离依赖服务上执行，防止迁移和适配器回归漏检
   integration-test:
     name: Integration Tests
@@ -339,6 +400,14 @@ jobs:
       - name: Summarize failed integration tests
         if: ${{ failure() }}
         run: python3 scripts/integration_report.py --failures
+      # README 的集成回归那一行从这些 XML 读出，交给 readme-numbers job 比对
+      - name: Upload integration surefire reports
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v6
+        with:
+          name: backend-integration-surefire-reports
+          path: backend/target/surefire-reports-integration/TEST-*.xml
+          if-no-files-found: warn
 
   # 端到端测试：后端 + 前端 + Playwright，验证核心用户流程
   e2e-test:
