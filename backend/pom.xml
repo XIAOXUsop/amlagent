@@ -45,6 +45,21 @@
 
           这不是"猜哪个对"——两边版本号里的数字相同就是配对，`1.19.0` 与
           `1.20.0-beta30` 不是。
+
+          ⚠️ 另外记一件与漏洞扫描有关的事：**langchain4j 的公告不在扫描器的射程内**。
+          查过 NVD，与它相关的公告只有两条，而**两条都没有 `configurations`/`cpeMatch`
+          区间**——dependency-check 是靠 CPE 区间比对的，没有区间就永远报不出来。
+          所以这个依赖的安全性只能靠人读公告描述：
+
+            CVE-2026-55405 (7.6)  MariaDB 与 **pgvector** embedding store 的元数据过滤
+                                 拼 SQL 造成注入。描述给的修复点是
+                                 1.2.1-beta8 / 1.5.1-beta11 / 1.11.8-beta19 / 1.16.3-beta26，
+                                 本工程改动前(1.18.1-beta28)与改动后(1.20.0-beta30)
+                                 都晚于 1.16.3-beta26 那条线 → 两版都不受影响。
+            CVE-2025-21604 (6.9)  是 **LangChain4j-AIDeepin**——另一个项目，不适用。
+
+          也就是说升级前后都不会因为这条而变红或变绿，**这次升级没有引入已知漏洞**，
+          但这个结论不是扫描器给的。同理见 README「依赖安全」里 Dependabot 覆盖面的那一段。
         -->
         <langchain4j.version>1.20.0</langchain4j.version>
         <langchain4j.beta.version>1.20.0-beta30</langchain4j.beta.version>
