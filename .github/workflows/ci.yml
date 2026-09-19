@@ -257,13 +257,27 @@ jobs:
         run: ruff format --check benchmark scripts
       - name: Lint
         run: ruff check benchmark scripts
+      # 下面两步都先断言"发现了多少条测试"再跑。
+      #
+      # `unittest discover` 在**一条测试都没发现**时同样以 0 退出：改了测试文件命名、
+      # 动了目录、包名写错，这一步就会绿着通过而**什么都没跑**。
+      # "检查绿着、被检查的事没发生"——本仓库已经在这上面栽过两次，
+      # 两次都记在 `scripts/test_classify_dependency_scan.py` 开头。
       - name: Run benchmark protocol tests
-        run: python -m unittest discover -s benchmark -p 'test_*.py'
+        run: |
+          found=$(python -c "import unittest; print(unittest.defaultTestLoader.discover('benchmark', pattern='test_*.py').countTestCases())")
+          [ "$found" -gt 0 ] || { echo "::error::benchmark 下一共发现 0 条测试——这一步什么都没跑，不能报通过"; exit 1; }
+          echo "benchmark：发现 $found 条测试"
+          python -m unittest discover -s benchmark -p 'test_*.py'
       - name: Run script unit tests
         # 依赖扫描的分类器在这里被测试。它曾经把「真发现漏洞」误报成
         # 「数据源挂了」，回归用例在 scripts/test_classify_dependency_scan.py。
         working-directory: scripts
-        run: python -m unittest discover -s . -p 'test_*.py'
+        run: |
+          found=$(python -c "import unittest; print(unittest.defaultTestLoader.discover('.', pattern='test_*.py').countTestCases())")
+          [ "$found" -gt 0 ] || { echo "::error::scripts 下一共发现 0 条测试——这一步什么都没跑，不能报通过"; exit 1; }
+          echo "scripts：发现 $found 条测试"
+          python -m unittest discover -s . -p 'test_*.py'
       - name: Check repository text conventions
         run: python scripts/check_text_conventions.py
 

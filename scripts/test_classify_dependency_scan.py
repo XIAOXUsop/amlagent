@@ -12,6 +12,8 @@
 
 from __future__ import annotations
 
+import contextlib
+import io
 import tempfile
 import unittest
 from pathlib import Path
@@ -19,7 +21,9 @@ from pathlib import Path
 from classify_dependency_scan import (
     CACHEABLE_VERDICTS,
     MESSAGES,
+    blocking_findings,
     classify,
+    findings_summary,
     main,
     message_for,
 )
@@ -207,6 +211,110 @@ class MessageTests(unittest.TestCase):
         """数据源失败最容易被误读成「扫过了，没问题」——两种说法都要堵住。"""
         for log in (NO_KEY_RATE_LIMIT_LOG, RATE_LIMITED_LOG):
             self.assertIn("没有检查任何依赖", message_for("data-source", log))
+
+
+# 节选自 2026-09-19 的真实 job 日志（apply 之后同一份格式）。
+# 关键在于它**同时**含同一个依赖的两种形态：
+#   · 上半部分的 `Identified` 行——只有 CVE 号、**没有分数**，不是阻断项
+#   · 下半部分的 `[ERROR]` 行——带 `(9.8)` 这样的分数，才是阻断项
+# 只按「含 CVE 且含 pkg:maven」去数，会把前者也数进去，条数直接翻倍。
+REAL_FINDINGS_LOG = """\
+[INFO] spring-core-6.2.19.jar (pkg:maven/org.springframework/spring-core@6.2.19, cpe:2.3:a:vmware:spring_framework:6.2.19:*:*:*:*:*:*:*): CVE-2026-47884, CVE-2026-47890, CVE-2026-47885
+[INFO] spring-data-jpa-3.5.13.jar (pkg:maven/org.springframework.data/spring-data-jpa@3.5.13, cpe:2.3:a:vmware:spring_data_jpa:3.5.13:*:*:*:*:*:*:*): CVE-2026-47834
+[ERROR] One or more dependencies were identified with vulnerabilities that have a CVSS score greater than or equal to '7.0':
+[ERROR]
+[ERROR] mysql-connector-j-9.7.0.jar (pkg:maven/com.mysql/mysql-connector-j@9.7.0, cpe:2.3:a:oracle:mysql_connector\\/j:9.7.0:*:*:*:*:*:*:*): CVE-2026-60586(7.7), CVE-2026-60623(7.1)
+[ERROR] spring-core-6.2.19.jar (pkg:maven/org.springframework/spring-core@6.2.19, cpe:2.3:a:vmware:spring_framework:6.2.19:*:*:*:*:*:*:*): CVE-2026-47884(9.8), CVE-2026-47890(9.8), CVE-2026-47885(7.5)
+[ERROR]
+[ERROR] See the dependency-check report for more details.
+[INFO] BUILD FAILURE
+"""
+
+
+class BlockingFindingsTests(unittest.TestCase):
+    """把「在阻塞什么」从日志里数出来，喂给 CI 的摘要输出。"""
+
+    def test_only_scored_entries_count(self) -> None:
+        """这条是最要紧的：同依赖的无分数行不是阻断项，不能数进去。"""
+        rows = blocking_findings(REAL_FINDINGS_LOG)
+        total = sum(len(cves) for _, _, cves in rows)
+        self.assertEqual(total, 5, "3 + 2，而不是把上半部分那 3 条无分数行也算一遍")
+
+    def test_sub_threshold_only_dependency_is_not_blocking(self) -> None:
+        """spring-data-jpa 只出现在「Identified」里、分数低于阈值——它不是阻断项。
+
+        这条是拿 2026-09-19 的真实日志核过的：那份日志里
+        `spring-data-jpa-3.5.13.jar … : CVE-2026-47834` 确实没有分数。
+        把它数进去会凭空多报一个"受影响依赖"，而 README 明确记着
+        这 8 条分数低于阈值、不阻断。
+        """
+        self.assertNotIn(
+            "spring-data-jpa",
+            "\n".join(findings_summary(REAL_FINDINGS_LOG)),
+        )
+
+    def test_grouped_by_coordinate_and_version(self) -> None:
+        rows = blocking_findings(REAL_FINDINGS_LOG)
+        self.assertEqual(
+            [(ga, ver) for ga, ver, _ in rows],
+            [("org.springframework/spring-core", "6.2.19"), ("com.mysql/mysql-connector-j", "9.7.0")],
+        )
+
+    def test_sorted_by_highest_score(self) -> None:
+        rows = blocking_findings(REAL_FINDINGS_LOG)
+        self.assertEqual(rows[0][2][0], ("CVE-2026-47884", 9.8))
+        scores = [cves[0][1] for _, _, cves in rows]
+        self.assertEqual(scores, sorted(scores, reverse=True))
+
+    def test_duplicate_lines_do_not_double_count(self) -> None:
+        """同一 (坐标,版本) 重复出现时按 CVE 去重，且分数取最大值。"""
+        twice = REAL_FINDINGS_LOG + "\n".join(
+            [
+                "[ERROR] spring-core-6.2.19.jar (pkg:maven/org.springframework/spring-core@6.2.19):"
+                " CVE-2026-47884(1.0), CVE-2026-99999(8.0)",
+            ]
+        )
+        rows = dict(((ga, ver), cves) for ga, ver, cves in blocking_findings(twice))
+        cves = dict(rows[("org.springframework/spring-core", "6.2.19")])
+        self.assertEqual(cves["CVE-2026-47884"], 9.8, "重复项里的低分不得覆盖高分")
+        self.assertIn("CVE-2026-99999", cves)
+
+    def test_clean_log_yields_no_summary_at_all(self) -> None:
+        """解析不出条目时返回空——**不打印「阻塞 0 条」**，那会被读成「没有阻断项」。"""
+        self.assertEqual(findings_summary(RATE_LIMITED_LOG), [])
+        self.assertEqual(findings_summary(UNKNOWN_LOG), [])
+
+    def test_summary_states_the_total_and_the_top_score(self) -> None:
+        text = "\n".join(findings_summary(REAL_FINDINGS_LOG))
+        self.assertIn("阻塞 5 条", text)
+        self.assertIn("org.springframework/spring-core@6.2.19 — 3 条（最高 9.8）", text)
+        self.assertIn("com.mysql/mysql-connector-j@9.7.0 — 2 条（最高 7.7）", text)
+
+    def test_short_cve_lists_are_listed_in_full(self) -> None:
+        """3 条就全列出来——截断只在真的长的时候用。"""
+        text = "\n".join(findings_summary(REAL_FINDINGS_LOG))
+        self.assertIn("CVE-2026-47884、CVE-2026-47890、CVE-2026-47885", text)
+        self.assertNotIn("等 3 条", text)
+
+    def test_long_cve_lists_are_truncated(self) -> None:
+        """spring-core 那种一次 12 条的要收着写，否则注解长得没法读。"""
+        many = "[ERROR] x.jar (pkg:maven/g/a@1): " + ", ".join(f"CVE-2026-{10000 + i}(9.8)" for i in range(12))
+        text = "\n".join(findings_summary(REAL_FINDINGS_LOG + many))
+        self.assertIn("g/a@1 — 12 条（最高 9.8）", text)
+        self.assertIn("等 12 条", text)
+
+    def test_main_prints_the_summary_only_for_findings(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            good = Path(tmp) / "findings.log"
+            good.write_text(REAL_FINDINGS_LOG, encoding="utf-8")
+            bad = Path(tmp) / "rate.log"
+            bad.write_text(RATE_LIMITED_LOG, encoding="utf-8")
+            for name, expect in ((good, True), (bad, False)):
+                with self.subTest(log=name.name):
+                    buffer = io.StringIO()
+                    with contextlib.redirect_stdout(buffer):
+                        self.assertEqual(main(["classify_dependency_scan.py", str(name)]), 0)
+                    self.assertEqual("阻塞" in buffer.getvalue(), expect)
 
 
 if __name__ == "__main__":
