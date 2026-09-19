@@ -367,9 +367,22 @@ public class ExecutionLease {
 
 ### 9.8 连接恢复与健康告警（最近加固）
 
-- `StreamHealthMonitor` 每 10s 跑 `probeLag()`：连接中断立即重建容器；lag 持续超标先告警、超恢复阈值强制重建。
+- `StreamHealthMonitor` 每 **15s** 跑 `probeLag()`（`aml.queue.health-probe-seconds`，
+  代码默认 15、`application.yml` 也是 `${AML_QUEUE_HEALTH_PROBE_SECONDS:15}`；
+  首轮另有 `health-initial-delay-seconds` = 5s 的初始延迟）：
+  连接中断立即重建容器；lag 持续超标先告警、超恢复阈值强制重建。
 - `StreamConsumptionTracker` 记录 ACK 计数，判定"stream 有积压但消费不推进"=停摆。
-- 指标：`aml_queue_lag`（Gauge）/ `aml_queue_consumer_error_down` / `aml_queue_consumer_error_total`。
+- 指标：`aml_queue_lag`（Gauge）/ `aml_queue_consumer_error_total` / `aml_queue_consumer_down_total`。
+
+> ⚠️ 2026-09-19 更正两处：
+>
+> 1. 上面原写「每 **10s**」——**从引入起就是 15**，不是后来改的
+>    （`git log -S "healthProbeSeconds = 10"` 指不到任何改动）。
+>    同一处错误在 `INTERVIEW.md` 里也有，一并改了。
+> 2. 原写的 `aml_queue_consumer_error_down` **这个指标不存在**——是把两个名字
+>    揉在了一起。实际是 `aml_queue_consumer_error_total`（错误计数）与
+>    `aml_queue_consumer_down_total`（消费者不可用计数）。
+>    这两个名字 grep 一下 `MetricsRecorder` 就能核。
 
 > 面试点：真实故障——Docker 重启导致 Redis 连接中断后消费者停摆、消息堆积、工单不执行；加固后自动重建消费者容器（自愈），恢复后正常消费执行。
 
