@@ -981,8 +981,25 @@ python benchmark/fault_demo.py
 - **成本路由**：`CostRouter` 仅用复杂度决定是否附加确定性报告流；请求侧预警文本不能触发 `RULE_ONLY`，所有业务工单均执行主 Agent。零 LLM 分支将在引入服务端签名的受信路由元数据后再开放。
 
 ### CI 评测回归（.github/workflows/ci.yml）
-- `unit-test` job：push/PR 自动跑确定性单元测试与规则回归（无需模型/网络）
-- `integration-test` job：`workflow_dispatch` 手动触发，service 容器启动 MySQL/Redis/pgvector 跑集成测试
+
+**7 个 job，全部在 push / PR 上自动跑**（另有每天 `23 2 * * *` 的定时跑与手动触发）。
+**没有哪个 job 是"只能手动"的。**
+
+> 这里此前写的是「`integration-test` job：`workflow_dispatch` 手动触发」，**那是错的**：
+> 该 job 没有 `if:` 门禁，与其余 6 个一样随 push/PR 触发。2026-09-19 核对过
+> 最新一次 push 的运行记录——`Integration Tests` 与 `Playwright E2E` 都真的
+> `Initialize containers` 并跑完了测试，不是跳过式通过。
+> 写错的方向是**低估**（把自动的说成手动的），但同样是错的。
+
+| job | 跑什么 |
+|---|---|
+| Backend Quality Gate | `./mvnw verify -Dgroups='!integration'`——确定性单元测试与规则回归，无需模型/网络；**`integration` 标签默认排除** |
+| Integration Tests | `./mvnw -Pintegration-test test`，起真实 service 容器（MySQL / Redis / pgvector）。`needs: unit-test`，前面挂了就不跑 |
+| Playwright E2E | 起真实后端 + 浏览器跑端到端 |
+| Frontend Test & Build | 前端测试 + `vue-tsc` + Vite 生产构建 |
+| Backend Dependency Vulnerability Scan | OWASP dependency-check，CVSS ≥ 7 阻断。**当前是红的**——原因与逐条依据见上文「依赖安全」，不是工具故障 |
+| Python Script Quality Gate | `ruff format --check` / `ruff check` / 脚本单元测试 / 仓库文本规范 |
+| Secret Scan | 无依赖的密钥扫描（纯 grep，不引第三方服务、不需要 token） |
 
 ## 项目亮点（可写进简历）
 
