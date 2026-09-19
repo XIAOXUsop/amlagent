@@ -44,7 +44,7 @@ jobs:
       - name: Verify formatting, tests and static analysis
         run: cd backend && ./mvnw verify -Dgroups='!integration'
       - name: Upload backend coverage report
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: backend-jacoco-report
           path: backend/target/site/jacoco
@@ -55,7 +55,7 @@ jobs:
       # 只传本 job 真实产出的那一份——集成回归的 XML 在 `integration-test` job 里，
       # 那份由它自己上传（这里带上会因找不到文件而 error）。
       - name: Upload backend surefire reports
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: backend-surefire-reports
           path: backend/target/surefire-reports/TEST-*.xml
@@ -99,7 +99,7 @@ jobs:
       - name: Run unit tests
         run: cd frontend && npm run test:coverage
       - name: Upload frontend coverage report
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: frontend-coverage-report
           path: frontend/coverage
@@ -110,7 +110,7 @@ jobs:
       - name: Produce machine-readable test report
         run: cd frontend && npm run test:json
       - name: Upload frontend vitest report
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: frontend-vitest-report
           path: frontend/.reports/vitest.json
@@ -255,7 +255,7 @@ jobs:
           key: ${{ steps.nvd-key.outputs.key }}
       - name: Upload dependency scan report
         if: ${{ failure() }}
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: dependency-scan-report
           path: |
@@ -403,7 +403,7 @@ jobs:
       # README 的集成回归那一行从这些 XML 读出，交给 readme-numbers job 比对
       - name: Upload integration surefire reports
         if: ${{ always() }}
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: backend-integration-surefire-reports
           path: backend/target/surefire-reports-integration/TEST-*.xml
@@ -498,7 +498,7 @@ jobs:
       # 失败时把后端日志、前端截图与 trace 一起留下——没有这些，"CI 挂了"只能靠猜
       - name: Upload E2E diagnostics
         if: ${{ failure() }}
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: e2e-diagnostics
           path: |
