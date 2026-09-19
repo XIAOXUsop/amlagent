@@ -9,6 +9,13 @@
 修复版本要么还没发布（spring-framework 6.2.20 / spring-security 6.5.12 /
 spring-data-jpa 3.5.14），要么根本不存在（mysql-connector-j 9.7.1）。
 
+> ⚠️ **口径说明（2026-09-19 补）**：这里说的是**需要处置的** 16 条（12 + 2 + 2）。
+> 扫描器实际打印的是 **17 条**——多出来的那条是 `pgvector` 的
+> `CVE-2026-18022`，已判定为误报（依据是 NVD 原文里的 `target_sw: postgresql`，
+> 见 README「依赖安全」一节），但**没有落成豁免规则，所以它仍然算在阻断里**。
+> 两个数都对，指的是不同的东西；README 那节也是这么分开写的。
+> 下面"清掉 14 条"说的是那 16 条里的 14 条。
+
 同时实测过另一条线：**Spring Boot 4.1.1 带 spring-framework 7.0.9 与
 spring-security 7.1.1，逐条比对 NVD 受影响区间后是 0/12 与 0/2**——
 也就是说 Boot 4 能清掉 16 条里的 **14 条**（只剩 mysql-connector-j 那 2 条）。
@@ -62,8 +69,26 @@ Boot 4.1.1 换掉的坐标（对比 3.5.16 的 BOM 属性）：
 ```
 主代码  37 个文件      ObjectMapper 31 处 / JsonProcessingException 21 处 /
                       JsonNode 9 处 / TypeReference 4 处 / ObjectNode 2 处 …
-测试代码 32 个文件
+测试代码 33 个文件
 ```
+
+> ⚠️ **2026-09-19 复核：主代码 37 对，测试那行原先是 32，实际是 33。**
+>
+> 数法是"文件内容里出现 `com.fasterxml.jackson` 就算一个"，
+> 在**本文档落库的那个提交**（`e0bdca2`）上数是 **37 / 33**，与当前工作区一致——
+> 也就是说这不是后来涨上去的，是当时就少写了一个。
+> 复算命令（在 `backend/` 下）：
+>
+> ```bash
+> grep -rl "com\.fasterxml\.jackson" src/main/java --include=*.java | wc -l   # 37
+> grep -rl "com\.fasterxml\.jackson" src/test/java --include=*.java | wc -l   # 33
+> ```
+>
+> **主代码那行后面括号里的"31 处 / 21 处 / …"没有复核**：那显然是另一种更窄的口径
+> （按模块数符号出现次数是 103 / 55 / 88 / 12 / 8，对不上），
+> 我没有找到与之对应的算法，**不去改一个自己也无法确证的数字**。
+> 但结论不依赖那几个数——它依赖的是"主代码 37 个文件直接用 Jackson 2"这个量级，
+> 而这一条已核实。
 
 **Boot 4 不再提供 Jackson 2。** 实测依赖树：Boot 4 下 `com.fasterxml.jackson.core:jackson-databind`
 只会**因为 `io.jsonwebtoken:jjwt-jackson` 而被顺带带上 classpath**。
