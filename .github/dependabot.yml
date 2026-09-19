@@ -5,6 +5,32 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
+    # 这一节里有**两组必须成对动的**，Dependabot 一律当独立 PR 提，不能逐个合：
+    #
+    # ── 一、langchain4j 的稳定线与 beta 线 ──────────────────────────────
+    #
+    #   #2  langchain4j               1.18.1 → 1.19.0
+    #   #8  langchain4j.beta.version  1.18.1-beta28 → 1.20.0-beta30
+    #
+    # 两个都合会把两条线**错开**（稳定线停 1.19.0、beta 线到 1.20.0），
+    # 而 core 与 starter/pgvector 必须同版。配对判据很明确：两边版本号里的数字相同。
+    # 已按最新配对一起升到 `1.20.0` + `1.20.0-beta30`。下次再提时照同一条规矩配。
+    #
+    # ── 二、springdoc 与 Spring Boot 的大版本 ──────────────────────────
+    #
+    #   #17  springdoc-openapi 2.8.14 → 3.1.0
+    #   #12  spring-boot-starter-parent 3.5.16 → 4.1.1
+    #
+    # 实测两个 springdoc 的 parent（repo1.maven.org 上的 pom）：
+    #
+    #     springdoc-openapi:2.8.14  →  parent 是 spring-boot-starter-parent:3.5.7
+    #     springdoc-openapi:3.1.0   →  parent 是 spring-boot-starter-parent:4.1.0
+    #
+    # 也就是说 **springdoc 3.x 是面向 Spring Boot 4 编译的**。本仓库现在在 3.5.16 上，
+    # 单独合 #17 会让 OpenAPI 那条链路整体不兼容。
+    # 它和 #12 是同一件事的两半：**要么一起走 Boot 4 迁移，要么都别动。**
+    # 迁移的价值见 README「依赖安全」——那里逐条算过，走 Boot 4 能清掉
+    # 当前 16 条阻断漏洞里的 14 条。代价是 Jakarta EE 11 / Tomcat 11 / Jackson 3。
 
   - package-ecosystem: npm
     directory: /frontend
