@@ -167,7 +167,7 @@ jobs:
         run: echo "key=nvd-data-$(date -u +%Y-%m-%d)" >> "$GITHUB_OUTPUT"
       - name: Restore NVD data
         id: nvd-restore
-        uses: actions/cache/restore@v5
+        uses: actions/cache/restore@v6
         with:
           path: ~/.m2/dependency-check-data
           key: ${{ steps.nvd-key.outputs.key }}
@@ -249,7 +249,7 @@ jobs:
           && steps.nvd-restore.outputs.cache-hit != 'true'
           && (steps.scan.outputs.verdict == 'pass' || steps.scan.outputs.verdict == 'findings')
         continue-on-error: true
-        uses: actions/cache/save@v5
+        uses: actions/cache/save@v6
         with:
           path: ~/.m2/dependency-check-data
           key: ${{ steps.nvd-key.outputs.key }}
