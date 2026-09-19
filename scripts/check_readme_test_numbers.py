@@ -18,6 +18,18 @@ README 里那张「最近一次本机验证」表，**数字是手抄的**。202
   （同 `test_summary.py` 的取舍）。
 * 产物不存在时**不报 0**，而是跳过那一层的比对并说明——「没跑」与「跑了 0 项」
   是两件事，把后者写成前者正是这类检查最容易骗人的地方。
+
+── 一条已知的环境差异（2026-09-19 实测）────────────────────────
+
+集成回归那行**本机与 CI 不一致，这是预期的，不是文档漂了**：
+`RagSecurityAndPipelineIntegrationTest#comparesDenseLexicalHybridAndRerankPipelines`
+用 `assumeTrue(reranker.isAvailable())` 守着——装了 bge 精排模型的机器上它真跑（44/44、0 跳过），
+CI 上没有模型文件，它被跳过（43/44、1 跳过）。而 README 里这一行**取的是 CI 的数字**，
+理由是 CI 才是任何人都能翻出来复现的环境。
+
+后果：**在装了模型的机器上跑本脚本，会得到一条虚假的「README 不一致」**。
+这不是本脚本能自己判断的事（它只看得见本机产物），所以写在这里；
+真要跑，请以 CI 上那次运行的结果为准。
 """
 
 from __future__ import annotations
