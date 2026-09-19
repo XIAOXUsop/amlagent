@@ -27,9 +27,27 @@
 
     <properties>
         <java.version>21</java.version>
-        <!-- LangChain4j：core 稳定版与 starter/pgvector 的 beta 发布线对齐 -->
-        <langchain4j.version>1.18.1</langchain4j.version>
-        <langchain4j.beta.version>1.18.1-beta28</langchain4j.beta.version>
+        <!--
+          LangChain4j：**core 稳定线与 starter/pgvector/embeddings 的 beta 线必须同版**。
+
+          两边的版本号是同一个数字加不同的后缀（`1.20.0` ↔ `1.20.0-beta30`），
+          所以"对齐"这件事有明确的判据，不用凭感觉。实测各构件的可用版本：
+
+            dev.langchain4j:langchain4j                  1.19.0 … 1.19.3, 1.20.0
+            dev.langchain4j:langchain4j-spring-boot-starter
+            dev.langchain4j:langchain4j-pgvector         1.19.0-beta29 … 1.19.3-beta29,
+                                                         1.20.0-beta30
+
+          ⚠️ Dependabot 为此开了**两个 PR，而它们的版本互相不配对**：
+          core 提的是 1.19.0、beta 提的是 1.20.0-beta30。**两个都合会把两条线错开**
+          （稳定线停在 1.19.0、beta 线到 1.20.0），正是这里要避免的情况。
+          所以本轮按**最新配对**一起升到 `1.20.0` + `1.20.0-beta30`。
+
+          这不是"猜哪个对"——两边版本号里的数字相同就是配对，`1.19.0` 与
+          `1.20.0-beta30` 不是。
+        -->
+        <langchain4j.version>1.20.0</langchain4j.version>
+        <langchain4j.beta.version>1.20.0-beta30</langchain4j.beta.version>
         <spring-javaformat.version>0.0.48</spring-javaformat.version>
         <spotbugs-maven-plugin.version>4.10.4.1</spotbugs-maven-plugin.version>
         <jacoco.version>0.8.15</jacoco.version>
