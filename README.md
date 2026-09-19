@@ -4,7 +4,7 @@
 
 ![Java](https://img.shields.io/badge/Java-21-orange?logo=openjdk&logoColor=white)
 ![Spring Boot](https://img.shields.io/badge/Spring_Boot_3.5-6DB33F?logo=spring-boot&logoColor=white)
-![LangChain4j](https://img.shields.io/badge/LangChain4j_1.18-4A9EFF)
+![LangChain4j](https://img.shields.io/badge/LangChain4j_1.20-4A9EFF)
 ![Vue 3](https://img.shields.io/badge/Vue_3-42B883?logo=vuedotjs&logoColor=white)
 ![PostgreSQL+pgvector](https://img.shields.io/badge/pgvector-4169E1?logo=postgresql&logoColor=white)
 ![Prometheus](https://img.shields.io/badge/Prometheus-E6522C?logo=prometheus&logoColor=white)
@@ -149,7 +149,7 @@ $env:RUN_LIVE_AGENT_EVAL = "true"
 
 | 层级 | 选型 |
 |---|---|
-| Agent 框架 | Spring Boot 3.5 + LangChain4j 1.18（AiServices + @Tool 并行调用） |
+| Agent 框架 | Spring Boot 3.5 + LangChain4j 1.20（AiServices + @Tool 并行调用） |
 | 大模型 | 多提供商可配置：DeepSeek / 通义千问 / OpenAI / Claude / Mock |
 | 向量库（RAG） | PostgreSQL 16 + pgvector（法规条文向量检索） |
 | 业务存储 | MySQL 8（工单、工作流日志）+ Redis 7 |
@@ -1044,3 +1044,10 @@ python benchmark/fault_demo.py
 | `*.log` `.idea/` `.vscode/` | 日志与 IDE 配置 |
 
 </details>
+
+## License
+
+[MIT](LICENSE) © 2026 XIAOXUsop
+
+> 2026-09-19 补：这一节此前**没有**——仓库里有 `LICENSE` 文件（MIT），但 README 从头到尾
+> 一次都没提过它，而同族的另外六个仓库都写了。措辞与它们保持一致。
