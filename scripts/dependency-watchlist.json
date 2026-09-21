@@ -1,0 +1,61 @@
+{
+  "_comment": [
+    "依赖安全门禁里**当前被阻断**的那些 CVE，按依赖归并。",
+    "",
+    "为什么要有这份清单：门禁红着的时候，最常被问的是「上游发修复版了没有」。",
+    "这个问题此前只能靠人一次次去 NVD 查区间、再去 Central 翻版本列表——重复、易漏、",
+    "而且答案会随时间变。`scripts/check_dependency_fix_availability.py` 读这份清单，",
+    "对每个依赖回答一句话：Central 上有没有一个版本能绕开这些 CVE 的全部受影响版本。",
+    "",
+    "它**只读**：不改 pom、不改版本、不发 PR。清单本身要人维护——",
+    "上游真的发了修复版、并且升级验证通过之后，对应条目才从这里移走。",
+    "",
+    "counts 是记下这份清单时的阻断条数，供脚本与 README 对账用；",
+    "数字对不上多半意味着有新的 CVE 进来而没人更新这里，脚本会说出来。",
+    "",
+    "来源：README「依赖安全」一节与 backend/pom.xml 的注释（2026-09-21 整理）。"
+  ],
+  "entries": [
+    {
+      "group": "org.springframework",
+      "artifact": "spring-core",
+      "line": "6.2.x",
+      "counts": 12,
+      "cves": [
+        "CVE-2026-47884",
+        "CVE-2026-47885",
+        "CVE-2026-47886",
+        "CVE-2026-47888",
+        "CVE-2026-47889",
+        "CVE-2026-47890",
+        "CVE-2026-47891",
+        "CVE-2026-47892",
+        "CVE-2026-47893",
+        "CVE-2026-59282",
+        "CVE-2026-59283",
+        "CVE-2026-59313"
+      ]
+    },
+    {
+      "group": "org.springframework.security",
+      "artifact": "spring-security-core",
+      "line": "6.5.x",
+      "counts": 2,
+      "cves": ["CVE-2026-59270", "CVE-2026-47841"]
+    },
+    {
+      "group": "com.mysql",
+      "artifact": "mysql-connector-j",
+      "line": "9.x",
+      "counts": 2,
+      "cves": ["CVE-2026-60586", "CVE-2026-60623"]
+    },
+    {
+      "group": "com.pgvector",
+      "artifact": "pgvector",
+      "line": "0.1.x",
+      "counts": 1,
+      "cves": ["CVE-2026-18022"]
+    }
+  ]
+}
