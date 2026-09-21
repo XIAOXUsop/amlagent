@@ -512,6 +512,19 @@ python scripts/test_summary.py --markdown   # 可直接贴进文档
 CI 上没有模型文件，就是上表的 **43/44、1 跳过**。这里取 **CI 的数字**，因为 CI 是任何人都能
 翻出来复现的那个环境；本机的「44/44」换台机器就不成立。
 
+> **2026-09-21 在本机把这条路径完整跑通了一次**（提交 `fe40977`，Windows 11 + JDK 21 +
+> Docker Desktop 的 Linux 容器）：三个依赖容器起在 3307 / 5433 / 6379，
+> `scripts/integration_report.py --preflight` 三个都 [OK]；集成回归
+> **44 项全通过、0 跳过、0 失败**；后端以 `SPRING_PROFILES_ACTIVE=test` +
+> `AML_LLM_ACTIVE_PROVIDER=mock` + `AML_RAG_RERANK_ENABLED=false` 启动，
+> **不联外网、不需要任何模型 Key**（启动日志：`rerank 已禁用（aml.rag.rerank.enabled=false），
+> 跳过模型加载`），9.7 秒起来，`/actuator/health` 返回 `{"status":"UP"}`；
+> 随后 `npx playwright test` **8/8 通过**。跑完 `docker compose stop` 停容器，
+> **数据卷保留不删**。
+>
+> 这一组与上表第 2 行的差别（44/44 vs 43/44）**正是上面说的那个环境差异**：
+> 本机装了 bge 精排模型，A/B 那一项真的跑了，所以这一行在本机是满的。
+
 > **集成回归现在全绿：44 项里 43 通过、1 项按上面前置条件跳过，0 失败。** 本轮开始时它是 43 项里 19 项失败，
 > 逐簇查下来是三个互相独立的原因——都不是"测试发现了真问题"：
 >
