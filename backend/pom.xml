@@ -176,8 +176,9 @@
           驱动类名仍是 `com.mysql.cj.jdbc.Driver`，字节码版本 52（Java 8+），
           对 Java 21 与 MySQL 8.0 服务端都成立。
 
-          **「清掉了」的判据是扫描结果里这两条不再出现**，不是这次改动的推断——
-          要等 CI 的 dependency-check 跑完确认；在那之前 README 里按"待确认"写。
+          **「清掉了」的判据是扫描结果里这两条不再出现**，不是这次改动的推断。
+          已验证：2026-09-21 CI（提交 `12b145a`）的分类器输出从 **17 条降到 15 条**，
+          且 `com.mysql/mysql-connector-j` 整条从归并结果里消失。
         -->
         <mysql.version>26.7.0</mysql.version>
     </properties>
