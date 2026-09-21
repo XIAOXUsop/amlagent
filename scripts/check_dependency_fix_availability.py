@@ -299,9 +299,12 @@ def judge(entry: dict, cache: dict[str, AffectedSet]) -> Verdict:
         #
         # 能确凿检查的是**条目内部**的一致性（声明的条数 vs 实际列出的 CVE），
         # 那就把它检查掉，而不是继续留一句做不到的声明。
-        return Verdict(**base, status="unknown",
-                       detail=f"清单里 counts={base['counts']} 与列出的 {len(cves)} 条 CVE 对不上——"
-                              "要么漏列了 CVE，要么那条已经清掉却没删干净")
+        return Verdict(
+            **base,
+            status="unknown",
+            detail=f"清单里 counts={base['counts']} 与列出的 {len(cves)} 条 CVE 对不上——"
+            "要么漏列了 CVE，要么那条已经清掉却没删干净",
+        )
 
     sets: list[AffectedSet] = []
     unknown: list[str] = []
