@@ -585,7 +585,7 @@ cd backend && AML_LLM_ACTIVE_PROVIDER=mock ./mvnw spring-boot:run
 
 ## 持续集成
 
-`.github/workflows/ci.yml` 的 7 个 job：
+`.github/workflows/ci.yml` 的 8 个 job：
 
 | job | 跑什么 | 什么时候 |
 |---|---|---|
@@ -594,7 +594,14 @@ cd backend && AML_LLM_ACTIVE_PROVIDER=mock ./mvnw spring-boot:run
 | Integration Tests | 真实 MySQL / PGVector / Redis 上的迁移、队列与检索回归 | push / PR / 定时 |
 | Playwright E2E | 后端 + 前端 + 浏览器，跑核心业务闭环 | push / PR / 定时 |
 | Secret Scan / Python Quality Gate | 密钥、辅助脚本规范 | push / PR / 定时 |
+| README Test Numbers | 把 README 里写的测试条数与 `scripts/test_summary.py` 的实测对账 | push / PR / 定时 |
 | Backend Dependency Vulnerability Scan | OWASP dependency-check，CVSS ≥ 7 阻断 | push / PR / 定时 |
+
+> 这张表原先写「7 个 job」而只列了 6 行，漏掉的正是 **README Test Numbers**——
+> 而同一份 README 的另一处（「四类失败信号要分清」下面那段引用的就是它）已经在提这个 job 了，
+> 文件里自相矛盾。**这是同一个数字第二次写错**：更早一次是「只列了 2 个（实际 7 个）」。
+> 两次都是**低估**，说明这张表一直是靠人肉同步的。
+> 现在行数与 `ci.yml` 的 `jobs:` 段一致（8 个），**数一遍就能核对**。
 
 **为什么有定时任务**：push/PR 只在有人提交时才跑，而依赖镜像 tag、Flyway 迁移、
 外部依赖的变化与提交无关。一个几周没人动的仓库，门禁可能早就红了却没人知道——

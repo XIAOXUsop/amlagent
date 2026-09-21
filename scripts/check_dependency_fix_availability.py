@@ -289,6 +289,20 @@ def judge(entry: dict, cache: dict[str, AffectedSet]) -> Verdict:
         # 空列表不是"安全"，是"这份清单没在监视任何东西"——不要让它静默通过。
         return Verdict(**base, status="unknown", detail="清单里这个依赖的 cve 列表是空的，没有任何东西可比对")
 
+    if base["counts"] != len(cves):
+        # 条目自身不一致：声明的阻断条数与列出的 CVE 条数对不上。
+        #
+        # 这条检查是补的——清单的 `_comment` 里曾写着「counts …… 供脚本与 README 对账用；
+        # 数字对不上多半意味着有新的 CVE 进来而没人更新这里，**脚本会说出来**」，
+        # 而**代码里没有任何一处比对过它**：脚本不扫描本项目，无从知道 README 里
+        # 当前写的阻断数是多少，那句承诺从写下那天起就不成立。
+        #
+        # 能确凿检查的是**条目内部**的一致性（声明的条数 vs 实际列出的 CVE），
+        # 那就把它检查掉，而不是继续留一句做不到的声明。
+        return Verdict(**base, status="unknown",
+                       detail=f"清单里 counts={base['counts']} 与列出的 {len(cves)} 条 CVE 对不上——"
+                              "要么漏列了 CVE，要么那条已经清掉却没删干净")
+
     sets: list[AffectedSet] = []
     unknown: list[str] = []
     for cve in cves:

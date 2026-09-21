@@ -311,6 +311,24 @@ class TestMain(unittest.TestCase):
         code, _ = self._run(payload, [])
         self.assertEqual(code, 2)
 
+    def test_counts_mismatching_the_cve_list_is_unknown_not_silent(self):
+        """
+        条目里声明的阻断条数与实际列出的 CVE 数对不上时，**必须报出来**。
+
+        清单的 `_comment` 曾声称「counts …… 供脚本与 README 对账用，脚本会说出来」，
+        而代码里从来没有比对过它——脚本不扫描本项目，无从知道 README 里写的当前阻断数。
+        能确凿检查的是条目**内部**的一致性，这条用例把它钉住。
+
+        实测背景（2026-09-22）：mysql-connector-j 那条已经清掉却还留在清单里，
+        于是每周的 dependency-fix-watch 会为一个已修好的依赖报「上游已发布修复版」而变红。
+        """
+        payload = {"entries": [{"group": "g", "artifact": "a", "line": "1.x", "counts": 3,
+                                "cves": ["CVE-2026-0001"]}]}
+        code, output = self._run(payload, [])
+
+        self.assertEqual(code, 2, output)
+        self.assertIn("对不上", output)
+
     def test_fail_on_available_exits_three(self):
         payload = {
             "entries": [{"group": "g", "artifact": "a", "line": "6.2.x", "counts": 1, "cves": ["CVE-2026-0001"]}]
