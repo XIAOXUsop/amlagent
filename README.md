@@ -445,15 +445,6 @@ docker-compose.yml        MySQL + PostgreSQL(pgvector) + Redis
 
 </details>
 
-## 设计文档
-
-- [Snapshot First 尽调执行模型](docs/architecture/snapshot-first.md)
-- [可靠工作流：Outbox、租约与状态机](docs/architecture/workflow-reliability.md)
-- [企业级 RAG 法规证据服务与运维手册](docs/architecture/enterprise-rag-evidence-service.md)
-- [ADR-005：GraphRAG / Late Interaction 采用门槛](docs/architecture/ADR-005-graphrag-and-late-interaction.md)
-- [隐藏 TEST 盲测协议](docs/evaluation/hidden-test-protocol.md)
-- [Cookie 认证与 CSRF 模型](docs/security/cookie-csrf-model.md)
-
 ## 自动化测试
 
 ```bash

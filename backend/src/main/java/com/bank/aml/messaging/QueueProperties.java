@@ -76,9 +76,7 @@ public class QueueProperties {
      * {@code base * 3^(retry-1)}，由 {@link #maxRetry} 封顶（默认 3）→ <b>5s / 15s / 45s</b></li>
      * </ul>
      *
-     * <p>
-     * 此前这里只写了 {@code delay = base * 2^retry}，把第二条路径漏了—— 而 {@code INTERVIEW.md}
-     * 里写的「指数退避（5s/15s/45s）」说的正是第二条。 两处都没错，错的只是这个注释只描述了一半。2026-09-19 核对时补全。
+     * <p>发布重试与工单处理重试使用不同的退避公式，配置时应分别核对。
      */
     @Min(1)
     private int retryBackoffSeconds = 5;
