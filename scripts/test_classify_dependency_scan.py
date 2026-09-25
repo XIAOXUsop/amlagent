@@ -24,6 +24,7 @@ from classify_dependency_scan import (
     blocking_findings,
     classify,
     findings_summary,
+    findings_annotations,
     main,
     message_for,
 )
@@ -85,6 +86,12 @@ org.owasp.dependencycheck.data.update.exception.UpdateException: Error updating 
 
 
 class ClassifyTests(unittest.TestCase):
+    def test_each_blocked_dependency_can_be_read_as_an_annotation(self) -> None:
+        annotations = findings_annotations(REAL_INCIDENT_LOG)
+        self.assertEqual(len(annotations), 2)
+        self.assertIn("org.apache.opennlp/opennlp-tools@2.5.9", annotations[0])
+        self.assertIn("CVE-2026-82617 (10)", annotations[0])
+
     def test_real_incident_is_classified_as_findings(self) -> None:
         """耗时里的 429 不得把「真发现漏洞」盖成「数据源挂了」。"""
         self.assertEqual(classify(REAL_INCIDENT_LOG), "findings")
