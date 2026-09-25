@@ -76,7 +76,8 @@ public class QueueProperties {
      * {@code base * 3^(retry-1)}，由 {@link #maxRetry} 封顶（默认 3）→ <b>5s / 15s / 45s</b></li>
      * </ul>
      *
-     * <p>发布重试与工单处理重试使用不同的退避公式，配置时应分别核对。
+     * <p>
+     * 发布重试与工单处理重试使用不同的退避公式，配置时应分别核对。
      */
     @Min(1)
     private int retryBackoffSeconds = 5;
