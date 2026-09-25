@@ -68,12 +68,9 @@
 - [目录结构](#目录结构)
 - [API 概览](#api-概览)
 - [关键设计](#关键设计)
-- [设计文档](#设计文档)
 - [自动化测试](#自动化测试)
 - [性能压测与可靠性演示](#性能压测与可靠性演示)
 - [AI 应用工程能力](#ai-应用工程能力)
-- [项目亮点（可写进简历）](#项目亮点可写进简历)
-- [后续优化方向](#后续优化方向)
 
 ## 核心工作流
 
@@ -1077,53 +1074,6 @@ python benchmark/fault_demo.py
 | Python Script Quality Gate | `ruff format --check` / `ruff check` / 脚本单元测试 / 仓库文本规范 |
 | Secret Scan | 无依赖的密钥扫描（纯 grep，不引第三方服务、不需要 token） |
 
-## 项目亮点（可写进简历）
-
-- **可靠 Agent 任务链路**：Transactional Outbox + Redis Streams 消费组 + 租约/心跳/死信/Pending 接管，保证异步尽调任务在应用重启、Worker 并发抢占下不丢失、不重复、可恢复。
-- **Snapshot First 数据一致性**：Agent 推理前一次性冻结客户交易/股权/制裁/法规证据并计算 `sourceDigest`，Agent 工具、Guardrails、规则兜底共享同一份只读快照，杜绝长链路中的时序不一致。
-- **Tool Calling 工程化**：四个领域工具绑定冻结快照，参数做身份/关键词业务校验，记录工具调用轨迹（不落敏感参数明文），支持 LangChain4j 并行工具调用并限制最大工具轮次防死循环。
-- **混合 RAG + Rerank**：PGVector 向量召回 + ILIKE 关键词召回 + RRF 融合 + bge-reranker 精排，法规证据带 `evidenceId` 可端到端追溯；Redis 缓存命中可跳过重复 embedding。
-- **确定性 Guardrails + 分层评测**：配置化风险规则护栏强制修正模型评级；规则回归 / RAG 检索评测 / 独立 Agent DEV-TEST 盲测三层评测体系，冻结清单保证结果可复现。
-- **可观测性与安全**：Micrometer + Prometheus 指标、traceId 全链路透传、JWT HttpOnly Cookie + CSRF、登录限流、Prompt 注入三层防护、生产启动自检与密钥环境变量注入。
-
-## 后续优化方向
-
-- 将 Tool 调用从快照并行执行扩展为真实业务系统的异步多数据源接入。
-- 若未来增加交互式尽调追问，再引入会话级 Memory（最近 N 轮 + 长期摘要）；当前工单式单轮尽调无需为技术展示强行增加会话记忆。
-- 基于 `CostRouter` 增加模型分级路由（简单工单用更快更便宜的模型，复杂工单用强模型）。
-- 将 RAG 关键词召回升级为 PostgreSQL 全文索引（`tsvector` + `GIN`），进一步提升大数据量下的检索性能。
-- 为 SSE 增加断线后的消息补偿/对账机制，保证前端最终状态与后端一致。
-
-
-## Git 提交清单
-
-<details>
-<summary>推送 GitHub 前的文件清单注意事项（.gitignore 已配置）</summary>
-
-| 提交（✅） | 说明 |
-|---|---|
-| `backend/src/main/java/` | 全部后端源码 |
-| `backend/src/main/resources/application.yml` | 主配置（API Key 为占位符，无敏感信息） |
-| `backend/src/test/resources/application-test.yml` | 集成测试配置（无密钥） |
-| `backend/data/legal/` | 法规文档 |
-| `backend/pom.xml` `mvnw` `mvnw.cmd` `.mvn/` | 构建与 Maven Wrapper |
-| `backend/src/test/` | 测试代码 |
-| `frontend/`（排除 node_modules、dist） | 前端源码 |
-| `docker-compose.yml` `prometheus/` | 部署配置 |
-| `.gitignore` `README.md` | 工程文档 |
-
-| 不提交（⛔，已被 .gitignore 排除） | 原因 |
-|---|---|
-| `backend/src/main/resources/application-dev*.yml` | 本地开发覆盖配置（仅保留环境变量占位符） |
-| `backend/target/` | Maven 构建产物 |
-| `frontend/node_modules/` `frontend/dist/` | 依赖与构建产物 |
-| `*.log` `.idea/` `.vscode/` | 日志与 IDE 配置 |
-
-</details>
-
 ## License
 
 [MIT](LICENSE) © 2026 XIAOXUsop
-
-> 2026-09-19 补：这一节此前**没有**——仓库里有 `LICENSE` 文件（MIT），但 README 从头到尾
-> 一次都没提过它，而同族的另外六个仓库都写了。措辞与它们保持一致。
