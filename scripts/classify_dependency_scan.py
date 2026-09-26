@@ -70,8 +70,17 @@ DATA_SOURCE_PATTERNS = (
 RATE_LIMIT_CONTEXT = ("NVD", "HTTP", "status", "Too Many Requests")
 
 FINDINGS_MESSAGE = (
-    "::error::依赖扫描发现达到 CVSS 阈值的依赖漏洞——这是**真的**，"
-    "请查看报告产物（dependency-check-report.html / dependency-scan.log）并升级受影响的依赖。"
+    "::error::依赖扫描发现达到 CVSS 阈值的依赖漏洞——这是**真的**，不是工具故障。"
+    "请查看报告产物（dependency-check-report.html / dependency-scan.log）。"
+    # 这一行曾用「警告三角」emoji 开头（U+26A0 + U+FE0F），但那是 GBK 编不出的字符——
+    # 在没有 `PYTHONIOENCODING=utf-8` 的 Windows 默认终端下，打印这句会直接
+    # 抛 UnicodeEncodeError，**把「扫出漏洞」这条最该被看到的结论变成一次崩溃**。
+    # 换成纯 ASCII 的 `[warning]`，语义一样、编码不再是变量。
+    # （这里故意不写出那个字符本身：一旦写进来，任何「扫全文件找不可编码字符」的
+    #   检查都会在注释里命中它，产生一条假的告警。）
+    "[warning] 但**不要看到红就升版本**：本仓库有一批阻断项的修复版本上游**还没发布**，"
+    "逐条依据与处理原则写在 README「依赖安全」一节和 `backend/pom.xml` 的注释里。"
+    "先查受影响区间再决定升不升，也不要为了让它变绿而随手加豁免。"
 )
 DATA_SOURCE_MESSAGE = (
     "::error::依赖扫描未能完成：漏洞库数据源不可用。这**不是**发现依赖漏洞，"
@@ -148,9 +157,79 @@ def _append_github_output(path: str, verdict: str) -> None:
         handle.write(f"verdict={verdict}\n")
 
 
+# dependency-check 打印的阻断项形如：
+#   [ERROR] spring-core-6.2.19.jar (pkg:maven/org.springframework/spring-core@6.2.19,
+#           cpe:2.3:a:vmware:spring_framework:6.2.19:*:…): CVE-2026-47884(9.8), CVE-2026-47892(9.8)
+# 只取 `pkg:maven/<坐标>@<版本>` 与带括号分数的 CVE。**带分数**这个条件很关键：
+# 同一个依赖在日志上半部分还会以「Identified」的形态再出现一次（只有 CVE 号、没有分数），
+# 那两处都会被这条正则命中，靠"必须有分数"把非阻断的那批排除掉。
+_MVN_COORD = re.compile(r"pkg:maven/([^@,)\s]+)@([^,)\s]+)")
+_CVE_WITH_SCORE = re.compile(r"(CVE-\d{4}-\d+)\((\d+(?:\.\d+)?)\)")
+
+
+def blocking_findings(log: str) -> list[tuple[str, str, list[tuple[str, float]]]]:
+    """把日志里**已被判为阻断**的那些条目解析出来。
+
+    这里不重新计算任何东西——CVSS 分数、受影响与否都是 dependency-check 已经给出的结论，
+    本函数只做"把日志里的信息整理成人一眼能看懂的形式"。所以它出错的方式是**解析漏**
+    （少列几条），而不是**判断错**；这也正是下面 `findings_summary` 会对条数做校验的原因。
+
+    返回 `[(group:artifact, version, [(cve, score), …]), …]`，按最高分降序。
+    """
+    merged: dict[tuple[str, str], dict[str, float]] = {}
+    for line in log.splitlines():
+        coord = _MVN_COORD.search(line)
+        if coord is None:
+            continue
+        cves = _CVE_WITH_SCORE.findall(line)
+        if not cves:
+            continue
+        bucket = merged.setdefault((coord.group(1), coord.group(2)), {})
+        for cve, score in cves:
+            # 同一 (坐标, 版本) 可能在日志里出现多次，按 CVE 去重；
+            # 分数取出现过的最大值，免得被某个低分重复项盖掉。
+            bucket[cve] = max(bucket.get(cve, 0.0), float(score))
+
+    rows = [(ga, ver, sorted(bucket.items(), key=lambda kv: -kv[1])) for (ga, ver), bucket in merged.items()]
+    rows.sort(key=lambda row: (-row[2][0][1], row[0]))
+    return rows
+
+
+def findings_summary(log: str) -> list[str]:
+    """把阻断项按依赖归并成几行——CI 注释只显示第一行，所以细节放在日志正文里。
+
+    为什么值得加：这段输出原先只说"请升级受影响的依赖"，而本仓库有一批阻断项的
+    修复版本**上游还没发布**，照着那句话做会发现无处可升。把"在阻塞什么"直接印出来，
+    看的人不必先下载 HTML 报告才知道该去读 README 的哪一节。
+    """
+    rows = blocking_findings(log)
+    if not rows:
+        return []
+    total = sum(len(cves) for _, _, cves in rows)
+    lines = [f"阻塞 {total} 条，按依赖归并："]
+    for ga, version, cves in rows:
+        names = "、".join(cve for cve, _ in cves)
+        if len(cves) > 4:
+            names = "、".join(cve for cve, _ in cves[:4]) + f" 等 {len(cves)} 条"
+        lines.append(f"  {ga}@{version} — {len(cves)} 条（最高 {cves[0][1]}）：{names}")
+    return lines
+
+
+def findings_annotations(log: str) -> list[str]:
+    """Expose each blocked dependency in Actions annotations without requiring artifact access."""
+    lines = []
+    for ga, version, cves in blocking_findings(log):
+        details = ", ".join(f"{cve} ({score:g})" for cve, score in cves)
+        lines.append(f"::error title=Dependency vulnerability::{ga}@{version}: {details}")
+    return lines
+
+
 def main(argv: list[str]) -> int:
     args = argv[1:]
     github_output: str | None = None
+    annotations = "--annotations" in args
+    if annotations:
+        args.remove("--annotations")
     if "--github-output" in args:
         index = args.index("--github-output")
         if index + 1 >= len(args):
@@ -184,6 +263,14 @@ def main(argv: list[str]) -> int:
     # `kind=` 这一行是给测试与后续脚本读的，别改格式。
     print(f"kind={kind}")
     print(message_for(kind, log_text))
+    if kind == "findings":
+        # 摘要走普通日志行（`::error::` 注解在 Actions 里只渲染第一行）。
+        # 解析不出条目时**不打印空摘要**——那会让人以为"没有阻断项"。
+        for line in findings_summary(log_text):
+            print(line)
+        if annotations:
+            for line in findings_annotations(log_text):
+                print(line)
     return 0
 
 
