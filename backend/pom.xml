@@ -115,12 +115,13 @@
             spring-data-jpa    3.5.13 落在区间内   → 修复 3.5.14，**未发布**
                                CVE-2026-47834(4.8)——**低于阈值 7，不阻断**，
                                3.5.x 最新就是 3.5.13
-            mysql-connector-j  9.7.0              → **不存在可取的修复版本**
-                               Oracle 公告写明"受影响版本 9.7.0–9.7.1"，
-                               但 9.7.1 在 Central 上根本不存在（9.x 最新就是 9.7.0），
-                               9.7.2 也没有。退回 9.6.0 理论上不在受影响范围，
-                               但那是一次功能降级，而 Oracle 的 CPU 通常在下个季度给出修复版——
-                               先如实记录，不降级。
+            mysql-connector-j  → **已处理**，见下面的 `<mysql.version>`（9.7.0 → 26.7.0）
+                               本行原写作"**不存在可取的修复版本**"，依据是
+                               "9.7.1 在 Central 上根本不存在（9.x 最新就是 9.7.0）"。
+                               **那句话只在 9.x 线上成立**——Oracle 已经改用年份制
+                               版本号，26.7.0（2026-07-29）就是这两条的修复版，
+                               而两条公告发布于 2026-07-21。查出来的是
+                               `scripts/check_dependency_fix_availability.py`。
                                CVE-2026-60586(7.7) / CVE-2026-60623(7.1)
 
           ── 上面这些在 3.5.x 线上无解，但换一条线就有解 ────────────────
@@ -130,9 +131,12 @@
             spring-framework  6.2.19 → 12/12 仍在区间内   7.0.9（Boot 4）→ 0/12 ✓
             spring-security   6.5.11 →  2/2 仍在区间内   7.1.1（Boot 4）→ 0/2  ✓
 
-          **Spring Boot 4.1.1 能清掉那 16 条里的 14 条**，只剩 mysql-connector-j 的 2 条。
+          **Spring Boot 4.1.1 能清掉那 16 条里的 14 条**（spring 全部）。
+          剩下的 mysql-connector-j 2 条不需要走这条路——它另有年份制版本 26.7.0，
+          已单独处理，见上面的 `<mysql.version>`。
 
-          所以这里不是"修不了"，是**唯一的路是一次大版本迁移**：Boot 3.5 → 4.x
+          所以这里不是"修不了"，是**剩下这 14 条唯一的路是一次大版本迁移**：
+          Boot 3.5 → 4.x
           会带上 Jakarta EE 11 / Tomcat 11 / Spring Security 7 / Jackson 3
           （连 artifact 坐标都换成 tools.jackson.*），不是属性覆盖能解决的。
           该不该走这一步是项目决策——Dependabot 的 PR #12 提议过，但它同时
@@ -150,6 +154,33 @@
         <netty.version>4.1.138.Final</netty.version>
         <jackson-bom.version>2.21.5</jackson-bom.version>
         <commons-lang3.version>3.18.0</commons-lang3.version>
+        <!--
+          MySQL Connector/J：9.7.0 → 26.7.0。
+
+          Oracle 把版本号从 `9.x` 换成了**年份制**（`26.7.0` = 2026 年 7 月），
+          所以"往上找"看到的是一个比 9.7.0 大很多的数字——**它不是一次跨线升级**，
+          只是同一条线上换了个编号方式。判定依据（`scripts/check_dependency_fix_availability.py`
+          跑的，2026-09-21）：
+
+            NVD 的 CVE-2026-60586(7.7) / CVE-2026-60623(7.1) 两条的受影响版本写的是
+            **显式的 {9.7.0, 9.7.1}**（不是区间，所以退回 9.6.0 也"不在范围内"，
+            那是降级），26.7.0 不在其中；26.7.0 发布于 2026-07-29，
+            两条公告发布于 2026-07-21——晚 8 天。
+
+          本文件此前的注释写着「Oracle 尚未给出可取的修复版」，依据是
+          「9.7.1 在 Central 上不存在、9.x 最新就是 9.7.0」。**那句话只在 9.x 线上成立**，
+          而 Oracle 已经不在 9.x 线上发了。
+
+          升级前核对过（下载 26.7.0 的 pom 与 jar 实测）：传递依赖与 9.7.0 **完全相同**
+          （protobuf-java 4.31.1 + 可选的 oci-java-sdk-common），没有引入新的漏洞面；
+          驱动类名仍是 `com.mysql.cj.jdbc.Driver`，字节码版本 52（Java 8+），
+          对 Java 21 与 MySQL 8.0 服务端都成立。
+
+          **「清掉了」的判据是扫描结果里这两条不再出现**，不是这次改动的推断。
+          已验证：2026-09-21 CI（提交 `12b145a`）的分类器输出从 **17 条降到 15 条**，
+          且 `com.mysql/mysql-connector-j` 整条从归并结果里消失。
+        -->
+        <mysql.version>26.7.0</mysql.version>
     </properties>
 
     <!--
