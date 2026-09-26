@@ -68,12 +68,9 @@
 - [目录结构](#目录结构)
 - [API 概览](#api-概览)
 - [关键设计](#关键设计)
-- [设计文档](#设计文档)
 - [自动化测试](#自动化测试)
 - [性能压测与可靠性演示](#性能压测与可靠性演示)
 - [AI 应用工程能力](#ai-应用工程能力)
-- [项目亮点（可写进简历）](#项目亮点可写进简历)
-- [后续优化方向](#后续优化方向)
 
 ## 核心工作流
 
@@ -445,15 +442,6 @@ docker-compose.yml        MySQL + PostgreSQL(pgvector) + Redis
 
 </details>
 
-## 设计文档
-
-- [Snapshot First 尽调执行模型](docs/architecture/snapshot-first.md)
-- [可靠工作流：Outbox、租约与状态机](docs/architecture/workflow-reliability.md)
-- [企业级 RAG 法规证据服务与运维手册](docs/architecture/enterprise-rag-evidence-service.md)
-- [ADR-005：GraphRAG / Late Interaction 采用门槛](docs/architecture/ADR-005-graphrag-and-late-interaction.md)
-- [隐藏 TEST 盲测协议](docs/evaluation/hidden-test-protocol.md)
-- [Cookie 认证与 CSRF 模型](docs/security/cookie-csrf-model.md)
-
 ## 自动化测试
 
 ```bash
@@ -585,7 +573,7 @@ cd backend && AML_LLM_ACTIVE_PROVIDER=mock ./mvnw spring-boot:run
 
 ## 持续集成
 
-`.github/workflows/ci.yml` 的 7 个 job：
+`.github/workflows/ci.yml` 的 8 个 job：
 
 | job | 跑什么 | 什么时候 |
 |---|---|---|
@@ -594,7 +582,14 @@ cd backend && AML_LLM_ACTIVE_PROVIDER=mock ./mvnw spring-boot:run
 | Integration Tests | 真实 MySQL / PGVector / Redis 上的迁移、队列与检索回归 | push / PR / 定时 |
 | Playwright E2E | 后端 + 前端 + 浏览器，跑核心业务闭环 | push / PR / 定时 |
 | Secret Scan / Python Quality Gate | 密钥、辅助脚本规范 | push / PR / 定时 |
+| README Test Numbers | 把 README 里写的测试条数与 `scripts/test_summary.py` 的实测对账 | push / PR / 定时 |
 | Backend Dependency Vulnerability Scan | OWASP dependency-check，CVSS ≥ 7 阻断 | push / PR / 定时 |
+
+> 这张表原先写「7 个 job」而只列了 6 行，漏掉的正是 **README Test Numbers**——
+> 而同一份 README 的另一处（「四类失败信号要分清」下面那段引用的就是它）已经在提这个 job 了，
+> 文件里自相矛盾。**这是同一个数字第二次写错**：更早一次是「只列了 2 个（实际 7 个）」。
+> 两次都是**低估**，说明这张表一直是靠人肉同步的。
+> 现在行数与 `ci.yml` 的 `jobs:` 段一致（8 个），**数一遍就能核对**。
 
 **为什么有定时任务**：push/PR 只在有人提交时才跑，而依赖镜像 tag、Flyway 迁移、
 外部依赖的变化与提交无关。一个几周没人动的仓库，门禁可能早就红了却没人知道——
@@ -712,6 +707,8 @@ CVE 库上，而那份数据一天之内不会变。缓存写错过一次，值�
 
 扫描用 OWASP dependency-check，`CVSS ≥ 7` 阻断。**这一节记录当前已知状态，不粉饰。**
 
+**最新复核（2026-09-26）**：Actions 的[依赖扫描运行](https://github.com/XIAOXUsop/amlagent/actions/runs/36170640966)仍报 15 条阻断：`spring-core@6.2.19` 12 条、`spring-security-core@6.5.11` 2 条、Java 客户端 `pgvector@0.1.6` 1 条。逐条 CVE、证据、负责人、处置及下次复查日期见 [`scripts/dependency-triage.json`](scripts/dependency-triage.json)。前两组同版本线的修复版尚未发布；`pgvector` 命中的是 PostgreSQL 扩展的 CPE，与该 Java 客户端不符。扫描门禁仍为红色，未作豁免；新扫描若出现未登记的阻断项，CI 会要求补充处置。
+
 > **有了 Dependabot 为什么还要跑这个扫描？** 因为 Dependabot 只能对**公告里映射到了
 > 具体包坐标**的漏洞告警，而 NVD 收录的一批 Java 公告在 GitHub 公告库里**只有 CVE 记录、
 > 没有 ecosystem 映射**。实测（`GET /advisories?cve_id=…`）：
@@ -725,7 +722,8 @@ CVE 库上，而那份数据一天之内不会变。缓存写错过一次，值�
 > | 2026-54512 jackson-databind | GHSA-j3rv-43j4-c7qm | `maven:com.fasterxml.jackson.core:jackson-databind` | ✅ 能 |
 > | 2026-65898 DOMPurify | GHSA-cmwh-pvxp-8882 | `npm:dompurify`（**不是** Java webjar） | ❌ 看不见 |
 >
-> 所以本仓库的 Dependabot 页面**现在是 0 条告警**，而这个扫描同时报出 **17 条阻断**
+> 所以本仓库的 Dependabot 页面**现在是 0 条告警**，而这个扫描同时报出 **15 条阻断**
+> （写这段时是 17 条；其中 `mysql-connector-j` 的 2 条已于 2026-09-21 升级处理，见下）
 > ——两者不是"谁更准"，是**覆盖面不同**。Dependabot 是本仓库主动打开的（8 个仓库都开了，
 > 开启前后都核过 `GET /repos/…/vulnerability-alerts`），它负责能映射的那些；
 > 剩下只有 SCA 扫描看得见。同理 `CVE-2026-65898` 映射的是 `npm:dompurify`，
@@ -827,16 +825,16 @@ netty 那 22 条合起来是**一个动作**：NVD 对 netty 只登记了一个�
 确实是新版本，而不是只改了 pom 文字。**「清掉了」这件事不是靠推断，
 是靠下一次扫描的输出里那些包不再出现。**
 
-**没修的：修复线尚未发布，只能等上游。** 上面那些清完之后，扫描仍然阻断 **17 条**
-——其中 **16 条**是下表这三类（12 + 2 + 2），第 17 条是 `pgvector` 那条已判定为误报的，
-但它**仍然被扫描器算作阻断**（为什么不做豁免见本节末尾）。下面这张表说的是那 16 条。
-逐条记在 `backend/pom.xml` 的注释里，附各自要求的版本号——上游一发布就能照着加属性：
+**没修的：同线上修复线尚未发布，只能等上游。** 上面那些清完之后，扫描仍然阻断 **15 条**
+（2026-09-21 CI 实测，提交 `12b145a`）
+——其中 **14 条**是下表这两类（12 + 2），第 15 条是 `pgvector` 那条已判定为误报的，
+但它**仍然被扫描器算作阻断**（为什么不做豁免见本节末尾）。下面这张表说的是那 14 条。
+逐条记在 `backend/pom.xml` 的注释里，附各自要求的版本号：
 
 | 包 | 分支区间 | 修复线 | 现状 | 阻断 |
 |---|---|---|---|---|
 | spring-framework | `6.2.0 ≤ v < 6.2.20`（59313/59314 写作 `≤ 6.2.19`） | 6.2.20 | 6.2.x 在 Central 上最新就是 6.2.19 | 12 |
 | spring-security | `6.5.0 ≤ v < 6.5.12` | 6.5.12 | 6.5.x 最新就是 6.5.11 | 2 |
-| mysql-connector-j | 见下 | — | Oracle 尚未给出可取的修复版 | 2 |
 
 spring-framework 阻断的是 47884、47885、47886、47888、47889、47890、47891、
 47892、47893、59282、59283、59313。另有 **8 条分数低于阻断阈值 7**、不阻断但同样
@@ -847,6 +845,46 @@ spring-framework 阻断的是 47884、47885、47886、47888、47889、47890、47
 > 这几条数目不是估的：从 CI 的 `dependency-scan.log` 产物里按
 > `[ERROR] One or more dependencies were identified with vulnerabilities that have a
 > CVSS score greater than or equal to '7.0'` 那一段逐条数出来的。
+
+**「上游发修复版了没有」不必再手工查。** `python scripts/check_dependency_fix_availability.py`
+读 `scripts/dependency-watchlist.json`（就是这几类的 CVE 清单），把每条公告的受影响版本
+与 Central 的版本列表对一遍，回答「同线上有没有能绕开它们的版本」。它是**只读**的：
+不改 pom、不改版本、不提 PR。`Dependency Fix Watch` 工作流每周一跑一次，有可用修复版或
+无法判定时让那次运行变红——**它只报告，不自动升级**：升级要读公告、只升到够用的最小版本、
+再跑全套测试，那不是定时任务能决定的事。
+
+### mysql-connector-j：2 条**已清除**（升级到 26.7.0，扫描已佐证）
+
+上面那个脚本第一次跑就查出一件真事。Oracle 把这条依赖的版本号从 `9.x` 换成了**年份制**
+（`26.7.0` = 2026 年 7 月），而本节此前的记录停在「9.7.1 在 Central 上不存在、
+Oracle 尚未给出可取的修复版」——**那句话只在 9.x 线上成立**，而 Oracle 已经不在
+9.x 线上发了。所以「没有可取的修复版」这个结论，在 2026-07-29 之后就过期了。
+
+判定依据：NVD 的 `CVE-2026-60586`(7.7) / `CVE-2026-60623`(7.1) 两条的受影响版本写的是
+**显式的 `{9.7.0, 9.7.1}`**（不是区间——所以退回 9.6.0 虽然"不在范围内"，但那是降级），
+26.7.0 不在其中；而 26.7.0 发布于 2026-07-29，两条公告发布于 2026-07-21。
+
+改的是 `backend/pom.xml` 的 `<mysql.version>`（Boot BOM 里管这个坐标的属性）。
+升之前核过：传递依赖与 9.7.0 **完全相同**（protobuf-java 4.31.1 + 可选的
+oci-java-sdk-common），**没有引入新的漏洞面**；驱动类名仍是 `com.mysql.cj.jdbc.Driver`，
+字节码版本 52（Java 8+），对 Java 21 与 MySQL 8.0 服务端都成立。
+
+**本机验证（2026-09-21）**：`dependency:list` 确认**实际解析到的是 26.7.0**
+（不是只改了 pom 文字）→ 单元测试 **575/576**（1 项真实模型评测按设计跳过，0 失败）→
+集成回归 **44/44**（真 MySQL 8.0 + 新驱动）→ Playwright **8/8**。
+
+> **「已清除」是扫描给的，不是上面那些推断给的。** 按本节开头那条判据——「清掉了」要靠
+> **下一次扫描的输出里那些包不再出现**。2026-09-21 CI 那次（提交 `12b145a`）的分类器输出：
+>
+> ```
+> 阻塞 15 条，按依赖归并：
+>   org.springframework/spring-core@6.2.19 — 12 条（最高 9.8）
+>   org.springframework.security/spring-security-core@6.5.11 — 2 条（最高 9.1）
+>   com.pgvector/pgvector@0.1.6 — 1 条（最高 8.8）
+> ```
+>
+> **17 条 → 15 条，且 `com.mysql/mysql-connector-j` 整条从结果里消失了。**
+> 判定它属于「真发现」而不是「没跑成」，也是脚本给的（`kind=findings`）。
 
 **补一条 2026-09-19 查证的路：这些「修复线未发布」在 3.5.x 线上确实无解，
 但在 Spring Boot 4.x 线上是好的。** 对比两个 BOM 的属性
@@ -870,8 +908,8 @@ spring-security  6.5.11（现在）  →  2/2 仍在区间内
 spring-security  7.1.1（Boot 4） →  0/2  ✓
 ```
 
-**即 Boot 4.1.1 能清掉 16 条里的 14 条**，只剩 `mysql-connector-j` 那 2 条
-（Boot 4.1.1 带的仍是 9.7.0，而它没有可取的修复版）。
+**即 Boot 4.1.1 能清掉 16 条里的 14 条**（spring 那两类全部）。
+剩下的 `mysql-connector-j` 2 条不走这条路——见下一段。
 
 所以这个门禁「红着不动」的真正原因**不是修不了，是唯一的路是一次大版本迁移**：
 Boot 3.5 → 4.x 会带上 Jakarta EE 11 / Tomcat 11 / Spring Security 7 /
@@ -884,11 +922,17 @@ Jackson 3（连 artifact 坐标都换了一套），不是能靠属性覆盖解�
 > （把「3.5.16 而非 3.5.13」替换成「4.1.1 而非 3.5.13」）——**合并会污染注释**，
 > 所以那个 PR 不能直接合。
 
-`mysql-connector-j` 是另一种情形：**Oracle 说了受影响范围，却没有可取的修复版本**。
-公告原文写的是"受影响版本 9.7.0–9.7.1"，可 9.7.1 在 Maven Central 上**根本不存在**
-（9.x 最新就是 9.7.0），9.7.2 也没有。退回 9.6.0 理论上不在受影响范围，
-但那是一次功能降级；而 Oracle 的 CPU 通常在下个季度给修复版。
-**先如实记录，不降级也不豁免。**（`CVE-2026-60586` 7.7 / `CVE-2026-60623` 7.1）
+`mysql-connector-j` **曾是**另一种情形：Oracle 说了受影响范围，而在 `9.x` 线上确实没有
+可取的修复版本——公告写的是"受影响版本 9.7.0–9.7.1"，可 9.7.1 在 Maven Central 上
+根本不存在（9.x 最新就是 9.7.0），9.7.2 也没有；退回 9.6.0 不在受影响范围，但是功能降级。
+
+> **2026-09-21 更正：修复版是有的，只是换了条线。** Oracle 已把版本号改成**年份制**，
+> `26.7.0`（2026-07-29 发布）就是这两条的修复版——它不在显式的 `{9.7.0, 9.7.1}` 里，
+> 而两条公告发布于 2026-07-21。**当时那句「没有可取的修复版本」只查了 9.x 这一条线**，
+> 于是它过期了 8 天还没人发现——查出来的是新加的
+> `scripts/check_dependency_fix_availability.py`。已升级并跑完全套本机测试，
+> 详见上面「mysql-connector-j」那一节。
+> （`CVE-2026-60586` 7.7 / `CVE-2026-60623` 7.1）
 
 **两条判为误报，依据是 NVD 原文里的 `target_sw`，不是"看着不像"**：
 
@@ -1032,53 +1076,6 @@ python benchmark/fault_demo.py
 | Python Script Quality Gate | `ruff format --check` / `ruff check` / 脚本单元测试 / 仓库文本规范 |
 | Secret Scan | 无依赖的密钥扫描（纯 grep，不引第三方服务、不需要 token） |
 
-## 项目亮点（可写进简历）
-
-- **可靠 Agent 任务链路**：Transactional Outbox + Redis Streams 消费组 + 租约/心跳/死信/Pending 接管，保证异步尽调任务在应用重启、Worker 并发抢占下不丢失、不重复、可恢复。
-- **Snapshot First 数据一致性**：Agent 推理前一次性冻结客户交易/股权/制裁/法规证据并计算 `sourceDigest`，Agent 工具、Guardrails、规则兜底共享同一份只读快照，杜绝长链路中的时序不一致。
-- **Tool Calling 工程化**：四个领域工具绑定冻结快照，参数做身份/关键词业务校验，记录工具调用轨迹（不落敏感参数明文），支持 LangChain4j 并行工具调用并限制最大工具轮次防死循环。
-- **混合 RAG + Rerank**：PGVector 向量召回 + ILIKE 关键词召回 + RRF 融合 + bge-reranker 精排，法规证据带 `evidenceId` 可端到端追溯；Redis 缓存命中可跳过重复 embedding。
-- **确定性 Guardrails + 分层评测**：配置化风险规则护栏强制修正模型评级；规则回归 / RAG 检索评测 / 独立 Agent DEV-TEST 盲测三层评测体系，冻结清单保证结果可复现。
-- **可观测性与安全**：Micrometer + Prometheus 指标、traceId 全链路透传、JWT HttpOnly Cookie + CSRF、登录限流、Prompt 注入三层防护、生产启动自检与密钥环境变量注入。
-
-## 后续优化方向
-
-- 将 Tool 调用从快照并行执行扩展为真实业务系统的异步多数据源接入。
-- 若未来增加交互式尽调追问，再引入会话级 Memory（最近 N 轮 + 长期摘要）；当前工单式单轮尽调无需为技术展示强行增加会话记忆。
-- 基于 `CostRouter` 增加模型分级路由（简单工单用更快更便宜的模型，复杂工单用强模型）。
-- 将 RAG 关键词召回升级为 PostgreSQL 全文索引（`tsvector` + `GIN`），进一步提升大数据量下的检索性能。
-- 为 SSE 增加断线后的消息补偿/对账机制，保证前端最终状态与后端一致。
-
-
-## Git 提交清单
-
-<details>
-<summary>推送 GitHub 前的文件清单注意事项（.gitignore 已配置）</summary>
-
-| 提交（✅） | 说明 |
-|---|---|
-| `backend/src/main/java/` | 全部后端源码 |
-| `backend/src/main/resources/application.yml` | 主配置（API Key 为占位符，无敏感信息） |
-| `backend/src/test/resources/application-test.yml` | 集成测试配置（无密钥） |
-| `backend/data/legal/` | 法规文档 |
-| `backend/pom.xml` `mvnw` `mvnw.cmd` `.mvn/` | 构建与 Maven Wrapper |
-| `backend/src/test/` | 测试代码 |
-| `frontend/`（排除 node_modules、dist） | 前端源码 |
-| `docker-compose.yml` `prometheus/` | 部署配置 |
-| `.gitignore` `README.md` | 工程文档 |
-
-| 不提交（⛔，已被 .gitignore 排除） | 原因 |
-|---|---|
-| `backend/src/main/resources/application-dev*.yml` | 本地开发覆盖配置（仅保留环境变量占位符） |
-| `backend/target/` | Maven 构建产物 |
-| `frontend/node_modules/` `frontend/dist/` | 依赖与构建产物 |
-| `*.log` `.idea/` `.vscode/` | 日志与 IDE 配置 |
-
-</details>
-
 ## License
 
 [MIT](LICENSE) © 2026 XIAOXUsop
-
-> 2026-09-19 补：这一节此前**没有**——仓库里有 `LICENSE` 文件（MIT），但 README 从头到尾
-> 一次都没提过它，而同族的另外六个仓库都写了。措辞与它们保持一致。
