@@ -69,15 +69,63 @@ jobs:
       - uses: actions/checkout@v6
       - name: Scan for secrets
         run: |
+          # ── 值那一侧的引号是**可选**的 ──────────────────────────────────
+          #
+          # 这里原先要求值必须**带引号**（`['\"]`），而本仓库的配置全是 YAML / properties，
+          # 不带引号的 `名字: 值` 写法才是主流。实测（2026-09-22）：把这条正则原样拿出来
+          # 喂四个探针，只有 `sk-` 那种形态命中，不带引号的键值对一律漏掉。
+          # 也就是说，**这一步会在有人把密钥硬编码进 application.yml 时
+          # 打印「未检测到密钥/私钥泄露」并绿着通过**——绿着的正是它唯一要防的那件事。
+          #
+          # 只把引号改成可选，**没有**顺手扩大名字那一侧：试过加上
+          # `password` / `clientSecret`，结果在本仓库里立刻命中两处误报
+          # （`ProductionConfigValidatorTest` 里的测试用密码、`AgentEvalLiveTest`
+          # 里 `requiredEnvironment("DEEPSEEK_API_KEY")`）——一个在干净仓库上
+          # 就会报红的门禁，会在被人信任之前就被关掉。宁可窄一点。
+          PATTERN="(sk-[A-Za-z0-9_-]{16,}|AKIA[0-9A-Z]{16}|BEGIN (RSA|EC|OPENSSH) PRIVATE KEY|api[_-]?key[[:space:]]*[:=][[:space:]]*['\"]?[A-Za-z0-9_-]{16,})"
+
+          # ── 反向探针：先证明这条正则**真的会命中** ──────────────────────
+          #
+          # 少了这一步，正则随时可能变成"什么都不匹配"，而这一步照旧打印
+          # 「未检测到密钥」并绿着通过。用两个必然应当命中的样例自测，
+          # 命中数不够就让这次运行变红——**检查自己坏掉时必须是红的**。
+          #
+          # 样例**在运行时拼出来**，不在这个文件里留下一个连得上的整串：
+          # 第一版把 `api-key: <32 位十六进制>` 原样写进注释当例子，
+          # 结果这一步扫到自己这个文件、在干净仓库上直接报红。
+          # （"扫描器自己的样例被扫描器命中"是这个工作区记过的坑。）
+          probe_value="8f3a9c2b7d1e4f6a0b3c5d7e9f1a2b3c"
+          probe_sk="abc123456789012345678"
+          probe_hit=$(
+            {
+              printf 'api-key: %s\n' "$probe_value"
+              printf 'DEEPSEEK_API_KEY=sk-%s\n' "$probe_sk"
+            } | grep -cE "$PATTERN" || true
+          )
+          if [ "$probe_hit" -lt 2 ]; then
+            echo "::error::密钥扫描的正则没有命中自测样例（命中 $probe_hit/2）——这条检查已经失效，先修它"
+            exit 1
+          fi
+
           if grep -rInE \
             --exclude-dir=node_modules --exclude-dir=target --exclude-dir=.git \
             --exclude='*.lock' \
-            "(sk-[A-Za-z0-9_-]{16,}|AKIA[0-9A-Z]{16}|BEGIN (RSA|EC|OPENSSH) PRIVATE KEY|api[_-]?key[[:space:]]*[:=][[:space:]]*['\"][A-Za-z0-9_-]{16,})" \
+            "$PATTERN" \
             . ; then
             echo "::error::检测到疑似密钥/私钥泄露"
             exit 1
           fi
-          echo "未检测到密钥/私钥泄露"
+          echo "未检测到密钥/私钥泄露（反向探针通过：$probe_hit/2）"
+          # 本地手工跑这段的话会多出几处误报：`frontend/dist`（构建产物，已 gitignore）
+          # 里 element-plus 的样式类名里有一段以「sk 连字符」开头的词，会被第一条分支命中。
+          # CI 上不存在这个问题——那一步只做 checkout，不构建前端，产物目录不在。
+          # 这里**不改正则**：为了压掉一个本地产物而放宽那一条分支，
+          # 会把真正要抓的那种 key 一起放过。
+          #
+          # 另：**别在这个文件里写出能被这条正则命中的整串**——连注释里也不行。
+          # 第一版把示例值原样写进注释当例子、第二版把上面那个 CSS 类名原样写进来，
+          # 两次都在干净仓库上直接报红（这一步会扫到它自己所在的这个文件）。
+          # 需要举例就描述形状，或者把样例拆成变量在运行时拼。
 
   # 前端：组件测试 + 类型检查 + 生产构建，避免提交破坏前端
   frontend-build:
@@ -215,7 +263,10 @@ jobs:
           #
           # `--github-output` 让判定结果同时进本步骤的 outputs——保存缓存的步骤靠它
           # 区分「扫出漏洞」（数据可信，该存）与「压根没跑成」（数据不可信，不该存）。
-          python3 ../scripts/classify_dependency_scan.py dependency-scan.log --github-output "$GITHUB_OUTPUT"
+          python3 ../scripts/classify_dependency_scan.py dependency-scan.log --github-output "$GITHUB_OUTPUT" --annotations
+          if grep -q 'One or more dependencies were identified with vulnerabilities' dependency-scan.log; then
+            python3 ../scripts/check_dependency_triage.py dependency-scan.log ../scripts/dependency-triage.json
+          fi
           exit 1
       # 存缓存必须单独一步，且 `if: always()`。
       #
