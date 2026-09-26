@@ -707,6 +707,8 @@ CVE 库上，而那份数据一天之内不会变。缓存写错过一次，值�
 
 扫描用 OWASP dependency-check，`CVSS ≥ 7` 阻断。**这一节记录当前已知状态，不粉饰。**
 
+**最新复核（2026-09-26）**：Actions 的[依赖扫描运行](https://github.com/XIAOXUsop/amlagent/actions/runs/36170640966)仍报 15 条阻断：`spring-core@6.2.19` 12 条、`spring-security-core@6.5.11` 2 条、Java 客户端 `pgvector@0.1.6` 1 条。逐条 CVE、证据、负责人、处置及下次复查日期见 [`scripts/dependency-triage.json`](scripts/dependency-triage.json)。前两组同版本线的修复版尚未发布；`pgvector` 命中的是 PostgreSQL 扩展的 CPE，与该 Java 客户端不符。扫描门禁仍为红色，未作豁免；新扫描若出现未登记的阻断项，CI 会要求补充处置。
+
 > **有了 Dependabot 为什么还要跑这个扫描？** 因为 Dependabot 只能对**公告里映射到了
 > 具体包坐标**的漏洞告警，而 NVD 收录的一批 Java 公告在 GitHub 公告库里**只有 CVE 记录、
 > 没有 ecosystem 映射**。实测（`GET /advisories?cve_id=…`）：

@@ -23,8 +23,8 @@ from classify_dependency_scan import (
     MESSAGES,
     blocking_findings,
     classify,
-    findings_summary,
     findings_annotations,
+    findings_summary,
     main,
     message_for,
 )

@@ -264,6 +264,9 @@ jobs:
           # `--github-output` 让判定结果同时进本步骤的 outputs——保存缓存的步骤靠它
           # 区分「扫出漏洞」（数据可信，该存）与「压根没跑成」（数据不可信，不该存）。
           python3 ../scripts/classify_dependency_scan.py dependency-scan.log --github-output "$GITHUB_OUTPUT" --annotations
+          if grep -q 'One or more dependencies were identified with vulnerabilities' dependency-scan.log; then
+            python3 ../scripts/check_dependency_triage.py dependency-scan.log ../scripts/dependency-triage.json
+          fi
           exit 1
       # 存缓存必须单独一步，且 `if: always()`。
       #
