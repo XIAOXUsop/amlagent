@@ -215,9 +215,21 @@ def findings_summary(log: str) -> list[str]:
     return lines
 
 
+def findings_annotations(log: str) -> list[str]:
+    """Expose each blocked dependency in Actions annotations without requiring artifact access."""
+    lines = []
+    for ga, version, cves in blocking_findings(log):
+        details = ", ".join(f"{cve} ({score:g})" for cve, score in cves)
+        lines.append(f"::error title=Dependency vulnerability::{ga}@{version}: {details}")
+    return lines
+
+
 def main(argv: list[str]) -> int:
     args = argv[1:]
     github_output: str | None = None
+    annotations = "--annotations" in args
+    if annotations:
+        args.remove("--annotations")
     if "--github-output" in args:
         index = args.index("--github-output")
         if index + 1 >= len(args):
@@ -256,6 +268,9 @@ def main(argv: list[str]) -> int:
         # 解析不出条目时**不打印空摘要**——那会让人以为"没有阻断项"。
         for line in findings_summary(log_text):
             print(line)
+        if annotations:
+            for line in findings_annotations(log_text):
+                print(line)
     return 0
 
 
