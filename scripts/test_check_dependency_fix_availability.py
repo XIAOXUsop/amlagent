@@ -322,8 +322,7 @@ class TestMain(unittest.TestCase):
         实测背景（2026-09-22）：mysql-connector-j 那条已经清掉却还留在清单里，
         于是每周的 dependency-fix-watch 会为一个已修好的依赖报「上游已发布修复版」而变红。
         """
-        payload = {"entries": [{"group": "g", "artifact": "a", "line": "1.x", "counts": 3,
-                                "cves": ["CVE-2026-0001"]}]}
+        payload = {"entries": [{"group": "g", "artifact": "a", "line": "1.x", "counts": 3, "cves": ["CVE-2026-0001"]}]}
         code, output = self._run(payload, [])
 
         self.assertEqual(code, 2, output)
