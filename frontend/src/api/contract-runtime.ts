@@ -105,7 +105,15 @@ function validateNamedScalar(value: unknown, contract: string, path: string, key
   if (/(?:At|Time|Cutoff|timestamp)$/.test(key) && (typeof value !== 'string' || !RFC_3339.test(value))) {
     throw new ApiContractError(contract, `${path} 必须是带时区的 RFC 3339 时间`)
   }
-  if (/(?:amount|Amount|regCapital)$/.test(key) && (typeof value !== 'string' || !DECIMAL.test(value))) {
+  // 只按名字判断"这应该是个金额"的字段必须是纯十进制字符串。
+  //
+  // 这里**不含 regCapital**：注册资本在本系统里是自由文本，不是金额。
+  // 数据库列是 VARCHAR(128)，DTO 与 schema 目录都把它声明成 string/nullableString，
+  // 演示种子数据也写着「注册资本5000万人民币」「—」这类人工可读的值。
+  // 曾经把 regCapital 按金额校验，结果是**整个客户列表被一行演示数据判为违约而丢弃**——
+  // 契约检查失败会让调用方拿不到任何数据，代价远超它想防的格式漂移。
+  // 要收紧注册资本的格式，应当先改数据模型，而不是在这条通用启发式里顺带卡住。
+  if (/(?:amount|Amount)$/.test(key) && (typeof value !== 'string' || !DECIMAL.test(value))) {
     throw new ApiContractError(contract, `${path} 必须是十进制金额字符串`)
   }
 }

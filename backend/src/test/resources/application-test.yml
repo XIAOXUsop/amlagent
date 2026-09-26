@@ -3,6 +3,9 @@ server:
   port: 0
 
 spring:
+  # 注意：这里只是**默认**连接。多数集成测试（退款台账、Flyway 迁移、解释工作区）
+  # 会在自己建的独立库上跑（aml_*_test），见各自的数据源构造；
+  # 没覆盖数据源的测试才会落到这个默认库上。
   datasource:
     url: jdbc:mysql://localhost:3307/aml_agent?useUnicode=true&characterEncoding=utf8&serverTimezone=UTC&useSSL=false&allowPublicKeyRetrieval=true
     username: ${MYSQL_USER:aml}

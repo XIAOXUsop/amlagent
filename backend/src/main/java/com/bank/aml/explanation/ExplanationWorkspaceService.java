@@ -32,6 +32,13 @@ import com.bank.aml.security.UserAccount;
 import com.bank.aml.security.UserAccountRepository;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
+
+import static com.bank.aml.explanation.ExplanationJson.bool;
+import static com.bank.aml.explanation.ExplanationJson.dedupe;
+import static com.bank.aml.explanation.ExplanationJson.intList;
+import static com.bank.aml.explanation.ExplanationJson.parseEnum;
+import static com.bank.aml.explanation.ExplanationJson.stringList;
+import static com.bank.aml.explanation.ExplanationJson.text;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import java.math.BigDecimal;
@@ -139,6 +146,11 @@ public class ExplanationWorkspaceService implements ExplanationReadinessPort, Ex
 
     private final Clock clock;
 
+    /** 权威交易事实（金额 / 发生日）——只认服务端来源，客户端声明值不参与判定 */
+    private final ExplanationServerFacts serverFacts;
+
+    private final GroupPaymentClaimValidator groupPaymentClaimValidator;
+
     @Autowired
     public ExplanationWorkspaceService(CaseRepository caseRepository, AlertExplanationUnitRepository unitRepository,
             ExplanationSubmissionRepository submissionRepository, ExplanationIssueRepository issueRepository,
@@ -178,6 +190,9 @@ public class ExplanationWorkspaceService implements ExplanationReadinessPort, Ex
         this.objectMapper = objectMapper;
         this.properties = properties;
         this.clock = clock;
+        this.serverFacts = new ExplanationServerFacts(customerDataPort);
+        this.groupPaymentClaimValidator = new GroupPaymentClaimValidator(claimService, paymentAuthorityFactService,
+                this.serverFacts, clock);
     }
 
     // ==================== 工作区 ====================
@@ -919,8 +934,9 @@ public class ExplanationWorkspaceService implements ExplanationReadinessPort, Ex
                         && List.of("C1", "C2", "C3", "C4").contains(code)) {
                     // 3. 决定关键未知：定向核验
                     actions.add(new ExplanationViews.NextActionView(3, "CRITICAL_UNKNOWN", code, null,
-                            factQuestion(code), factSuggestedSource(code), factSuggestedAction(code),
-                            "该事实是否被支持（决定解释能否成立）", factAlternative(code)));
+                            ExplanationFactCatalog.question(code), ExplanationFactCatalog.suggestedSource(code),
+                            ExplanationFactCatalog.suggestedAction(code), "该事实是否被支持（决定解释能否成立）",
+                            ExplanationFactCatalog.alternative(code)));
                 }
             }
             // 授权额度缺口
@@ -929,7 +945,7 @@ public class ExplanationWorkspaceService implements ExplanationReadinessPort, Ex
                 try {
                     BigDecimal limit = new BigDecimal(text(authority, "limitAmount"));
                     BigDecimal covered = BigDecimal.ZERO;
-                    Map<String, BigDecimal> sourceAmounts = serverTransactionAmounts(caseEntity);
+                    Map<String, BigDecimal> sourceAmounts = serverFacts.amountsOf(caseEntity);
                     JsonNode coveredTxs = authority.get("coveredTransactionIds");
                     if (coveredTxs != null && coveredTxs.isArray()) {
                         for (JsonNode tx : coveredTxs) {
@@ -987,42 +1003,6 @@ public class ExplanationWorkspaceService implements ExplanationReadinessPort, Ex
                     && issue.getDisposition() != IssueDisposition.OPEN)
             .count();
         return count >= properties.getRepeatedEvidenceRequestCount();
-    }
-
-    private static String factQuestion(String code) {
-        return switch (code) {
-            case "C1" -> "付款账户所属主体与合同买方是否同一法定主体（主体消歧）";
-            case "C2" -> "买方因哪项交付对卖方负有多少货款义务";
-            case "C3" -> "谁授权谁、向谁、付哪笔、多少、何时有效";
-            default -> "这两笔钱是否在授权范围内履行了授权所指义务";
-        };
-    }
-
-    private static String factSuggestedSource(String code) {
-        return switch (code) {
-            case "C1" -> "核心系统账户归属 + KYC 主体标识";
-            case "C2" -> "订单/履约/验收记录";
-            case "C3" -> "可定位的授权版本及独立来源确认";
-            default -> "权威流水与授权/订单的逐笔分配";
-        };
-    }
-
-    private static String factSuggestedAction(String code) {
-        return switch (code) {
-            case "C1" -> "查询付款账户所属主体，核对买方历史名称后再判断是否代付";
-            case "C2" -> "核对指定订单与交付记录，不泛要全部财务资料";
-            case "C3" -> "对授权的签发、范围、撤销状态做一次独立确认";
-            default -> "核对无法解释的具体交易与超限差额";
-        };
-    }
-
-    private static String factAlternative(String code) {
-        return switch (code) {
-            case "C1" -> "同名/简称/历史名称先做主体消歧；确认同一主体回到普通货款流程";
-            case "C2" -> "往来核对记录可作为替代（单独一张发票不能覆盖全部结论）";
-            case "C3" -> "预先核实渠道取得的买方确认（联系电话不能仅来自本次可疑材料）";
-            default -> "买方或收款方入账用途核对";
-        };
     }
 
     private JsonNode parseDraft(String json) {
@@ -1443,161 +1423,6 @@ public class ExplanationWorkspaceService implements ExplanationReadinessPort, Ex
     }
 
     /**
-     * 代付配方的事实约束（v3 计划 §6/§8；TP-06/TP-09）： 草稿中 claims 节声明 C1~C6 状态；EXPLAINED 要求 C1~C4 全部
-     * SUPPORTED。 C5/C6 允许 UNRESOLVED（保留未知）但不允许 CONTRADICTED（矛盾必须先处理）。
-     */
-    private void validateGroupPaymentClaims(CaseEntity caseEntity, AlertExplanationUnit unit, JsonNode draft) {
-        JsonNode claims = draft.get("claims");
-        if (claims == null || !claims.isObject()) {
-            throw new IllegalArgumentException("集团代付配方需声明 C1~C6 事实（claims）");
-        }
-        Map<String, String> persistedClaimStatuses = new LinkedHashMap<>();
-        for (ExplanationViews.ClaimView persisted : claimService.viewAll(caseEntity.getId(), unit.getId())) {
-            persistedClaimStatuses.put(persisted.claimCode(), persisted.status());
-        }
-        for (String code : new String[] { "C1", "C2", "C3", "C4" }) {
-            JsonNode claim = claims.get(code);
-            if (claim == null || !claim.isObject()) {
-                throw new IllegalArgumentException("集团代付配方必须回答事实 " + code + "（C1~C4 不可整体跳过）");
-            }
-            String status = text(claim, "status", "UNASSESSED");
-            if (!Set.of("SUPPORTED", "CONTRADICTED", "UNRESOLVED", "NOT_APPLICABLE", "UNASSESSED").contains(status)) {
-                throw new IllegalArgumentException("事实 " + code + " 状态不在允许范围：" + status);
-            }
-            String persistedStatus = persistedClaimStatuses.get(code);
-            if (persistedStatus != null && !persistedStatus.equals(status)) {
-                throw new IllegalArgumentException("事实 " + code + " 的草稿状态 " + status + " 与当前持久化 Claim 状态 "
-                        + persistedStatus + " 不一致；必须基于最新 Claim 修订草稿后再提交");
-            }
-            if (!"SUPPORTED".equals(status)) {
-                throw new IllegalArgumentException("事实 " + code + " 状态为 " + status + "，不能建议 EXPLAINED；请先完成该事实的定向核验，"
-                        + "或提交 UNRESOLVED/SUSPICIOUS 保留判断");
-            }
-            String judgement = text(claim, "judgement");
-            if (judgement.length() < 10) {
-                throw new IllegalArgumentException("事实 " + code + " 的判断需至少 10 个字符" + "（为什么证据支持该事实）");
-            }
-        }
-        for (String code : new String[] { "C5", "C6" }) {
-            JsonNode claim = claims.get(code);
-            if (claim == null || !claim.isObject()) {
-                continue; // C5/C6 可省略（省略视为未评估，不阻断 EXPLAINED，由 Q5/Q6 承担）
-            }
-            String status = text(claim, "status", "UNASSESSED");
-            String persistedStatus = persistedClaimStatuses.get(code);
-            if (persistedStatus != null && !persistedStatus.equals(status)) {
-                throw new IllegalArgumentException(
-                        "事实 " + code + " 的草稿状态 " + status + " 与当前持久化 Claim 状态 " + persistedStatus + " 不一致");
-            }
-            if ("CONTRADICTED".equals(status)) {
-                throw new IllegalArgumentException(
-                        "事实 " + code + " 存在已评估矛盾（CONTRADICTED），" + "不能建议 EXPLAINED；需先处理矛盾或改判 SUSPICIOUS");
-            }
-        }
-        // A6-02/RC-05：授权必填——C3 SUPPORTED 不能凭空成立；authority 结构、
-        // 可定位授权编号、额度与覆盖集合缺一即拒，不能整体省略。
-        JsonNode authority = draft.get("authority");
-        if (authority == null || !authority.isObject()) {
-            throw new IllegalArgumentException(
-                    "集团代付配方必须声明代付授权（authority）：" + "可定位授权编号、额度与覆盖交易集合；C3 的 SUPPORTED 声明不能替代授权记录（A6-02）");
-        }
-        String authorityRef = text(authority, "authorityRef");
-        if (authorityRef.length() < 3) {
-            throw new IllegalArgumentException("代付授权需提供可定位的授权编号（authorityRef，" + "至少 3 个字符）；授权身份缺失时 C3 不能成立");
-        }
-        String limitText = text(authority, "limitAmount");
-        if (limitText.isBlank()) {
-            throw new IllegalArgumentException("代付授权需声明额度（limitAmount）；无额度的授权" + "不能确定覆盖边界（A6-02）");
-        }
-        BigDecimal limit;
-        try {
-            limit = new BigDecimal(limitText.trim());
-        }
-        catch (NumberFormatException e) {
-            throw new IllegalArgumentException("授权额度需为定点数字符串：" + limitText);
-        }
-        // 服务端派生需要代付解释的资金腿全集（不从客户端 coveredTransactionIds 反向定义）：
-        // 集合 = 本次提交 scope.reviewedTransactionIds（提交前已通过服务器来源对账）。
-        JsonNode scopeNode = draft.get("scope");
-        List<String> requiredLegs = scopeNode == null ? List.of() : stringList(scopeNode, "reviewedTransactionIds");
-        JsonNode coveredTxs = authority.get("coveredTransactionIds");
-        if (coveredTxs == null || !coveredTxs.isArray() || coveredTxs.size() == 0) {
-            throw new IllegalArgumentException(
-                    "代付授权需声明覆盖交易集合（coveredTransactionIds）；" + "空覆盖不能支撑 C4 的 SUPPORTED（A6-02）");
-        }
-        Map<String, BigDecimal> sourceAmounts = serverTransactionAmounts(caseEntity);
-        Set<String> coveredSet = new LinkedHashSet<>();
-        BigDecimal covered = BigDecimal.ZERO;
-        for (JsonNode tx : coveredTxs) {
-            String txId = tx.asText();
-            BigDecimal amount = sourceAmounts.get(txId);
-            if (amount == null) {
-                throw new IllegalArgumentException("授权覆盖的交易 " + txId + " 不属于服务器冻结的交易来源集合");
-            }
-            if (!coveredSet.add(txId)) {
-                throw new IllegalArgumentException("授权覆盖集合存在重复交易：" + txId + "（去重计量，TP-31）");
-            }
-            covered = covered.add(amount);
-        }
-        // 逐笔比对：全部需要解释的代付资金腿必须被授权覆盖；未覆盖的具体交易保留缺口
-        // （TP-11：第二笔不得继承第一笔结论；TP-10：不得整笔解释成立）。
-        List<String> uncovered = requiredLegs.stream().filter(tx -> !coveredSet.contains(tx)).toList();
-        if (!uncovered.isEmpty()) {
-            throw new IllegalArgumentException("以下待解释的代付资金腿未被授权覆盖：" + String.join("、", uncovered)
-                    + "；未覆盖金额不能隐去（A6-02/TP-11），" + "需补充授权或把缺口交易移出命中范围（后者需来源更正）");
-        }
-        // 授权额度缺口：授权额度 < 覆盖交易合计 → 超出部分保留缺口，不得整笔解释成立（TP-10）。
-        BigDecimal gap = limit.subtract(covered);
-        if (gap.compareTo(BigDecimal.ZERO) < 0) {
-            throw new IllegalArgumentException(
-                    "代付授权额度 " + limit.toPlainString() + " 低于已覆盖交易合计 " + covered.toPlainString() + "；超出部分 "
-                            + gap.negate().toPlainString() + " 保留缺口，不得整笔解释成立" + "（TP-10）；请提交 UNRESOLVED 并说明缺口处理安排");
-        }
-        // G1-3/RF-18/RF-19：双时间规则——authority.facts 声明授权/撤销/追认事实序列，
-        // 服务端按"付款时点"评估有效性；付款后追认不能替代付款前授权（保持 UNRESOLVED）。
-        JsonNode factsNode = authority.get("facts");
-        if (factsNode == null || !factsNode.isArray() || factsNode.isEmpty()) {
-            throw new IllegalArgumentException("代付授权必须提供可核验的有效期事实（authority.facts）；" + "省略或空数组不能跳过付款时点校验");
-        }
-        List<PaymentAuthorityFactService.AuthorityFact> facts = new ArrayList<>();
-        for (JsonNode factNode : factsNode) {
-            String factAuthorityRef = text(factNode, "authorityRef", authorityRef);
-            if (!authorityRef.equals(factAuthorityRef)) {
-                throw new IllegalArgumentException("授权事实引用 " + factAuthorityRef + " 与当前授权 " + authorityRef + " 不一致");
-            }
-            facts.add(new PaymentAuthorityFactService.AuthorityFact(factAuthorityRef,
-                    parseDateOrNull(text(factNode, "effectiveFrom")), parseDateOrNull(text(factNode, "effectiveTo")),
-                    null, LocalDateTime.now(clock), text(factNode, "factType")));
-        }
-        Map<String, LocalDate> transactionDates = serverTransactionDates(caseEntity);
-        for (String transactionId : requiredLegs) {
-            LocalDate paymentDate = transactionDates.get(transactionId);
-            if (paymentDate == null) {
-                throw new IllegalArgumentException("服务器权威来源无法取得交易 " + transactionId + " 的付款发生日；不能使用客户端日期替代，授权有效性保持待核验");
-            }
-            PaymentAuthorityFactService.AuthorityValidity validity = paymentAuthorityFactService
-                .evaluateAtPayment(facts, paymentDate);
-            if ("UNKNOWN".equals(validity.validAtPayment()) || "INVALID".equals(validity.validAtPayment())) {
-                throw new IllegalArgumentException(
-                        "交易 " + transactionId + " 的代付授权在付款时点有效性为 " + validity.validAtPayment() + "："
-                                + validity.explanation() + "；C3 不能 SUPPORTED，请提交 UNRESOLVED 并完成定向核验（RF-18/RF-19）");
-            }
-        }
-    }
-
-    private static LocalDate parseDateOrNull(String value) {
-        if (value == null || value.isBlank()) {
-            return null;
-        }
-        try {
-            return LocalDate.parse(value.trim());
-        }
-        catch (DateTimeParseException e) {
-            throw new IllegalArgumentException("日期需为 ISO 格式（yyyy-MM-dd）：" + value, e);
-        }
-    }
-
-    /**
      * 代付配方的缺口登记（TP-10/TP-11/TP-12 语义）： 授权额度不足、部分订单未被授权覆盖、授权状态 CONTRADICTED 等， 任何 outcome
      * 下都产生 DECISION_CRITICAL 问题；不因多数金额已解释吞掉缺口。 跨单元额度去重（v3 §6.1/TP-31）：同一交易不得被两个 CURRENT
      * 代付提交重复声明覆盖。
@@ -1677,7 +1502,7 @@ public class ExplanationWorkspaceService implements ExplanationReadinessPort, Ex
                     BigDecimal covered = BigDecimal.ZERO;
                     JsonNode coveredTxs = authority.get("coveredTransactionIds");
                     if (coveredTxs != null && coveredTxs.isArray()) {
-                        Map<String, BigDecimal> sourceAmounts = serverTransactionAmounts(caseEntity);
+                        Map<String, BigDecimal> sourceAmounts = serverFacts.amountsOf(caseEntity);
                         for (JsonNode tx : coveredTxs) {
                             BigDecimal amount = sourceAmounts.get(tx.asText());
                             if (amount != null) {
@@ -1768,7 +1593,7 @@ public class ExplanationWorkspaceService implements ExplanationReadinessPort, Ex
 
         // 服务器冻结来源对账（A5-01/TP-04）：声明的命中交易必须存在于服务器可枚举的交易源集合，
         // 且金额与权威来源一致；自编交易 ID / 金额自洽不能通过提交。
-        Map<String, BigDecimal> sourceAmounts = serverTransactionAmounts(caseEntity);
+        Map<String, BigDecimal> sourceAmounts = serverFacts.amountsOf(caseEntity);
         if (sourceAmounts.isEmpty()) {
             throw new IllegalStateException("服务器无法枚举本客户的交易事实（来源数据缺失）；" + "不能以调用方自证的交易集合形成解释依据，需先修复来源数据同步");
         }
@@ -1937,7 +1762,7 @@ public class ExplanationWorkspaceService implements ExplanationReadinessPort, Ex
             // 代付配方（v3 计划 §6/§8）：C1~C4 必须全部 SUPPORTED；任何 CONTRADICTED/UNRESOLVED
             // 阻断 EXPLAINED（TP-06/TP-09/TP-12）。部分授权（TP-10/TP-11）在金额/订单缺口中阻断。
             if (ExplanationPolicyCatalog.GOODS_GROUP_PAYMENT_V1.equals(policyCode)) {
-                validateGroupPaymentClaims(caseEntity, unit, draft);
+                groupPaymentClaimValidator.validate(caseEntity, unit, draft);
             }
         }
         List<String> disclosed = stringList(draft, "disclosedUnknowns");
@@ -2278,45 +2103,6 @@ public class ExplanationWorkspaceService implements ExplanationReadinessPort, Ex
             .count();
     }
 
-    /**
-     * 服务器冻结的交易来源集合（v3 计划 §9.1 / A5-01）： 以 CustomerDataPort 的 sourceRecordId
-     * 为键返回权威金额；来源身份缺失的交易不进入对账 （显式未知优先于编造身份）。范围对账、授权额度与档案口径统一使用本集合。
-     */
-    private Map<String, BigDecimal> serverTransactionAmounts(CaseEntity caseEntity) {
-        Map<String, BigDecimal> amounts = new LinkedHashMap<>();
-        try {
-            for (TransactionRecord transaction : customerDataPort.transactionsOf(caseEntity.getCustomerId())) {
-                if (transaction.sourceRecordId() == null || transaction.sourceRecordId().isBlank()) {
-                    continue;
-                }
-                amounts.putIfAbsent(transaction.sourceRecordId(), transaction.amount());
-            }
-        }
-        catch (RuntimeException e) {
-            // 来源读取失败：返回空集合 → 调用方按"来源数据缺失"阻断，不静默降级为可解释。
-            return Map.of();
-        }
-        return amounts;
-    }
-
-    /** 授权有效期必须使用服务端交易发生日，客户端 authority.paymentDate 不参与判定。 */
-    private Map<String, LocalDate> serverTransactionDates(CaseEntity caseEntity) {
-        Map<String, LocalDate> dates = new LinkedHashMap<>();
-        try {
-            for (TransactionRecord transaction : customerDataPort.transactionsOf(caseEntity.getCustomerId())) {
-                if (transaction.sourceRecordId() == null || transaction.sourceRecordId().isBlank()
-                        || transaction.date() == null) {
-                    continue;
-                }
-                dates.putIfAbsent(transaction.sourceRecordId(), transaction.date().toLocalDate());
-            }
-        }
-        catch (RuntimeException e) {
-            return Map.of();
-        }
-        return dates;
-    }
-
     /** 同事务持久化材料/问题使用记录（A5-05）：来源变更按本表反查受影响提交。 */
     private void persistEvidenceUses(Long caseId, Long submissionId, JsonNode draft, DraftSummary summary) {
         JsonNode questions = draft.get("questions");
@@ -2371,7 +2157,7 @@ public class ExplanationWorkspaceService implements ExplanationReadinessPort, Ex
         int nextRevision = basisRepository.findTopByCaseIdOrderByBasisRevisionDesc(caseEntity.getId())
             .map(VerificationBasis::getBasisRevision)
             .orElse(0) + 1;
-        Map<String, BigDecimal> sourceAmounts = serverTransactionAmounts(caseEntity);
+        Map<String, BigDecimal> sourceAmounts = serverFacts.amountsOf(caseEntity);
         ObjectNode scopeJson = objectMapper.createObjectNode();
         ObjectNode transactions = scopeJson.putObject("serverTransactions");
         sourceAmounts.forEach((key, value) -> transactions.put(key, value.toPlainString()));
@@ -2433,55 +2219,6 @@ public class ExplanationWorkspaceService implements ExplanationReadinessPort, Ex
             throw new IllegalArgumentException(field + " 必须为 SHA-256 十六进制");
         }
         return normalized;
-    }
-
-    private static String text(JsonNode node, String field) {
-        return text(node, field, "");
-    }
-
-    private static String text(JsonNode node, String field, String defaultValue) {
-        JsonNode value = node.get(field);
-        return value == null || value.isNull() ? defaultValue : value.asText(defaultValue).trim();
-    }
-
-    private static boolean bool(JsonNode node, String field) {
-        JsonNode value = node.get(field);
-        return value != null && value.asBoolean(false);
-    }
-
-    private static List<String> stringList(JsonNode node, String field) {
-        JsonNode value = node.get(field);
-        List<String> result = new ArrayList<>();
-        if (value != null && value.isArray()) {
-            for (JsonNode item : value) {
-                if (!item.isNull()) {
-                    result.add(item.asText().trim());
-                }
-            }
-        }
-        return result;
-    }
-
-    private static List<JsonNode> intList(JsonNode node, String field) {
-        JsonNode value = node.get(field);
-        List<JsonNode> result = new ArrayList<>();
-        if (value != null && value.isArray()) {
-            value.forEach(result::add);
-        }
-        return result;
-    }
-
-    private static <E extends Enum<E>> E parseEnum(Class<E> type, String value, String field) {
-        try {
-            return Enum.valueOf(type, value == null ? "" : value.trim().toUpperCase(Locale.ROOT));
-        }
-        catch (IllegalArgumentException e) {
-            throw new IllegalArgumentException(field + "不在允许范围内：" + value);
-        }
-    }
-
-    private static List<String> dedupe(List<String> values) {
-        return List.copyOf(new LinkedHashSet<>(values));
     }
 
     private static String upper(String value) {

@@ -7,7 +7,15 @@
     <parent>
         <groupId>org.springframework.boot</groupId>
         <artifactId>spring-boot-starter-parent</artifactId>
-        <version>3.5.13</version>
+        <!--
+          3.5.16 而非 3.5.13：依赖漏洞扫描标记了 spring-framework 6.2.17 /
+          spring-security 6.5.9 / tomcat 10.1.53 / jackson 2.21.2 / netty 4.1.132
+          这几个版本，而 3.5.16 把它们分别带到 6.2.19 / 6.5.11 / 10.1.55 /
+          2.21.4 / 4.1.135。**同 minor 内的补丁升级**，API 面不变，
+          是清这类告警风险最低的一步。
+          升级依据与验证过程记在仓库 README 的「依赖安全」一节。
+        -->
+        <version>3.5.16</version>
         <relativePath/>
     </parent>
 
@@ -19,9 +27,42 @@
 
     <properties>
         <java.version>21</java.version>
-        <!-- LangChain4j：core 稳定版与 starter/pgvector 的 beta 发布线对齐 -->
-        <langchain4j.version>1.18.1</langchain4j.version>
-        <langchain4j.beta.version>1.18.1-beta28</langchain4j.beta.version>
+        <!--
+          LangChain4j：**core 稳定线与 starter/pgvector/embeddings 的 beta 线必须同版**。
+
+          两边的版本号是同一个数字加不同的后缀（`1.20.0` ↔ `1.20.0-beta30`），
+          所以"对齐"这件事有明确的判据，不用凭感觉。实测各构件的可用版本：
+
+            dev.langchain4j:langchain4j                  1.19.0 … 1.19.3, 1.20.0
+            dev.langchain4j:langchain4j-spring-boot-starter
+            dev.langchain4j:langchain4j-pgvector         1.19.0-beta29 … 1.19.3-beta29,
+                                                         1.20.0-beta30
+
+          ⚠️ Dependabot 为此开了**两个 PR，而它们的版本互相不配对**：
+          core 提的是 1.19.0、beta 提的是 1.20.0-beta30。**两个都合会把两条线错开**
+          （稳定线停在 1.19.0、beta 线到 1.20.0），正是这里要避免的情况。
+          所以本轮按**最新配对**一起升到 `1.20.0` + `1.20.0-beta30`。
+
+          这不是"猜哪个对"——两边版本号里的数字相同就是配对，`1.19.0` 与
+          `1.20.0-beta30` 不是。
+
+          ⚠️ 另外记一件与漏洞扫描有关的事：**langchain4j 的公告不在扫描器的射程内**。
+          查过 NVD，与它相关的公告只有两条，而**两条都没有 `configurations`/`cpeMatch`
+          区间**——dependency-check 是靠 CPE 区间比对的，没有区间就永远报不出来。
+          所以这个依赖的安全性只能靠人读公告描述：
+
+            CVE-2026-55405 (7.6)  MariaDB 与 **pgvector** embedding store 的元数据过滤
+                                 拼 SQL 造成注入。描述给的修复点是
+                                 1.2.1-beta8 / 1.5.1-beta11 / 1.11.8-beta19 / 1.16.3-beta26，
+                                 本工程改动前(1.18.1-beta28)与改动后(1.20.0-beta30)
+                                 都晚于 1.16.3-beta26 那条线 → 两版都不受影响。
+            CVE-2025-21604 (6.9)  是 **LangChain4j-AIDeepin**——另一个项目，不适用。
+
+          也就是说升级前后都不会因为这条而变红或变绿，**这次升级没有引入已知漏洞**，
+          但这个结论不是扫描器给的。同理见 README「依赖安全」里 Dependabot 覆盖面的那一段。
+        -->
+        <langchain4j.version>1.20.0</langchain4j.version>
+        <langchain4j.beta.version>1.20.0-beta30</langchain4j.beta.version>
         <spring-javaformat.version>0.0.48</spring-javaformat.version>
         <spotbugs-maven-plugin.version>4.10.4.1</spotbugs-maven-plugin.version>
         <jacoco.version>0.8.15</jacoco.version>
@@ -31,7 +72,158 @@
         <!-- 默认测试不依赖 Docker；integration-test profile 显式切换到集成/E2E。 -->
         <test.included-groups></test.included-groups>
         <test.excluded-groups>integration</test.excluded-groups>
+
+        <!--
+          ── 安全补丁：覆盖上游 BOM 管理的版本 ──────────────────────────
+
+          做这件事的前提是先查过 NVD 的**受影响版本区间**，而不是看到扫描器报红就升。
+          区间逐条取自 `services.nvd.nist.gov/rest/json/cves/2.0?cveId=…` 的
+          `configurations[].nodes[].cpeMatch[]`（2026-09-19 查证）。
+
+          下表左边是 Spring Boot 3.5.16 的 BOM 值，右边是本工程的取值：
+
+            tomcat        10.1.55 → 10.1.60     CVE-2026-65905   [10.1.0, 10.1.58)
+            log4j2        2.24.3  → 2.25.5      CVE-2026-34479   [2.7, 2.25.4)
+                                                CVE-2026-49844   [2.25.0, 2.25.5)
+            postgresql    42.7.11 → 42.7.12     CVE-2026-54291   [42.7.4, 42.7.12)
+            netty         4.1.135 → 4.1.138     CVE-2026-89044   [4.1.133, 4.1.138)
+                                                + 21 条落在 [4.1.0, 4.1.136)
+            jackson-bom   2.21.4  → 2.21.5      CVE-2026-54515   [2.21.0, 2.21.5)
+            commons-lang3 3.17.0  → 3.18.0      CVE-2025-48924   [3.0, 3.18.0)
+
+          取的都是**修复线**，不是"最新版"：log4j 有更新的 2.26.x、jackson 有 2.21.6，
+          但它们不是任何一条公告的要求，跨 minor 升级徒增风险。
+
+          **tomcat 10.1.58 从未发布**（仓库里 10.1.57 的下一个就是 10.1.59），
+          所以取 10.1.60。全是补丁级提升，API 面不变。
+
+          opennlp **不在 Spring Boot 的 BOM 里**（它来自 flyway-database-postgresql
+          的传递依赖），只能靠下面的 dependencyManagement 显式锁版本。
+
+          ── 故意不覆盖的：修复版本尚未发布 ────────────────────────────
+          记在这里免得以后有人重复尝试。每条的修复版一旦出现在 Central，
+          把对应属性加进来即可（与上表同一种做法）：
+
+            spring-framework   6.2.0 ≤ v ≤ 6.2.19 → 修复 6.2.20，**未发布**
+                               CVE-2026-47883/47884/47885/47886/47887/47888/
+                               47889/47890/47891/47892/47893、59280/59281/
+                               59282/59283、59313、59314 —— 共 17 条，
+                               其中 12 条 ≥7 分，是构建变红的直接原因
+                               实测 6.2.x 在 Central 上最新就是 6.2.19
+            spring-security    6.5.0 ≤ v ≤ 6.5.11 → 修复 6.5.12，**未发布**
+                               CVE-2026-47841/47842/59270/59276 —— 共 4 条，其中 2 条阻断
+            spring-data-jpa    3.5.13 落在区间内   → 修复 3.5.14，**未发布**
+                               CVE-2026-47834(4.8)——**低于阈值 7，不阻断**，
+                               3.5.x 最新就是 3.5.13
+            mysql-connector-j  → **已处理**，见下面的 `<mysql.version>`（9.7.0 → 26.7.0）
+                               本行原写作"**不存在可取的修复版本**"，依据是
+                               "9.7.1 在 Central 上根本不存在（9.x 最新就是 9.7.0）"。
+                               **那句话只在 9.x 线上成立**——Oracle 已经改用年份制
+                               版本号，26.7.0（2026-07-29）就是这两条的修复版，
+                               而两条公告发布于 2026-07-21。查出来的是
+                               `scripts/check_dependency_fix_availability.py`。
+                               CVE-2026-60586(7.7) / CVE-2026-60623(7.1)
+
+          ── 上面这些在 3.5.x 线上无解，但换一条线就有解 ────────────────
+          实测（对比 spring-boot-dependencies 3.5.16 与 4.1.1 的 BOM 属性，
+          再拿版本逐条比对 NVD 的受影响区间，脚本算的）：
+
+            spring-framework  6.2.19 → 12/12 仍在区间内   7.0.9（Boot 4）→ 0/12 ✓
+            spring-security   6.5.11 →  2/2 仍在区间内   7.1.1（Boot 4）→ 0/2  ✓
+
+          **Spring Boot 4.1.1 能清掉那 16 条里的 14 条**（spring 全部）。
+          剩下的 mysql-connector-j 2 条不需要走这条路——它另有年份制版本 26.7.0，
+          已单独处理，见上面的 `<mysql.version>`。
+
+          所以这里不是"修不了"，是**剩下这 14 条唯一的路是一次大版本迁移**：
+          Boot 3.5 → 4.x
+          会带上 Jakarta EE 11 / Tomcat 11 / Spring Security 7 / Jackson 3
+          （连 artifact 坐标都换成 tools.jackson.*），不是属性覆盖能解决的。
+          该不该走这一步是项目决策——Dependabot 的 PR #12 提议过，但它同时
+          改写了本文件上面那段注释的正文，不能直接合。详见 README「依赖安全」。
+
+          ── 一处曾写错、现已纠正的说明 ────────────────────────────────
+          本注释早先写着：「kotlin-stdlib-jdk7 / jdk8 在 Kotlin 2.x 已不再发布，
+          覆盖到 2.4.20 会直接打断依赖树」。**这句是错的**——查 Central 的
+          maven-metadata，这两个 artifact 的 release 就是 2.4.20，一直在发。
+          处理方式见 README「依赖安全」一节。
+        -->
+        <tomcat.version>10.1.60</tomcat.version>
+        <log4j2.version>2.25.5</log4j2.version>
+        <postgresql.version>42.7.12</postgresql.version>
+        <netty.version>4.1.138.Final</netty.version>
+        <jackson-bom.version>2.21.5</jackson-bom.version>
+        <commons-lang3.version>3.18.0</commons-lang3.version>
+        <!--
+          MySQL Connector/J：9.7.0 → 26.7.0。
+
+          Oracle 把版本号从 `9.x` 换成了**年份制**（`26.7.0` = 2026 年 7 月），
+          所以"往上找"看到的是一个比 9.7.0 大很多的数字——**它不是一次跨线升级**，
+          只是同一条线上换了个编号方式。判定依据（`scripts/check_dependency_fix_availability.py`
+          跑的，2026-09-21）：
+
+            NVD 的 CVE-2026-60586(7.7) / CVE-2026-60623(7.1) 两条的受影响版本写的是
+            **显式的 {9.7.0, 9.7.1}**（不是区间，所以退回 9.6.0 也"不在范围内"，
+            那是降级），26.7.0 不在其中；26.7.0 发布于 2026-07-29，
+            两条公告发布于 2026-07-21——晚 8 天。
+
+          本文件此前的注释写着「Oracle 尚未给出可取的修复版」，依据是
+          「9.7.1 在 Central 上不存在、9.x 最新就是 9.7.0」。**那句话只在 9.x 线上成立**，
+          而 Oracle 已经不在 9.x 线上发了。
+
+          升级前核对过（下载 26.7.0 的 pom 与 jar 实测）：传递依赖与 9.7.0 **完全相同**
+          （protobuf-java 4.31.1 + 可选的 oci-java-sdk-common），没有引入新的漏洞面；
+          驱动类名仍是 `com.mysql.cj.jdbc.Driver`，字节码版本 52（Java 8+），
+          对 Java 21 与 MySQL 8.0 服务端都成立。
+
+          **「清掉了」的判据是扫描结果里这两条不再出现**，不是这次改动的推断。
+          已验证：2026-09-21 CI（提交 `12b145a`）的分类器输出从 **17 条降到 15 条**，
+          且 `com.mysql/mysql-connector-j` 整条从归并结果里消失。
+        -->
+        <mysql.version>26.7.0</mysql.version>
     </properties>
+
+    <!--
+      两个包不在 Spring Boot 的 BOM 里，只能用 dependencyManagement 显式锁版本。
+
+      · opennlp-tools：CVE-2026-82617 是 CVSS 10.0（`RegexNameFinder` 的正则回溯），
+        受影响区间 2.0.0 ≤ v < 2.5.12，上游传递依赖（flyway-database-postgresql）给的是 2.5.9。
+
+      · swagger-ui（webjar）：springdoc 2.8.14 带的是 5.30.1，**它内嵌的 DOMPurify 是 3.2.6**，
+        命中 CVE-2026-65898（`setConfig()` 配 `uponSanitizeAttribute` 钩子时不克隆
+        ALLOWED_ATTR 白名单，钩子因此能永久改写共享白名单；修复线 3.4.11）。
+
+        取 **5.32.15**——它是这个 webjar 的**最新版**，内嵌 **DOMPurify 3.4.13**。
+        之所以不是停在修复 65898 的 3.4.12：升到 3.4.12 之后扫描立刻报出下一条
+        CVE-2026-75838（DOMPurify < 3.4.13，IN_PLACE 净化时元素移除钩子未能中和
+        已脱离文档的子树，导致净化完成后后代元素上的事件处理器仍会执行）。
+        3.4.13 同时覆盖这两条。
+
+        这条是**真升级，不是豁免**。升级前实测确认了 compat：5.30.1 与 5.32.11 的
+        `index.html` 与 `swagger-initializer.js` **逐字节相同**（各 734 / 539 字节），
+        5.32.15 与 5.32.11 也相同——而这两个正是 springdoc 的
+        SwaggerIndexPageTransformer 唯一会改写的东西；同时 springdoc 的 class 文件里
+        搜不到任何硬编码的 `5.30.1`（webjar 路径由 Spring 的 WebJarsResourceResolver
+        从 jar 内的 `META-INF/maven/org.webjars/swagger-ui/pom.properties` 动态解析）。
+
+        另记：即便不升级，65898 在本工程里也不可触达——实测两版 swagger-ui 的 bundle 里
+        `DOMPurify.setConfig(...)` **一次调用都没有**，只有它自己的定义。
+        但「不可触达」要靠人读源码判断、且会随版本漂移；升一个 webjar 更省事，也更结实。
+    -->
+    <dependencyManagement>
+        <dependencies>
+            <dependency>
+                <groupId>org.apache.opennlp</groupId>
+                <artifactId>opennlp-tools</artifactId>
+                <version>2.5.12</version>
+            </dependency>
+            <dependency>
+                <groupId>org.webjars</groupId>
+                <artifactId>swagger-ui</artifactId>
+                <version>5.32.15</version>
+            </dependency>
+        </dependencies>
+    </dependencyManagement>
 
     <dependencies>
         <!-- Web / SSE 实时推送 -->
@@ -82,7 +274,41 @@
             <groupId>io.micrometer</groupId>
             <artifactId>micrometer-registry-prometheus</artifactId>
         </dependency>
-        <!-- 分布式追踪：Micrometer Tracing 桥接到 OpenTelemetry，并导出 OTLP -->
+        <!--
+          分布式追踪：Micrometer Tracing 桥接到 OpenTelemetry，并导出 OTLP。
+
+          ⚠️ 这里**换掉了 OTLP 的 okhttp 发送器**，改用纯 JDK 的。
+          原因不是 okhttp 本身有问题，是它拖进来的一整条子树：
+
+              opentelemetry-exporter-otlp
+                └─ exporter-sender-okhttp → okhttp → okio → kotlin-stdlib(-jdk7/-jdk8)
+
+          `kotlin-stdlib` 在本工程里是**纯粹的陪嫁**（本项目零 Kotlin 代码），
+          但它在依赖漏洞扫描里占了两条，其中 CVE-2026-53914 是 9.8：
+
+            CVE-2026-53914  描述是"Kotlin 构建缓存元数据的不安全反序列化"——
+                            受影响的是编译器 / Gradle 插件，不是运行时 stdlib。
+                            但 NVD 只有一个笼统的 cpe:2.3:a:jetbrains:kotlin，
+                            dependency-check 就把 stdlib 这个 jar 配了上去。
+            CVE-2020-29582  **NVD 自己的区间与描述矛盾**：描述写"before 1.4.21"
+                            即 1.4.21 已修，CPE 区间却写成 `[, 2.1.0)`，
+                            于是 1.9.25 被卷进去——本工程远在修复线之后。
+
+          两条都可以写成豁免，但那等于在门禁上贴两张"这次不算"。把发送器换成
+          `opentelemetry-exporter-sender-jdk`（只依赖 exporter-common + sdk-common，
+          **不带 okhttp / okio / Kotlin**）是同一件事的结构性解法：
+          依赖树里不再有那个 jar，也就不需要任何豁免。
+
+          两者通过 `META-INF/services/io.opentelemetry.exporter.internal.http.HttpSenderProvider`
+          注册，是可互换的实现（已比对过两个 jar 的 services 文件）。
+
+          ⚠️ **代价要说清楚**：`sender-jdk` 只注册 HttpSenderProvider，
+          没有 GrpcSenderProvider（okhttp 那个两个都注册）。所以换掉之后
+          **只能走 OTLP/HTTP**（4318），不能配 `management.otlp.tracing.transport=grpc`。
+          这在本工程是可以接受的：Spring Boot 的 OTLP 导出器默认就是 http/protobuf，
+          且 application.yml 默认根本不导出（见那里的说明）。
+          将来若真需要 gRPC，把 okhttp 发送器加回来即可，但要连带接受上面两条告警。
+        -->
         <dependency>
             <groupId>io.micrometer</groupId>
             <artifactId>micrometer-tracing-bridge-otel</artifactId>
@@ -90,6 +316,16 @@
         <dependency>
             <groupId>io.opentelemetry</groupId>
             <artifactId>opentelemetry-exporter-otlp</artifactId>
+            <exclusions>
+                <exclusion>
+                    <groupId>io.opentelemetry</groupId>
+                    <artifactId>opentelemetry-exporter-sender-okhttp</artifactId>
+                </exclusion>
+            </exclusions>
+        </dependency>
+        <dependency>
+            <groupId>io.opentelemetry</groupId>
+            <artifactId>opentelemetry-exporter-sender-jdk</artifactId>
         </dependency>
 
         <!-- 安全：Spring Security + JWT -->
@@ -148,7 +384,7 @@
         <dependency>
             <groupId>org.apache.poi</groupId>
             <artifactId>poi-ooxml</artifactId>
-            <version>5.4.1</version>
+            <version>5.5.1</version>
         </dependency>
 
         <!-- OpenAPI / Swagger -->
@@ -305,6 +541,22 @@
                 <!-- 使用一个不存在的标签表示不排除 integration。 -->
                 <test.excluded-groups>__none__</test.excluded-groups>
             </properties>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-surefire-plugin</artifactId>
+                        <configuration>
+                            <!--
+                                集成测试的报告写到独立目录：两者共用 target/surefire-reports 时，
+                                后跑的一次会把前一次的结果盖掉/混进来，于是"单元测试有多少项、失败几项"
+                                变成一个取决于运行顺序的数字。scripts/test_summary.py 按目录分栏统计。
+                            -->
+                            <reportsDirectory>${project.build.directory}/surefire-reports-integration</reportsDirectory>
+                        </configuration>
+                    </plugin>
+                </plugins>
+            </build>
         </profile>
     </profiles>
 </project>
