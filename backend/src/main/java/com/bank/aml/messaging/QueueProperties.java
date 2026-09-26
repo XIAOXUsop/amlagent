@@ -63,7 +63,22 @@ public class QueueProperties {
     @Max(60_000)
     private long consumerPollTimeoutMs = 300;
 
-    /** 重试指数退避基数（秒）：delay = base * 2^retry */
+    /**
+     * 重试指数退避基数（秒）。
+     *
+     * <p>
+     * <b>⚠️ 两条重试路径共用这个基数，但公式不同</b>，别只看属性名就假定一种：
+     *
+     * <ul>
+     * <li><b>Outbox 发布重试</b>（{@code OutboxPublisher}）：{@code base * 2^retry}， 指数由
+     * {@link #retryBackoffExponentCap} 封顶 → <b>5s / 10s / 20s / 40s …</b></li>
+     * <li><b>工单处理重试</b>（{@code WorkflowMessageHandler#backoffSeconds}）：
+     * {@code base * 3^(retry-1)}，由 {@link #maxRetry} 封顶（默认 3）→ <b>5s / 15s / 45s</b></li>
+     * </ul>
+     *
+     * <p>
+     * 发布重试与工单处理重试使用不同的退避公式，配置时应分别核对。
+     */
     @Min(1)
     private int retryBackoffSeconds = 5;
 

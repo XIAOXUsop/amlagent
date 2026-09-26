@@ -12,6 +12,8 @@
 
 from __future__ import annotations
 
+import contextlib
+import io
 import tempfile
 import unittest
 from pathlib import Path
@@ -19,7 +21,10 @@ from pathlib import Path
 from classify_dependency_scan import (
     CACHEABLE_VERDICTS,
     MESSAGES,
+    blocking_findings,
     classify,
+    findings_annotations,
+    findings_summary,
     main,
     message_for,
 )
@@ -81,6 +86,12 @@ org.owasp.dependencycheck.data.update.exception.UpdateException: Error updating 
 
 
 class ClassifyTests(unittest.TestCase):
+    def test_each_blocked_dependency_can_be_read_as_an_annotation(self) -> None:
+        annotations = findings_annotations(REAL_INCIDENT_LOG)
+        self.assertEqual(len(annotations), 2)
+        self.assertIn("org.apache.opennlp/opennlp-tools@2.5.9", annotations[0])
+        self.assertIn("CVE-2026-82617 (10)", annotations[0])
+
     def test_real_incident_is_classified_as_findings(self) -> None:
         """耗时里的 429 不得把「真发现漏洞」盖成「数据源挂了」。"""
         self.assertEqual(classify(REAL_INCIDENT_LOG), "findings")
@@ -207,6 +218,197 @@ class MessageTests(unittest.TestCase):
         """数据源失败最容易被误读成「扫过了，没问题」——两种说法都要堵住。"""
         for log in (NO_KEY_RATE_LIMIT_LOG, RATE_LIMITED_LOG):
             self.assertIn("没有检查任何依赖", message_for("data-source", log))
+
+
+class OutputEncodingTests(unittest.TestCase):
+    """输出必须能在 GBK 终端里打出来。
+
+    **事故**（2026-09-19）：`FINDINGS_MESSAGE` 里用了「警告三角」emoji
+    （U+26A0 + U+FE0F），在没有 `PYTHONIOENCODING=utf-8` 的 Windows 默认终端下，
+    打印它直接抛 `UnicodeEncodeError: 'gbk' codec can't encode character '\\u26a0'`。
+    讽刺的是：**只有在真的扫出漏洞时才会走到那句话**——也就是说，
+    最该被人看到的结论，恰好是被一个编码错误顶掉的那一个。
+
+    （这里不写出那个字符本身：写进来会让「扫全文件找不可编码字符」的检查
+      在文档里命中它，产生一条假告警。）
+
+    这里**不测「某个字符还在不在」**，而是把所有消息路径都塞进一个 GBK 输出流里跑一遍。
+    前者防不住下一条消息再引入一个别的符号；后者对新消息自动生效。
+    """
+
+    class _GbkStream(io.TextIOBase):
+        """把写进来的内容按 GBK 编码——编不出就抛，跟真实终端一样。"""
+
+        def __init__(self) -> None:
+            self._buffer = bytearray()
+
+        def write(self, text: str) -> int:
+            self._buffer += text.encode("gbk")  # 编不出就在这里抛
+            return len(text)
+
+        def flush(self) -> None:  # pragma: no cover - 只为接口完整
+            pass
+
+        def decoded(self) -> str:
+            return self._buffer.decode("gbk")
+
+    def _run_into_gbk(self, log_text: str) -> str:
+        with tempfile.TemporaryDirectory() as tmp:
+            log = Path(tmp) / "dependency-scan.log"
+            log.write_text(log_text, encoding="utf-8")
+            stream = self._GbkStream()
+            with contextlib.redirect_stdout(stream):
+                self.assertEqual(main(["classify_dependency_scan.py", str(log)]), 0)
+            return stream.decoded()
+
+    def test_findings_message_survives_gbk(self) -> None:
+        """**这条是本次事故的回归用例**：真扫出漏洞时那句注解必须打得出来。"""
+        out = self._run_into_gbk(REAL_INCIDENT_LOG)  # 不抛就算过
+        self.assertIn("kind=findings", out)
+        self.assertIn("[warning]", out)
+        self.assertTrue(out.startswith("kind=") or "::error::" in out)
+
+    def test_every_message_kind_survives_gbk(self) -> None:
+        """三种判定各自的消息都过一遍——防止下一条消息再引入别的符号。"""
+        for label, log_text in (
+            ("findings", REAL_INCIDENT_LOG),
+            ("data-source（没密钥）", NO_KEY_RATE_LIMIT_LOG),
+            ("data-source（配了密钥）", RATE_LIMITED_LOG),
+            ("unknown", UNKNOWN_LOG),
+        ):
+            with self.subTest(kind=label):
+                self._run_into_gbk(log_text)  # 抛了就红
+
+    def test_actions_annotation_format_is_preserved(self) -> None:
+        """换成 ASCII 不能把 GitHub Actions 的注解锁头也改掉。
+
+        `::error::` 是 Actions 识别的命令前缀；消息正文里出现 `[warning]` 只是文字，
+        不会被当成注解——但如果哪天把前缀也改成非 ASCII，注解会静默失效。
+        """
+        for message in MESSAGES.values():
+            self.assertTrue(message.startswith("::error::"), message[:40])
+
+    def test_no_message_contains_symbols_gbk_cannot_encode(self) -> None:
+        """消息里的字符都必须能被 GBK 编码——与终端一致的门槛，一次堵死同类问题。
+
+        中文字符合法（GBK 编得出），被挡的是 ASCII 之外的各类符号与 emoji。
+        """
+        for kind, message in MESSAGES.items():
+            with self.subTest(kind=kind):
+                bad = sorted({c for c in message if not _encodable_in_gbk(c)})
+                self.assertEqual(bad, [], f"{kind} 的消息里有 GBK 编不出的字符: {bad}")
+
+
+def _encodable_in_gbk(ch: str) -> bool:
+    try:
+        ch.encode("gbk")
+        return True
+    except UnicodeEncodeError:
+        return False
+
+
+# 节选自 2026-09-19 的真实 job 日志（apply 之后同一份格式）。
+# 关键在于它**同时**含同一个依赖的两种形态：
+#   · 上半部分的 `Identified` 行——只有 CVE 号、**没有分数**，不是阻断项
+#   · 下半部分的 `[ERROR]` 行——带 `(9.8)` 这样的分数，才是阻断项
+# 只按「含 CVE 且含 pkg:maven」去数，会把前者也数进去，条数直接翻倍。
+REAL_FINDINGS_LOG = """\
+[INFO] spring-core-6.2.19.jar (pkg:maven/org.springframework/spring-core@6.2.19, cpe:2.3:a:vmware:spring_framework:6.2.19:*:*:*:*:*:*:*): CVE-2026-47884, CVE-2026-47890, CVE-2026-47885
+[INFO] spring-data-jpa-3.5.13.jar (pkg:maven/org.springframework.data/spring-data-jpa@3.5.13, cpe:2.3:a:vmware:spring_data_jpa:3.5.13:*:*:*:*:*:*:*): CVE-2026-47834
+[ERROR] One or more dependencies were identified with vulnerabilities that have a CVSS score greater than or equal to '7.0':
+[ERROR]
+[ERROR] mysql-connector-j-9.7.0.jar (pkg:maven/com.mysql/mysql-connector-j@9.7.0, cpe:2.3:a:oracle:mysql_connector\\/j:9.7.0:*:*:*:*:*:*:*): CVE-2026-60586(7.7), CVE-2026-60623(7.1)
+[ERROR] spring-core-6.2.19.jar (pkg:maven/org.springframework/spring-core@6.2.19, cpe:2.3:a:vmware:spring_framework:6.2.19:*:*:*:*:*:*:*): CVE-2026-47884(9.8), CVE-2026-47890(9.8), CVE-2026-47885(7.5)
+[ERROR]
+[ERROR] See the dependency-check report for more details.
+[INFO] BUILD FAILURE
+"""
+
+
+class BlockingFindingsTests(unittest.TestCase):
+    """把「在阻塞什么」从日志里数出来，喂给 CI 的摘要输出。"""
+
+    def test_only_scored_entries_count(self) -> None:
+        """这条是最要紧的：同依赖的无分数行不是阻断项，不能数进去。"""
+        rows = blocking_findings(REAL_FINDINGS_LOG)
+        total = sum(len(cves) for _, _, cves in rows)
+        self.assertEqual(total, 5, "3 + 2，而不是把上半部分那 3 条无分数行也算一遍")
+
+    def test_sub_threshold_only_dependency_is_not_blocking(self) -> None:
+        """spring-data-jpa 只出现在「Identified」里、分数低于阈值——它不是阻断项。
+
+        这条是拿 2026-09-19 的真实日志核过的：那份日志里
+        `spring-data-jpa-3.5.13.jar … : CVE-2026-47834` 确实没有分数。
+        把它数进去会凭空多报一个"受影响依赖"，而 README 明确记着
+        这 8 条分数低于阈值、不阻断。
+        """
+        self.assertNotIn(
+            "spring-data-jpa",
+            "\n".join(findings_summary(REAL_FINDINGS_LOG)),
+        )
+
+    def test_grouped_by_coordinate_and_version(self) -> None:
+        rows = blocking_findings(REAL_FINDINGS_LOG)
+        self.assertEqual(
+            [(ga, ver) for ga, ver, _ in rows],
+            [("org.springframework/spring-core", "6.2.19"), ("com.mysql/mysql-connector-j", "9.7.0")],
+        )
+
+    def test_sorted_by_highest_score(self) -> None:
+        rows = blocking_findings(REAL_FINDINGS_LOG)
+        self.assertEqual(rows[0][2][0], ("CVE-2026-47884", 9.8))
+        scores = [cves[0][1] for _, _, cves in rows]
+        self.assertEqual(scores, sorted(scores, reverse=True))
+
+    def test_duplicate_lines_do_not_double_count(self) -> None:
+        """同一 (坐标,版本) 重复出现时按 CVE 去重，且分数取最大值。"""
+        twice = REAL_FINDINGS_LOG + "\n".join(
+            [
+                "[ERROR] spring-core-6.2.19.jar (pkg:maven/org.springframework/spring-core@6.2.19):"
+                " CVE-2026-47884(1.0), CVE-2026-99999(8.0)",
+            ]
+        )
+        rows = dict(((ga, ver), cves) for ga, ver, cves in blocking_findings(twice))
+        cves = dict(rows[("org.springframework/spring-core", "6.2.19")])
+        self.assertEqual(cves["CVE-2026-47884"], 9.8, "重复项里的低分不得覆盖高分")
+        self.assertIn("CVE-2026-99999", cves)
+
+    def test_clean_log_yields_no_summary_at_all(self) -> None:
+        """解析不出条目时返回空——**不打印「阻塞 0 条」**，那会被读成「没有阻断项」。"""
+        self.assertEqual(findings_summary(RATE_LIMITED_LOG), [])
+        self.assertEqual(findings_summary(UNKNOWN_LOG), [])
+
+    def test_summary_states_the_total_and_the_top_score(self) -> None:
+        text = "\n".join(findings_summary(REAL_FINDINGS_LOG))
+        self.assertIn("阻塞 5 条", text)
+        self.assertIn("org.springframework/spring-core@6.2.19 — 3 条（最高 9.8）", text)
+        self.assertIn("com.mysql/mysql-connector-j@9.7.0 — 2 条（最高 7.7）", text)
+
+    def test_short_cve_lists_are_listed_in_full(self) -> None:
+        """3 条就全列出来——截断只在真的长的时候用。"""
+        text = "\n".join(findings_summary(REAL_FINDINGS_LOG))
+        self.assertIn("CVE-2026-47884、CVE-2026-47890、CVE-2026-47885", text)
+        self.assertNotIn("等 3 条", text)
+
+    def test_long_cve_lists_are_truncated(self) -> None:
+        """spring-core 那种一次 12 条的要收着写，否则注解长得没法读。"""
+        many = "[ERROR] x.jar (pkg:maven/g/a@1): " + ", ".join(f"CVE-2026-{10000 + i}(9.8)" for i in range(12))
+        text = "\n".join(findings_summary(REAL_FINDINGS_LOG + many))
+        self.assertIn("g/a@1 — 12 条（最高 9.8）", text)
+        self.assertIn("等 12 条", text)
+
+    def test_main_prints_the_summary_only_for_findings(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            good = Path(tmp) / "findings.log"
+            good.write_text(REAL_FINDINGS_LOG, encoding="utf-8")
+            bad = Path(tmp) / "rate.log"
+            bad.write_text(RATE_LIMITED_LOG, encoding="utf-8")
+            for name, expect in ((good, True), (bad, False)):
+                with self.subTest(log=name.name):
+                    buffer = io.StringIO()
+                    with contextlib.redirect_stdout(buffer):
+                        self.assertEqual(main(["classify_dependency_scan.py", str(name)]), 0)
+                    self.assertEqual("阻塞" in buffer.getvalue(), expect)
 
 
 if __name__ == "__main__":
