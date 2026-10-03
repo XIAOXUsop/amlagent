@@ -69,6 +69,7 @@ jobs:
       - uses: actions/checkout@v6
       - name: Scan for secrets
         run: |
+          command -v grep >/dev/null || { echo "::error::密钥扫描工具不可用，未执行扫描"; exit 1; }
           # ── 值那一侧的引号是**可选**的 ──────────────────────────────────
           #
           # 这里原先要求值必须**带引号**（`['\"]`），而本仓库的配置全是 YAML / properties，
