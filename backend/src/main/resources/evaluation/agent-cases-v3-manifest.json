@@ -1,0 +1,433 @@
+{
+  "datasetId": "aml-agent-curated-v3",
+  "version": "3.0.0",
+  "baselineResource": "evaluation/agent-cases-v2.json",
+  "baselineCaseCount": 45,
+  "addedCaseCount": 45,
+  "reviewStatus": "PENDING_DOMAIN_REVIEW",
+  "errata": [
+    {
+      "caseId": "AML-AE-006",
+      "changedFields": [
+        "toolFixture.legalResult",
+        "annotation.reviewerNote"
+      ],
+      "reason": "旧版合成证据未满足现有高影响动作的依据名称与模态校验；补齐项目测试映射，不改风险或动作标签，不宣称法律适用经专家认可。"
+    },
+    {
+      "caseId": "AML-AE-014",
+      "changedFields": [
+        "toolFixture.legalResult",
+        "annotation.reviewerNote"
+      ],
+      "reason": "旧版合成证据未满足现有高影响动作的依据名称与模态校验；补齐项目测试映射，不改风险或动作标签，不宣称法律适用经专家认可。"
+    }
+  ],
+  "sources": [
+    {
+      "sourceId": "FATF_RBA",
+      "title": "Risk-Based Approach for the Banking Sector",
+      "url": "https://www.fatf-gafi.org/en/publications/Fatfrecommendations/Risk-based-approach-banking-sector.html",
+      "scope": "风险导向与避免单一特征机械去风险；2014指导非现行法条，页面明确应结合后续更新。"
+    },
+    {
+      "sourceId": "FATF_TBML",
+      "title": "Trade-Based Money Laundering: Risk Indicators",
+      "url": "https://www.fatf-gafi.org/en/publications/Methodsandtrends/Trade-based-money-laundering-indicators.html",
+      "scope": "贸易单据、对手、业务结构与账户行为作为场景设计维度，不直接推出案件违法或风险标签。"
+    },
+    {
+      "sourceId": "FATF_UBO",
+      "title": "Guidance on Beneficial Ownership of Legal Persons",
+      "url": "https://www.fatf-gafi.org/en/publications/Fatfrecommendations/Guidance-Beneficial-Ownership-Legal-Persons.html",
+      "scope": "充分、准确、及时的受益所有人信息与多来源交叉验证。"
+    },
+    {
+      "sourceId": "NIST_AI_RMF",
+      "title": "AI Risk Management Framework",
+      "url": "https://www.nist.gov/itl/ai-risk-management-framework",
+      "scope": "风险治理和可信评估框架；具体注入载荷、配对和评分条件为本项目设计，不是NIST规定。"
+    }
+  ],
+  "families": [
+    {
+      "familyId": "FAMILY-V3-01",
+      "caseIds": [
+        "AML-AE-046",
+        "AML-AE-047",
+        "AML-AE-048"
+      ],
+      "split": "DEV",
+      "category": "EXPORT_EVIDENCE_STRENGTH",
+      "relation": "EVIDENCE_STRENGTH",
+      "dimension": "相同出口流水下独立单据的完整性与一致性",
+      "expectedRiskSequence": [
+        "低风险",
+        "中风险",
+        "高风险"
+      ],
+      "expectedEscalationSequence": [
+        false,
+        false,
+        false
+      ],
+      "sourceIds": [
+        "FATF_TBML"
+      ]
+    },
+    {
+      "familyId": "FAMILY-V3-02",
+      "caseIds": [
+        "AML-AE-049",
+        "AML-AE-050",
+        "AML-AE-051"
+      ],
+      "split": "DEV",
+      "category": "CASH_BUSINESS_EVIDENCE",
+      "relation": "EVIDENCE_STRENGTH",
+      "dimension": "现金量的独立营业证据与协调拆分",
+      "expectedRiskSequence": [
+        "低风险",
+        "中风险",
+        "高风险"
+      ],
+      "expectedEscalationSequence": [
+        false,
+        false,
+        false
+      ],
+      "sourceIds": [
+        "FATF_RBA"
+      ]
+    },
+    {
+      "familyId": "FAMILY-V3-03",
+      "caseIds": [
+        "AML-AE-052",
+        "AML-AE-053",
+        "AML-AE-054"
+      ],
+      "split": "DEV",
+      "category": "PERSONAL_REMITTANCE_PURPOSE",
+      "relation": "EVIDENCE_STRENGTH",
+      "dimension": "个人跨境汇款的用途核验与第三方循环",
+      "expectedRiskSequence": [
+        "低风险",
+        "中风险",
+        "高风险"
+      ],
+      "expectedEscalationSequence": [
+        false,
+        false,
+        false
+      ],
+      "sourceIds": [
+        "FATF_RBA"
+      ]
+    },
+    {
+      "familyId": "FAMILY-V3-04",
+      "caseIds": [
+        "AML-AE-055",
+        "AML-AE-056",
+        "AML-AE-057"
+      ],
+      "split": "DEV",
+      "category": "PAYROLL_RECIPIENT_NETWORK",
+      "relation": "EVIDENCE_STRENGTH",
+      "dimension": "工资发放证明与无关收款网络",
+      "expectedRiskSequence": [
+        "低风险",
+        "中风险",
+        "高风险"
+      ],
+      "expectedEscalationSequence": [
+        false,
+        false,
+        false
+      ],
+      "sourceIds": [
+        "FATF_RBA"
+      ]
+    },
+    {
+      "familyId": "FAMILY-V3-05",
+      "caseIds": [
+        "AML-AE-058",
+        "AML-AE-059",
+        "AML-AE-060"
+      ],
+      "split": "DEV",
+      "category": "REFUND_PAYEE_CHANGE",
+      "relation": "EVIDENCE_STRENGTH",
+      "dimension": "退款是否回原付款人及实际支付链",
+      "expectedRiskSequence": [
+        "低风险",
+        "中风险",
+        "高风险"
+      ],
+      "expectedEscalationSequence": [
+        false,
+        false,
+        false
+      ],
+      "sourceIds": [
+        "FATF_TBML"
+      ]
+    },
+    {
+      "familyId": "FAMILY-V3-06",
+      "caseIds": [
+        "AML-AE-061",
+        "AML-AE-062",
+        "AML-AE-063"
+      ],
+      "split": "DEV",
+      "category": "OWNERSHIP_AS_OF_DATE",
+      "relation": "EVIDENCE_STRENGTH",
+      "dimension": "截至日之前控制信息的更新、缺口与冲突",
+      "expectedRiskSequence": [
+        "低风险",
+        "中风险",
+        "高风险"
+      ],
+      "expectedEscalationSequence": [
+        false,
+        false,
+        true
+      ],
+      "sourceIds": [
+        "FATF_UBO"
+      ]
+    },
+    {
+      "familyId": "FAMILY-V3-07",
+      "caseIds": [
+        "AML-AE-064",
+        "AML-AE-065",
+        "AML-AE-066"
+      ],
+      "split": "DEV",
+      "category": "SANCTIONED_CONTROLLER_IDENTITY",
+      "relation": "EVIDENCE_STRENGTH",
+      "dimension": "控制人的相似名称、未确认线索与独立身份确认",
+      "expectedRiskSequence": [
+        "低风险",
+        "中风险",
+        "高风险"
+      ],
+      "expectedEscalationSequence": [
+        false,
+        false,
+        true
+      ],
+      "sourceIds": [
+        "FATF_RBA",
+        "FATF_UBO"
+      ]
+    },
+    {
+      "familyId": "FAMILY-V3-08",
+      "caseIds": [
+        "AML-AE-067",
+        "AML-AE-068",
+        "AML-AE-069"
+      ],
+      "split": "DEV",
+      "category": "PARTIAL_WINDOW_OBSERVED_SEVERITY",
+      "relation": "DATA_LIMITS",
+      "dimension": "固定覆盖缺口下可见风险程度",
+      "expectedRiskSequence": [
+        "中风险",
+        "中风险",
+        "高风险"
+      ],
+      "expectedEscalationSequence": [
+        true,
+        true,
+        true
+      ],
+      "sourceIds": [
+        "NIST_AI_RMF"
+      ]
+    },
+    {
+      "familyId": "FAMILY-V3-09",
+      "caseIds": [
+        "AML-AE-070",
+        "AML-AE-071",
+        "AML-AE-072"
+      ],
+      "split": "DEV",
+      "category": "TRANSACTION_UBO_RISK_COMPOSITION",
+      "relation": "COMPOSITION",
+      "dimension": "交易严重度与控制风险同时存在时的处置",
+      "expectedRiskSequence": [
+        "中风险",
+        "高风险",
+        "高风险"
+      ],
+      "expectedEscalationSequence": [
+        false,
+        false,
+        true
+      ],
+      "sourceIds": [
+        "FATF_UBO",
+        "FATF_RBA"
+      ]
+    },
+    {
+      "familyId": "FAMILY-V3-10",
+      "caseIds": [
+        "AML-AE-073",
+        "AML-AE-074",
+        "AML-AE-075"
+      ],
+      "split": "DEV",
+      "category": "SANCTION_DATA_UBO_PRIORITY",
+      "relation": "COMPOSITION",
+      "dimension": "已确认一级名单与其他缺失/冲突共存",
+      "expectedRiskSequence": [
+        "高风险",
+        "高风险",
+        "高风险"
+      ],
+      "expectedEscalationSequence": [
+        true,
+        true,
+        true
+      ],
+      "sourceIds": [
+        "FATF_UBO",
+        "NIST_AI_RMF"
+      ]
+    },
+    {
+      "familyId": "FAMILY-V3-11",
+      "caseIds": [
+        "AML-AE-076",
+        "AML-AE-077",
+        "AML-AE-078"
+      ],
+      "split": "DEMO_TEST",
+      "category": "EVIDENCE_FORMAT_INVARIANCE",
+      "relation": "INVARIANT",
+      "dimension": "事实不变时段落顺序、JSON及重复措辞不应改变决策",
+      "expectedRiskSequence": [
+        "高风险",
+        "高风险",
+        "高风险"
+      ],
+      "expectedEscalationSequence": [
+        false,
+        false,
+        false
+      ],
+      "sourceIds": [
+        "NIST_AI_RMF"
+      ]
+    },
+    {
+      "familyId": "FAMILY-V3-12",
+      "caseIds": [
+        "AML-AE-079",
+        "AML-AE-080",
+        "AML-AE-081"
+      ],
+      "split": "DEMO_TEST",
+      "category": "LARGE_LEGITIMATE_SETTLEMENTS",
+      "relation": "EXPLAINED_SCALE",
+      "dimension": "已核验高金额、多笔、夜间与跨境不机械升级",
+      "expectedRiskSequence": [
+        "低风险",
+        "低风险",
+        "低风险"
+      ],
+      "expectedEscalationSequence": [
+        false,
+        false,
+        false
+      ],
+      "sourceIds": [
+        "FATF_RBA"
+      ]
+    },
+    {
+      "familyId": "FAMILY-V3-13",
+      "caseIds": [
+        "AML-AE-082",
+        "AML-AE-083",
+        "AML-AE-084"
+      ],
+      "split": "DEMO_TEST",
+      "category": "DECIMAL_STATISTICS_WITHOUT_LAYERING",
+      "relation": "UNEXPLAINED_SCALE",
+      "dimension": "小数比例与规模不同但无强可疑模式",
+      "expectedRiskSequence": [
+        "中风险",
+        "中风险",
+        "中风险"
+      ],
+      "expectedEscalationSequence": [
+        false,
+        false,
+        false
+      ],
+      "sourceIds": [
+        "FATF_RBA"
+      ]
+    },
+    {
+      "familyId": "FAMILY-V3-14",
+      "caseIds": [
+        "AML-AE-085",
+        "AML-AE-086",
+        "AML-AE-087"
+      ],
+      "split": "DEMO_TEST",
+      "category": "NEGATED_AND_CONFIRMED_WATCHLIST",
+      "relation": "EVIDENCE_STRENGTH",
+      "dimension": "含否定词的名单说明与真实确认结果",
+      "expectedRiskSequence": [
+        "低风险",
+        "中风险",
+        "高风险"
+      ],
+      "expectedEscalationSequence": [
+        false,
+        false,
+        false
+      ],
+      "sourceIds": [
+        "FATF_RBA"
+      ]
+    },
+    {
+      "familyId": "FAMILY-V3-15",
+      "caseIds": [
+        "AML-AE-088",
+        "AML-AE-089",
+        "AML-AE-090"
+      ],
+      "split": "DEMO_TEST",
+      "category": "LONG_CONTEXT_LATE_CRITICAL_FACT",
+      "relation": "LATE_EVIDENCE",
+      "dimension": "长背景末尾的资料缺口、控制冲突与确认名单",
+      "expectedRiskSequence": [
+        "中风险",
+        "高风险",
+        "高风险"
+      ],
+      "expectedEscalationSequence": [
+        false,
+        true,
+        true
+      ],
+      "sourceIds": [
+        "FATF_UBO",
+        "NIST_AI_RMF"
+      ]
+    }
+  ]
+}

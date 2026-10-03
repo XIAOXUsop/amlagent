@@ -12,6 +12,8 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.time.LocalDate;
+import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.HexFormat;
@@ -29,7 +31,7 @@ import org.springframework.stereotype.Component;
 @Component
 public class AgentEvalDatasetLoader {
 
-    static final String DATASET_RESOURCE = "evaluation/agent-cases-v1.json";
+    static final String DATASET_RESOURCE = "evaluation/agent-cases-v3.json";
 
     private static final Set<String> EMBEDDED_SPLITS = Set.of("DEV", "DEMO_TEST");
 
@@ -213,6 +215,13 @@ public class AgentEvalDatasetLoader {
         requireText(evalCase.input().identityNumber(), "input.identityNumber");
         requireText(evalCase.input().customerType(), "input.customerType");
         requireText(evalCase.input().asOfDate(), "input.asOfDate");
+        try {
+            LocalDate.parse(evalCase.input().asOfDate());
+        }
+        catch (DateTimeParseException invalidDate) {
+            throw new IllegalStateException("Agent 评测数据集校验失败：input.asOfDate 必须为有效 ISO 日期：" + evalCase.id(),
+                    invalidDate);
+        }
         requireText(evalCase.input().alertDescription(), "input.alertDescription");
         requireText(evalCase.input().caseDescription(), "input.caseDescription");
     }
@@ -246,6 +255,9 @@ public class AgentEvalDatasetLoader {
         require(evalCase.toolFixture().riskFacts().sanctionHit()
                 || evalCase.toolFixture().riskFacts().maxSanctionSeverity() == 0,
                 "未命中名单时 maxSanctionSeverity 必须为 0：" + evalCase.id());
+        require(!evalCase.toolFixture().riskFacts().sanctionHit()
+                || evalCase.toolFixture().riskFacts().maxSanctionSeverity() > 0,
+                "命中名单时 maxSanctionSeverity 必须大于 0：" + evalCase.id());
     }
 
     private void validateExpected(AgentEvalCase evalCase) {

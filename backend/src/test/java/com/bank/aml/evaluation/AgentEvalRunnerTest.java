@@ -30,21 +30,19 @@ class AgentEvalRunnerTest {
                 new AgentEvalSchemaValidator(), new AgentEvalScorer(), mock(GuardrailEngine.class),
                 new FinalDecisionAssembler(), new ForbiddenClaimDetectorRegistry(), TestClocks.FIXED,
                 com.bank.aml.TestProperties.aml());
-        AgentEvalDataset.AgentEvalCase evalCase = loader.load()
-            .cases()
-            .stream()
-            .filter(candidate -> "AML-AE-001".equals(candidate.id()))
-            .findFirst()
-            .orElseThrow();
         Method buildInput = AgentEvalRunner.class.getDeclaredMethod("buildInput", AgentEvalDataset.AgentEvalCase.class);
         buildInput.setAccessible(true);
-
-        String input = (String) buildInput.invoke(runner, evalCase);
-
-        assertThat(input).contains(
-                "法规检索关键词（searchLegal 的 query 至少逐字包含一项）：" + String.join("、", evalCase.toolFixture().legalQueryTerms()));
-        assertThat(input).doesNotContain(evalCase.toolFixture().legalQuery(), "requiredFindingCodes",
-                "allowedFindingCodes", "requiredActions", "allowedActions", "mustEscalate", "forbiddenClaimCodes");
+        for (AgentEvalDataset.AgentEvalCase evalCase : loader.load().cases()) {
+            String input = (String) buildInput.invoke(runner, evalCase);
+            assertThat(input).contains("法规检索关键词（searchLegal 的 query 至少逐字包含一项）："
+                    + String.join("、", evalCase.toolFixture().legalQueryTerms()));
+            assertThat(input).doesNotContain(evalCase.input().customerName(), evalCase.input().identityNumber(),
+                    evalCase.expected().riskLevel(), evalCase.annotation().rationale(), "riskFacts",
+                    evalCase.toolFixture().legalQuery(), "requiredFindingCodes", "allowedFindingCodes",
+                    "requiredActions", "allowedActions", "mustEscalate", "forbiddenClaimCodes");
+            evalCase.expected().requiredFindingCodes().forEach(code -> assertThat(input).doesNotContain(code));
+            evalCase.expected().requiredActions().forEach(code -> assertThat(input).doesNotContain(code));
+        }
     }
 
     @Test

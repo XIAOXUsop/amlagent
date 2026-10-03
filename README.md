@@ -75,8 +75,8 @@
 | 风险规则回归 | 100 条独立期望的合成边界案例 | 覆盖合法跨境/夜间负例、交易模式、UBO、数据缺失和制裁；不调用 LLM |
 | 一级制裁规则漏报 | **0 / 5** | 合成规则案例 |
 | RAG 法规检索评测 v2（18 条） | 无精排：Recall@5/Top3 **93.3%/93.3%**、MRR **81.1%**、nDCG@5 **84.2%**、无答案拒答 **100%**、P95 **135ms**；本地 bge 精排：**100%/100%**、MRR **95.6%**、nDCG@5 **96.7%**、拒答 **100%**、P95 **671ms** | 15 条业务改写 + 3 条无答案，真实 MySQL/PGVector/Redis，2026-08-23 本机冷缓存；`PENDING_DOMAIN_REVIEW`，仅为 DEV 基线 |
-| 独立 Agent 案例集 | 15 条（DEV 9 / TEST 6） | AI 辅助人工整理的合成案例，待领域专家复核 |
-| DeepSeek 真实 Agent DEV（v2 → v5） | 原始风险准确率 **44.4% → 100%**；Guardrails 后 **77.8% → 100%**；高风险召回率 **40% → 100%**；无效输出 **2/9 → 0/9** | 9 条冻结合成 DEV（`PENDING_DOMAIN_REVIEW`）；2026-08-12/13 本地实测 |
+| 独立 Agent 案例集 v3 | 90 条（DEV 59 / DEMO_TEST 31），含证据对照、组合风险和三阶段业务家族 | 公开合成案例，完整工具循环离线回归；待专家复核，无新增真实模型准确率结果 |
+| DeepSeek 真实 Agent DEV（模型迭代 v2 → v5，旧数据集） | 原始风险准确率 **44.4% → 100%**；Guardrails 后 **77.8% → 100%**；高风险召回率 **40% → 100%**；无效输出 **2/9 → 0/9** | 9 条冻结合成 DEV（`PENDING_DOMAIN_REVIEW`）；2026-08-12/13 本地实测 |
 | v5 工具与证据覆盖 | 必需工具召回率 **100%**；法规 evidenceId 召回率 **100%**；端到端任务通过率 **66.7%**；strictPass **0**（5 次重复调用） | 5 次重复调用的汇总结果 |
 | 首轮工具与证据覆盖（v2） | 必需工具召回率 **94.4%**；法规 evidenceId 召回率 **77.8%** | 失败集中在隐藏法规关键词导致的无效重试，已通过 v5 工具契约修复 |
 | 当前客户 AI 小助确定性评测 | 70 条合成案例意图分类 **70/70**；15/15 攻击在模型前阻断；后端 242 项单测、22 项完整集成回归及 2 项助手安全增量、前端 15 项测试通过 | 2026-08-23 本机验证；新助手真实模型质量评测尚未执行，不宣称模型准确率 |
@@ -89,7 +89,7 @@
 $env:DEEPSEEK_API_KEY = "your-key"
 ```
 
-真实 Agent DEV 评测默认不会在普通测试中调用外部模型。确认 9 条数据均为可发送的合成案例后，可显式运行：
+真实 Agent DEV 评测默认不会在普通测试中调用外部模型。确认当前 59 条 DEV 均为可发送的合成案例及调用预算后，可显式运行：
 
 ```powershell
 $env:RUN_LIVE_AGENT_EVAL = "true"
@@ -107,13 +107,16 @@ $env:RUN_LIVE_AGENT_EVAL = "true"
 | 要素 | 值 |
 |---|---|
 | 代码基线 | 以当前 Git commit 为准（运行报告中记录版本，不在 README 固化易过期哈希） |
-| Prompt 版本 | `aml-dd-agent-v7-production-contract-final-decision` |
+| Prompt 版本 | `aml-dd-agent-v9-safe-three-round-evidence-policy` |
 | 模型 | `deepseek-v4-flash`（多提供商可切换） |
-| 数据集 | `agent-cases-v1.json`（15 条：DEV 9 / DEMO_TEST 6，`PENDING_DOMAIN_REVIEW`）；正式 TEST 从仓库外加载专家审批数据 |
+| 数据集 | `agent-cases-v3.json`（90 条：DEV 59 / DEMO_TEST 31，`PENDING_DOMAIN_REVIEW`）；v1/v2 历史文件保留，v3 两条证据勘误明确记录，正式 TEST 从仓库外加载专家审批数据 |
 | 数据集哈希 | 由 `AgentEvalDatasetLoader` 启动时计算（内置数据 + 可选外部 TEST 的组合 SHA-256） |
 | 护栏规则 | `risk_rule` 表 + `RiskRuleSeeder`（确定性 DSL） |
 
 > v5 的 100% 指标来自反复调优的 9 条 DEV，仅证明当前迭代在 DEV 上有效；需以冻结的隐藏 TEST 分片验证泛化能力，不宣称真实银行生产准确率。
+
+当前覆盖、执行链回归和项目验证边界见 [v3 数据集与验收说明](docs/evaluation/agent-dataset-v3-and-acceptance.md)；
+上一轮配对设计和验证记录保留于 [v2 说明](docs/evaluation/agent-dataset-v2.md)。
 
 ## 技术栈
 

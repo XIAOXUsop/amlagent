@@ -28,13 +28,13 @@ class AgentEvalDatasetLoaderTest {
         AgentEvalDataset dataset = loader.load();
         var summary = loader.summary();
 
-        assertThat(dataset.datasetId()).isEqualTo("aml-agent-curated-v1");
-        assertThat(dataset.version()).isEqualTo("1.1.0");
+        assertThat(dataset.datasetId()).isEqualTo("aml-agent-curated-v3");
+        assertThat(dataset.version()).isEqualTo("3.0.0");
         assertThat(dataset.sourceType()).isEqualTo("SYNTHETIC_CURATED");
-        assertThat(dataset.annotationMethod()).isEqualTo("AI_ASSISTED_HUMAN_CURATED");
+        assertThat(dataset.annotationMethod()).isEqualTo("AI_ASSISTED_CURATED_PENDING_DOMAIN_REVIEW");
         assertThat(dataset.reviewStatus()).isEqualTo("PENDING_DOMAIN_REVIEW");
-        assertThat(summary.totalCases()).isEqualTo(15);
-        assertThat(summary.splitCounts()).containsKeys("DEV", "DEMO_TEST");
+        assertThat(summary.totalCases()).isEqualTo(90);
+        assertThat(summary.splitCounts()).containsExactlyInAnyOrderEntriesOf(Map.of("DEV", 59L, "DEMO_TEST", 31L));
         assertThat(summary.hiddenTestReady()).isFalse();
         assertThat(summary.hiddenTestDatasetHash()).isNull();
         assertThat(summary.riskLevelCounts()).containsKeys("低风险", "中风险", "高风险");
@@ -128,7 +128,7 @@ class AgentEvalDatasetLoaderTest {
 
     @Test
     void testInputsAndFixturesDoNotLeakExpectedCodes() {
-        loader.load().cases().stream().filter(c -> "DEMO_TEST".equals(c.split())).forEach(evalCase -> {
+        loader.load().cases().forEach(evalCase -> {
             String exposed = String.join(" ", evalCase.input().caseDescription(),
                     evalCase.toolFixture().transactionResult(), evalCase.toolFixture().corporateResult(),
                     evalCase.toolFixture().sanctionResult(), evalCase.toolFixture().legalResult());

@@ -53,7 +53,7 @@ class AgentEvalLiveTest {
     private static final String MODEL = "deepseek-v4-flash";
 
     @Test
-    @Timeout(value = 20, unit = TimeUnit.MINUTES)
+    @Timeout(value = 60, unit = TimeUnit.MINUTES)
     void runsFrozenDevSplitAgainstRealDeepSeekAndWritesRedactedReport() throws Exception {
         String apiKey = requiredEnvironment("DEEPSEEK_API_KEY");
         ObjectMapper objectMapper = new ObjectMapper().findAndRegisterModules();
@@ -83,8 +83,9 @@ class AgentEvalLiveTest {
         new RiskRuleSeeder(repository, ruleEngine).run(null);
         GuardrailEngine guardrailEngine = new GuardrailEngine(new RiskFactAssembler(new MockDataSource()), ruleEngine);
 
-        AgentEvalRunner runner = new AgentEvalRunner(chatModel, properties, new AgentEvalDatasetLoader(objectMapper),
-                new AgentEvalSchemaValidator(), new AgentEvalScorer(), guardrailEngine, new FinalDecisionAssembler(),
+        AgentEvalDatasetLoader loader = new AgentEvalDatasetLoader(objectMapper);
+        AgentEvalRunner runner = new AgentEvalRunner(chatModel, properties, loader, new AgentEvalSchemaValidator(),
+                new AgentEvalScorer(), guardrailEngine, new FinalDecisionAssembler(),
                 new ForbiddenClaimDetectorRegistry(), TestClocks.FIXED, com.bank.aml.TestProperties.aml());
 
         AgentEvalReport report = runner.runDev();
@@ -102,7 +103,7 @@ class AgentEvalLiveTest {
         assertThat(report.runtime().realModel()).isTrue();
         assertThat(report.runtime().fallbackUsed()).isFalse();
         assertThat(report.runtime().configuredModel()).isEqualTo(MODEL);
-        assertThat(report.attempted()).isEqualTo(9);
+        assertThat(report.attempted()).isEqualTo(Math.toIntExact(loader.summary().splitCounts().get("DEV")));
         assertThat(report.runStatus()).isIn("COMPLETED", "COMPLETED_WITH_ERRORS");
         assertThat(reportPath).isRegularFile();
     }
