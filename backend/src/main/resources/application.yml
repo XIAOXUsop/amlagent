@@ -72,7 +72,14 @@ management:
     sampling:
       probability: 1.0
   # 默认不设置 management.otlp.tracing.endpoint，因此不会向外部追踪后端导出。
-  # 接入 Jaeger、Tempo 或 Langfuse 时，配置 OTLP 端点即可启用导出。
+  # 接入 Jaeger、Tempo 或 Langfuse 时，配置 OTLP 端点即可启用导出：
+  #
+  #   management.otlp.tracing.endpoint: http://localhost:4318/v1/traces
+  #
+  # ⚠️ 只支持 **OTLP/HTTP**（4318），**不要**配 management.otlp.tracing.transport=grpc。
+  # 本工程用的是纯 JDK 的发送器（opentelemetry-exporter-sender-jdk），它只注册
+  # HttpSenderProvider，没有 GrpcSenderProvider——原因见 backend/pom.xml 里那段说明。
+  # Spring Boot 的 OTLP 导出器默认就是 http/protobuf，所以正常配法不受影响。
 
 logging:
   level:

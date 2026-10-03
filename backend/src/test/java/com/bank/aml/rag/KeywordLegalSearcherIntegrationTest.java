@@ -20,9 +20,23 @@ class KeywordLegalSearcherIntegrationTest {
 
     private static final String VERSION = "a".repeat(64);
 
-    private static final String TABLE = "legal_docs_kw_it_" + UUID.randomUUID().toString().replace("-", "");
+    /**
+     * 表名必须来自 {@link com.bank.aml.config.LegalVectorTable} 的允许列表。
+     *
+     * <p>
+     * SQL 标识符无法作为 JDBC 参数绑定，所以服务端改成"只接受编译期常量里的表名"—— 这是 27b1955 加的正确防护（配置值不再能直接进入查询字符串）。
+     * 旧版这里用随机表名做隔离，那条路已经走不通了。
+     */
+    private static final String TABLE = com.bank.aml.config.LegalVectorTable.TEST.configuredName();
 
-    private static final String QUOTED_TABLE = TestSqlIdentifier.postgresLegalTable(TABLE);
+    /** 测试专用 schema：与真实法规库隔离，跑完整体删除 */
+    private static final String SCHEMA = "legal_kw_it_" + UUID.randomUUID().toString().replace("-", "");
+
+    private static final String QUOTED_SCHEMA = TestSqlIdentifier.postgresSchema(SCHEMA);
+
+    private static final String JDBC_URL = "jdbc:postgresql://localhost:5433/aml_rag?currentSchema=" + SCHEMA;
+
+    private static final String QUOTED_TABLE = TestSqlIdentifier.postgresAllowlistedLegalTable(TABLE);
 
     private static JdbcTemplate jdbc;
 
@@ -30,10 +44,10 @@ class KeywordLegalSearcherIntegrationTest {
 
     @BeforeAll
     static void setUp() {
-        var dataSource = new DriverManagerDataSource("jdbc:postgresql://localhost:5433/aml_rag",
-                System.getenv().getOrDefault("PG_USER", "aml"),
+        var dataSource = new DriverManagerDataSource(JDBC_URL, System.getenv().getOrDefault("PG_USER", "aml"),
                 System.getenv().getOrDefault("PG_PASSWORD", "aml123456"));
         jdbc = new JdbcTemplate(dataSource);
+        jdbc.execute("CREATE SCHEMA " + QUOTED_SCHEMA);
         jdbc.execute("CREATE TABLE " + QUOTED_TABLE + " (text text NOT NULL, metadata jsonb NOT NULL)");
         insert("非自然人客户当日累计转账人民币200万元以上应当报告", "大额交易报告", "中国人民银行令〔2016〕第3号", "第三条", "LEGAL-KW-001");
         insert("金融机构应当保存客户身份资料和交易记录", "客户尽职调查", "中国人民银行令〔2025〕第11号", "第四十四条", "LEGAL-KW-002");
@@ -45,8 +59,9 @@ class KeywordLegalSearcherIntegrationTest {
 
     @AfterAll
     static void tearDown() {
-        if (jdbc != null)
-            jdbc.execute("DROP TABLE IF EXISTS " + QUOTED_TABLE);
+        if (jdbc != null) {
+            jdbc.execute("DROP SCHEMA IF EXISTS " + QUOTED_SCHEMA + " CASCADE");
+        }
     }
 
     @Test

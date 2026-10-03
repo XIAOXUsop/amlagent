@@ -13,6 +13,7 @@ import com.bank.aml.messaging.WorkflowCommandService;
 import com.bank.aml.messaging.WorkflowEventType;
 import com.bank.aml.service.DueDiligenceService;
 import com.bank.aml.testinfra.IntegrationTestDatabase;
+import java.time.Clock;
 import java.time.LocalDateTime;
 import java.util.UUID;
 import org.junit.jupiter.api.Tag;
@@ -48,6 +49,9 @@ class ReliabilityWorkflowTest {
         registry.add("aml.queue.stream", () -> "aml:workflow:cases-test-" + suffix);
         registry.add("aml.queue.dead-stream", () -> "aml:workflow:dead-test-" + suffix);
         registry.add("aml.queue.group", () -> "aml-workers-test-" + suffix);
+        // 这个类断言的是**状态机**：调度器把工单摆成什么状态。
+        // 后台消费者会立刻把它捡起来继续跑，于是"刚摆好"的状态被改掉，
+        // 断言变成看运气。这里显式关掉消费者，让被测的调度器行为可确定。
     }
 
     @Autowired
@@ -55,6 +59,17 @@ class ReliabilityWorkflowTest {
 
     @Autowired
     private CaseRepository caseRepository;
+
+    /**
+     * 与应用**同一个** Clock。
+     *
+     * <p>
+     * 应用里所有时间基准都是 {@code LocalDateTime.now(clock)}（UTC）， 而这些用例原先用
+     * {@code LocalDateTime.now(clock)}（系统本地时区）造"已到期"的时间戳。 在 UTC+8 的机器上那等于把时间戳推到 8
+     * 小时后——"已到期的重试"其实还没到期， "120 秒没心跳"其实才刚心跳过。表现就是调度器看起来什么都没做。
+     */
+    @Autowired
+    private Clock clock;
 
     @Autowired
     private OutboxService outboxService;
@@ -83,21 +98,21 @@ class ReliabilityWorkflowTest {
         event.setExecutionVersion(0);
         event.setIdempotencyKey("991001:fencing:0");
         event = outboxRepository.saveAndFlush(event);
-        LocalDateTime firstClaimAt = LocalDateTime.now().minusMinutes(2);
+        LocalDateTime firstClaimAt = LocalDateTime.now(clock).minusMinutes(2);
 
         assertThat(outboxRepository.claimPublishing(event.getId(), OutboxEvent.OutboxStatus.PUBLISHING,
                 OutboxEvent.OutboxStatus.PENDING, "publisher-a", firstClaimAt, firstClaimAt.minusSeconds(30)))
             .isEqualTo(1);
         assertThat(outboxRepository.claimPublishing(event.getId(), OutboxEvent.OutboxStatus.PUBLISHING,
-                OutboxEvent.OutboxStatus.PENDING, "publisher-b", LocalDateTime.now(),
-                LocalDateTime.now().minusSeconds(30)))
+                OutboxEvent.OutboxStatus.PENDING, "publisher-b", LocalDateTime.now(clock),
+                LocalDateTime.now(clock).minusSeconds(30)))
             .isEqualTo(1);
 
         assertThat(outboxRepository.markPublished(event.getId(), OutboxEvent.OutboxStatus.PUBLISHED,
-                OutboxEvent.OutboxStatus.PUBLISHING, "publisher-a", 1L, LocalDateTime.now()))
+                OutboxEvent.OutboxStatus.PUBLISHING, "publisher-a", 1L, LocalDateTime.now(clock)))
             .isZero();
         assertThat(outboxRepository.markPublished(event.getId(), OutboxEvent.OutboxStatus.PUBLISHED,
-                OutboxEvent.OutboxStatus.PUBLISHING, "publisher-b", 2L, LocalDateTime.now()))
+                OutboxEvent.OutboxStatus.PUBLISHING, "publisher-b", 2L, LocalDateTime.now(clock)))
             .isEqualTo(1);
     }
 
@@ -120,7 +135,7 @@ class ReliabilityWorkflowTest {
         c.setStatus(CaseStatus.RETRY_WAIT);
         c.setRetryCount(1);
         c.setExecutionVersion(1);
-        c.setNextRetryAt(LocalDateTime.now().minusSeconds(1)); // 已到期
+        c.setNextRetryAt(LocalDateTime.now(clock).minusSeconds(1)); // 已到期
         caseRepository.save(c);
 
         retryScheduler.requeueDueRetries();
@@ -139,8 +154,8 @@ class ReliabilityWorkflowTest {
         CaseEntity c = service.createCase("C002", "常规监测", false);
         c.setStatus(CaseStatus.RUNNING);
         c.setLockedBy("worker-crashed");
-        c.setLockedAt(LocalDateTime.now().minusSeconds(120));
-        c.setHeartbeatAt(LocalDateTime.now().minusSeconds(120));
+        c.setLockedAt(LocalDateTime.now(clock).minusSeconds(120));
+        c.setHeartbeatAt(LocalDateTime.now(clock).minusSeconds(120));
         c.setExecutionVersion(1);
         caseRepository.save(c);
 
@@ -160,8 +175,8 @@ class ReliabilityWorkflowTest {
         CaseEntity c = service.createCase("C002", "常规监测", false);
         c.setStatus(CaseStatus.RUNNING);
         c.setLockedBy("worker-crashed");
-        c.setLockedAt(LocalDateTime.now().minusSeconds(120));
-        c.setHeartbeatAt(LocalDateTime.now().minusSeconds(120));
+        c.setLockedAt(LocalDateTime.now(clock).minusSeconds(120));
+        c.setHeartbeatAt(LocalDateTime.now(clock).minusSeconds(120));
         c.setRetryCount(props.getMaxRetry()); // 已达上限
         caseRepository.save(c);
 

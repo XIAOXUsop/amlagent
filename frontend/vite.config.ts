@@ -8,7 +8,13 @@ import { ElementPlusResolver } from 'unplugin-vue-components/resolvers'
 export default defineConfig({
   plugins: [
     vue(),
-    // Element Plus 按需自动导入：组件与 API（含样式）按使用引入，降低主包体积
+    // Element Plus 按需自动导入：组件与 API（含样式）按使用引入，降低主包体积。
+    //
+    // 注意：这两个插件只扫描 .vue 文件里**内联**的 <template>。
+    // 曾经把视图模板抽成 <template src="./templates/xxx.template.html">，
+    // 结果外置模板用到的 el-* 全部解析失败、页面渲染成空白——
+    // 而构建、类型检查、单元测试全部照常通过，只有真打开页面才看得到。
+    // 所以视图模板保持内联；要抽出去的话，必须同时解决自动导入的可见性。
     AutoImport({
       resolvers: [ElementPlusResolver()],
       dts: 'src/auto-imports.d.ts',

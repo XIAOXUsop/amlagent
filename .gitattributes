@@ -1,13 +1,23 @@
+# 全仓库统一按 LF 存储与检出。
+#
+# 为什么需要显式写：`scripts/check_text_conventions.py` 会拒绝 CRLF，
+# 而 Windows 上 core.autocrlf=true 默认会把检出换成 CRLF——
+# 于是同样的代码在本地过不了检查、在 CI 上却是绿的，两边长期对不上。
 * text=auto eol=lf
 
-*.bat text eol=lf
-*.cmd text eol=lf
+# 法规语料要按**字节**做 SHA-256 校验（manifest 里记的是 LF 版本的哈希）。
+# 检出时被换成 CRLF，校验必然不一致，RAG 语料拒绝发布，
+# 进而让整条 Agent 工作流在 RETRY_WAIT 里打转——工作流集成测试全红。
+# 这一条是整个文件里唯一影响测试结果的，单独标出来。
+backend/data/legal/** text eol=lf
+
+# 二进制不做行尾转换
 *.png binary
 *.jpg binary
 *.jpeg binary
 *.gif binary
 *.ico binary
-*.pdf binary
+*.jar binary
 *.docx binary
 *.xlsx binary
-*.pptx binary
+*.pdf binary

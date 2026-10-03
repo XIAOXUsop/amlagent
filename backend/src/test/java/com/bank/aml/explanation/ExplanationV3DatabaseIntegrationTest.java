@@ -281,8 +281,10 @@ class ExplanationV3DatabaseIntegrationTest {
             service.ensureUnitsForLinkedAlerts(saved.getId(),
                     alertRepository.findByCaseIdOrderByOccurredAtAsc(saved.getId()), "analyst");
             // G1-1/RF-05：服务器冻结预警命中范围（本演示预警命中第一笔来源交易）
+            // 来源版本必须与**当前**权威来源一致：服务端会拿它跟 customerDataPort.sourceVersion()
+            // 比，写死一个历史版本号会被直接拒绝（这条校验来自 27b1955）
             alertScopeService.freezeScope(alert.getId(), List.of(firstSourceTransaction().sourceRecordId()), List.of(),
-                    "MONITOR-2026-09", "analyst");
+                    customerDataPort.sourceVersion(), "analyst");
             return saved.getId();
         });
     }

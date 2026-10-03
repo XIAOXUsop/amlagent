@@ -1,0 +1,105 @@
+# 每周一次的**只读**监视：上游有没有发布能绕开当前阻断项的版本。
+#
+# 它做什么：跑 `scripts/check_dependency_fix_availability.py`，把结论写进 job 摘要。
+# 它**不**做什么：不改 pom、不改版本号、不提 PR、不合并任何依赖升级、
+# 不碰 `dependency-check-suppressions.xml`。判据与理由写在那个脚本的模块注释里——
+# 一句话：升级要逐条读公告、只升到够用的最小版本、再跑全套测试，那不是定时任务能决定的。
+#
+# 为什么值得单独有一个工作流：这个问题的答案**会随时间变**（上游随时可能发补丁），
+# 而人不会每周手工去查两趟 NVD 和 Central。查一次两分钟，但没人查。
+#
+# 为什么它必须在有情况时变红：见最后一步。一个只在日志里说一句"有新版本"的
+# 定时任务，和没有它是一样的——没人看列表里那个绿色的运行。
+name: Dependency Fix Watch
+
+on:
+  schedule:
+    # 每周一 01:07 UTC（北京时间周一 09:07）。**刻意不写整点**：
+    # `0 1 * * 1` 是所有人都排的时间，排队会让它比预期晚不少才跑起来。
+    - cron: '7 1 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  watch:
+    name: 上游有没有可用的修复版
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.13'
+
+      # 检查只用标准库（urllib + json），没有 pip 依赖要装。
+      #
+      # 这一步**故意不因非零退出而中断**：报告得先写进摘要，否则运行红了、
+      # 摘要里却什么都没有，人还是得自己再跑一遍。判定放到最后一步统一做。
+      - name: 检查（只读）
+        id: check
+        env:
+          # 没配也能跑，只是要按 NVD 的匿名限流（5 次/30 秒）慢慢来，
+          # 17 条公告大约两三分钟；配了会快很多。
+          NVD_API_KEY: ${{ secrets.NVD_API_KEY }}
+        run: |
+          set +e
+          python scripts/check_dependency_fix_availability.py \
+            --fail-on-available --json fix-availability.json 2>&1 | tee report.txt
+          rc=${PIPESTATUS[0]}
+          echo "exit_code=$rc" >> "$GITHUB_OUTPUT"
+          exit 0
+
+      - name: 写进 job 摘要
+        if: ${{ always() }}
+        run: |
+          {
+            echo '## 依赖修复版可用性（只读，不改任何版本）'
+            echo
+            echo '```'
+            cat report.txt 2>/dev/null || echo '（脚本没有产出报告——这本身就说明它没跑成）'
+            echo '```'
+            echo
+            echo '> 这个工作流**只报告**。升级要走完整流程：先读发行说明与受影响区间、'
+            echo '> 只升到够用的最小版本，再跑单元 / 集成 / E2E / dependency-check /'
+            echo '> dependency:list；**只有扫描结果里那些包确实消失，才算清掉**。'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: 上传结论
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: fix-availability
+          path: |
+            report.txt
+            fix-availability.json
+          if-no-files-found: warn
+
+      # 退出码的三种非零含义分开说：**「无法判定」绝不能混进「没有修复版」**，
+      # 这正是这族问题最容易骗人的地方（详见脚本模块注释）。
+      - name: 有需要人处理的情况就让这次运行变红
+        if: ${{ always() }}
+        env:
+          RC: ${{ steps.check.outputs.exit_code }}
+        run: |
+          case "${RC:-}" in
+            0)
+              echo "没有需要处理的变化：被监视的依赖在上游都还没有可用的修复版。"
+              ;;
+            3)
+              echo "::error::上游已经发布了可用的修复版——见上面的 job 摘要。"
+              echo "::error::这个工作流只报告，**不自动升级**：请读发行说明与受影响区间，"
+              echo "::error::只升到够用的最小版本，再跑单元 / 集成 / E2E / dependency-check。"
+              exit 1
+              ;;
+            2)
+              echo "::error::有依赖**无法判定**（NVD 或 Central 取不到数据）。"
+              echo "::error::这不是「没有修复版」——是这一次什么都没查成，见摘要。"
+              exit 1
+              ;;
+            *)
+              echo "::error::检查自身失败，退出码 ${RC:-空}。看上面的输出。"
+              exit 1
+              ;;
+          esac

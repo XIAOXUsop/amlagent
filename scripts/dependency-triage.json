@@ -1,0 +1,52 @@
+{
+  "scanRun": "https://github.com/XIAOXUsop/amlagent/actions/runs/36170640966",
+  "scanCommit": "e07d8b7",
+  "reviewedOn": "2026-09-26",
+  "owner": "@XIAOXUsop",
+  "nextReview": "2026-10-03",
+  "groups": [
+    {
+      "package": "org.springframework/spring-core",
+      "version": "6.2.19",
+      "affected": "6.2.0 <= version < 6.2.20",
+      "classification": "upstream-fix-unreleased-in-current-line",
+      "disposition": "保留 CVSS >= 7 阻断；每周检查 6.2.20。若继续缺版，单独评估 Spring Boot 4 迁移及回归成本。",
+      "evidence": "NVD 各 CVE CPE 区间；Maven Central 6.2.x 最新 6.2.19（2026-09-26）",
+      "cves": [
+        {"id": "CVE-2026-47884", "cvss": 9.8},
+        {"id": "CVE-2026-47892", "cvss": 9.8},
+        {"id": "CVE-2026-47891", "cvss": 9.8},
+        {"id": "CVE-2026-47890", "cvss": 9.8},
+        {"id": "CVE-2026-59313", "cvss": 9.8},
+        {"id": "CVE-2026-59283", "cvss": 9.1},
+        {"id": "CVE-2026-47885", "cvss": 7.5},
+        {"id": "CVE-2026-47886", "cvss": 7.5},
+        {"id": "CVE-2026-47893", "cvss": 7.5},
+        {"id": "CVE-2026-47889", "cvss": 7.5},
+        {"id": "CVE-2026-47888", "cvss": 7.5},
+        {"id": "CVE-2026-59282", "cvss": 7.5}
+      ]
+    },
+    {
+      "package": "org.springframework.security/spring-security-core",
+      "version": "6.5.11",
+      "affected": "6.5.0 <= version < 6.5.12",
+      "classification": "upstream-fix-unreleased-in-current-line",
+      "disposition": "保留 CVSS >= 7 阻断；每周检查 6.5.12，不以 7.x 跨线升级替代兼容性评审。",
+      "evidence": "NVD CVE-2026-47841、CVE-2026-59270 的 6.5.x CPE 区间；Maven Central 最新 6.5.11（2026-09-26）",
+      "cves": [
+        {"id": "CVE-2026-59270", "cvss": 9.1},
+        {"id": "CVE-2026-47841", "cvss": 7.4}
+      ]
+    },
+    {
+      "package": "com.pgvector/pgvector",
+      "version": "0.1.6",
+      "affected": "NVD CPE 指向 PostgreSQL 侧 pgvector < 0.8.6；扫描命中的 0.1.6 是 Java JDBC 客户端",
+      "classification": "false-positive-cpe-product-mismatch",
+      "disposition": "不抑制扫描项；保持 docker-compose 中 pgvector/pgvector:0.8.6-pg16，并在下次复查核对 CPE 映射。",
+      "evidence": "NVD CVE-2026-18022 描述 IVFFlat 索引构建、仅 32 位受影响；CPE target_sw=postgresql；docker-compose.yml 钉住 0.8.6-pg16",
+      "cves": [{"id": "CVE-2026-18022", "cvss": 8.8}]
+    }
+  ]
+}

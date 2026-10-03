@@ -148,7 +148,10 @@ class CsrfSecurityTest {
                 .header("X-XSRF-TOKEN", auth.csrfValue())
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("{\"customerId\":\"C001\",\"alertRule\":\"CSRF 链路测试\",\"autoProcess\":false}"))
-            .andExpect(status().isOk());
+            // 这里断言的是"CSRF 校验放行了写请求"，而不是某个特定成功码。
+            // 建单接口标了 @ResponseStatus(CREATED)，所以是 201；早先写成 200，
+            // 于是这条用例在接口语义没变的情况下一直红着——它测的是错东西。
+            .andExpect(status().isCreated());
     }
 
     @Test

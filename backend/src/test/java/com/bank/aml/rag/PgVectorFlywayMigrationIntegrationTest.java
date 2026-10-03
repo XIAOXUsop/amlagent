@@ -54,7 +54,11 @@ class PgVectorFlywayMigrationIntegrationTest {
         recreateSchema(schema);
         try (Connection connection = connection(); Statement statement = connection.createStatement()) {
             connection.setSchema(schema);
-            statement.execute("CREATE EXTENSION IF NOT EXISTS vector");
+            // 扩展早已装在 public（应用的迁移建的），而 setSchema 会把 search_path 收窄成
+            // 单个 schema —— 于是 "CREATE EXTENSION IF NOT EXISTS" 成了空操作，
+            // 紧接着的 `vector(384)` 就解析不到，报 `type "vector" does not exist`。
+            // 显式把 public 留在搜索路径里。
+            statement.execute("SET search_path TO \"" + schema + "\", public");
             statement.execute("CREATE TABLE legal_docs ("
                     + "embedding_id UUID PRIMARY KEY, embedding vector(384) NOT NULL, text TEXT, metadata JSON)");
             statement.execute("INSERT INTO legal_docs (embedding_id, embedding, text, metadata) VALUES "

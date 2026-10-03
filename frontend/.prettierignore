@@ -4,6 +4,10 @@ node_modules
 .impeccable
 playwright-report
 test-results
+# npm run test:json 的输出目录（test_summary.py 读它）。
+# .gitignore 里已经忽略了它，但 prettier 不读 .gitignore——
+# 于是「先跑 test:json 再跑 format:check」会失败，而两者都是正常操作。
+.reports
 src/auto-imports.d.ts
 src/components.d.ts
 *.log

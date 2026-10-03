@@ -1,5 +1,13 @@
 services:
   mysql:
+    # `mysql:8.0` 与下面 redis 的 `redis:7` 是**故意保留的「大版本内浮动」**，
+    # 不是漏钉：它们只会在同一个大版本里拿到补丁版（实测当前分别是
+    # 8.0.46 与 7.4.10），很多人正是为了自动获得安全补丁才这么写。
+    #
+    # 与上面 pgvector / prometheus / grafana 的区别在于**浮动范围**：
+    # 那三个要么会跨大版本（`latest`），要么牵涉到具体的 CVE 修复线
+    # （pgvector 的 < 0.8.6），所以必须钉死；而 8.0 / 7 的浮动是可控的。
+    # 判断依据是「浮动会带来什么后果」，不是「有没有写死数字」。
     image: mysql:8.0
     container_name: aml-mysql
     restart: unless-stopped
@@ -22,7 +30,22 @@ services:
       retries: 5
 
   pgvector:
-    image: pgvector/pgvector:pg16
+    # 版本化 tag，不用浮动的 `pg16`。
+    #
+    # 两个理由，第二个是本仓库真正在意的：
+    #
+    # 一、**可复现**。浮动 tag 的含义是「拉取时的最新版」——同一份 compose 文件
+    #     在这个月和下个月得到不同的扩展版本，而评测结果落盘、数据集冻结标识
+    #     这些做法都在追求「同一输入同一结果」，数据库扩展版本不该是个变量。
+    #
+    # 二、**安全**。CVE-2026-18022 的受影响区间是 pgvector 扩展 < 0.8.6
+    #     （IVFFlat 索引构建的整数回绕）。浮动 tag 拉到什么取决于拉取时间，
+    #     钉在 0.8.6 之后才说得清「这个部署不在受影响区间内」。
+    #
+    # `0.8.6-pg16` 与当前的 `pg16` 是**同一个 digest**（均为 sha256:ccc6e83d6e35e…，
+    # 已在 Docker Hub 上核对），所以这次改动不改变当前行为——
+    # 它只是把「碰巧拉到的是最新版」变成「明确就是这一版」。
+    image: pgvector/pgvector:0.8.6-pg16
     container_name: aml-pgvector
     restart: unless-stopped
     environment:
@@ -56,8 +79,20 @@ services:
       retries: 5
 
   prometheus:
+    # 钉住版本，不用 `latest`。
+    #
+    # `latest` 与 `mysql:8.0` / `redis:7` 那种「大版本内浮动」不是一回事：
+    # 后两者只在同一个大版本里拿补丁（很多人是**故意**这么写的），
+    # 而 `latest` 会**跨大版本跳**——同一份 compose 文件这个月起 3.x、
+    # 下个月可能起 4.x，配置与仪表盘的兼容性都跟着变。
+    #
+    # 实测（2026-09-19，本机 `docker exec` 读实际版本）：
+    #   运行中的 `latest` 是 prometheus 3.13.2
+    #   而 `v3.13.2` 与它**是同一个 digest**（sha256:508729e0…）
+    # 所以这次只是把「碰巧拉到的是最新版」变成「明确就是这一版」，行为不变。
+    #
     # 国内网络使用镜像加速前缀，如拉取失败可改回 prom/prometheus
-    image: docker.m.daocloud.io/prom/prometheus:latest
+    image: docker.m.daocloud.io/prom/prometheus:v3.13.2
     container_name: aml-prometheus
     restart: unless-stopped
     ports:
@@ -68,7 +103,9 @@ services:
       - '--config.file=/etc/prometheus/prometheus.yml'
 
   grafana:
-    image: docker.m.daocloud.io/grafana/grafana:latest
+    # 同 prometheus：`latest` 会跨大版本跳，钉住。
+    # 实测运行中的 `latest` 是 13.1.3，与 `13.1.3` 是同一个 digest（sha256:ab5cb380…）。
+    image: docker.m.daocloud.io/grafana/grafana:13.1.3
     container_name: aml-grafana
     restart: unless-stopped
     ports:

@@ -32,6 +32,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.IntStream;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 /**
@@ -97,6 +98,11 @@ public class BgeRerankerScoringModel implements ScoringModel {
 
     private final int inferenceExecutorThreads;
 
+    /**
+     * 必须有 @Autowired：本类还有一个给测试用的包级构造器。 有两个构造器且都没有标注时，Spring 会退回无参实例化并直接抛 "No default
+     * constructor found"——整个应用起不来。
+     */
+    @Autowired
     public BgeRerankerScoringModel(RerankModelProvider modelProvider, RagProperties properties, Clock clock) {
         this(modelProvider, properties.getRerank().isEnabled(), properties.getRerank().getMaxConcurrency(),
                 properties.getRerank().getQueueCapacity(), properties.getRerank().getInferenceTimeoutMs(),
