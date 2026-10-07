@@ -219,11 +219,15 @@ npm run dev
 
 ### 可选：监控面板
 
+首次启动监控前，将 `.env.example` 复制为本机 `.env`，填写自己的 `GF_SECURITY_ADMIN_PASSWORD`；该文件不纳入 Git。缺失或留空时监控配置会拒绝启动，基础依赖不受影响。
+
 ```bash
-docker compose up -d prometheus grafana
+docker compose -f docker-compose.yml -f docker-compose.monitoring.yml up -d prometheus grafana
 ```
 
-Prometheus: http://localhost:9090 · Grafana: http://localhost:3000（admin / admin）
+Prometheus: http://localhost:9090 · Grafana: http://localhost:3000（默认用户名 `admin`，密码使用自己设置的值）。已有 Grafana 实例需另外通过管理界面或 CLI 更改旧密码；修改环境变量不会重置已有账号。
+
+停止监控使用 `docker compose -f docker-compose.yml -f docker-compose.monitoring.yml stop prometheus grafana`。
 
 ### 停止与清理
 

@@ -5,6 +5,8 @@ backend/src/main/resources/application-local*.yml
 *.key
 *.pem
 .env
+.env.*
+!.env.example
 !frontend/.env
 
 # ===== 构建产物 =====

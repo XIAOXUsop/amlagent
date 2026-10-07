@@ -78,44 +78,6 @@ services:
       timeout: 5s
       retries: 5
 
-  prometheus:
-    # 钉住版本，不用 `latest`。
-    #
-    # `latest` 与 `mysql:8.0` / `redis:7` 那种「大版本内浮动」不是一回事：
-    # 后两者只在同一个大版本里拿补丁（很多人是**故意**这么写的），
-    # 而 `latest` 会**跨大版本跳**——同一份 compose 文件这个月起 3.x、
-    # 下个月可能起 4.x，配置与仪表盘的兼容性都跟着变。
-    #
-    # 实测（2026-09-19，本机 `docker exec` 读实际版本）：
-    #   运行中的 `latest` 是 prometheus 3.13.2
-    #   而 `v3.13.2` 与它**是同一个 digest**（sha256:508729e0…）
-    # 所以这次只是把「碰巧拉到的是最新版」变成「明确就是这一版」，行为不变。
-    #
-    # 国内网络使用镜像加速前缀，如拉取失败可改回 prom/prometheus
-    image: docker.m.daocloud.io/prom/prometheus:v3.13.2
-    container_name: aml-prometheus
-    restart: unless-stopped
-    ports:
-      - "9090:9090"
-    volumes:
-      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
-    command:
-      - '--config.file=/etc/prometheus/prometheus.yml'
-
-  grafana:
-    # 同 prometheus：`latest` 会跨大版本跳，钉住。
-    # 实测运行中的 `latest` 是 13.1.3，与 `13.1.3` 是同一个 digest（sha256:ab5cb380…）。
-    image: docker.m.daocloud.io/grafana/grafana:13.1.3
-    container_name: aml-grafana
-    restart: unless-stopped
-    ports:
-      - "3000:3000"
-    environment:
-      - GF_SECURITY_ADMIN_USER=admin
-      - GF_SECURITY_ADMIN_PASSWORD=admin
-    depends_on:
-      - prometheus
-
 volumes:
   mysql-data:
   pgvector-data:
